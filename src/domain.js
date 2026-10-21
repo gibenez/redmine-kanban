@@ -13,7 +13,12 @@ export function validateConfig(raw, statuses) {
   return { ...raw, backlogStatusId, columnStatusIds, redminePublicUrl: publicUrl.href.replace(/\/$/, ''), refreshSeconds: Math.max(15, Number(raw.refreshSeconds) || 60) };
 }
 
-export function isBacklog(issue, backlogStatusId) { return !issue.fixed_version && issue.status.id === backlogStatusId; }
+// The Backlog is every OPEN unplanned issue, narrowed to the configured New status unless
+// the Backlog Scope is widened. Closed unplanned issues are never shown.
+export function isBacklog(issue, { backlogStatusId, allUnplanned = false, closedStatusIds = [] }) {
+  if (issue.fixed_version) return false;
+  return allUnplanned ? !closedStatusIds.includes(issue.status.id) : issue.status.id === backlogStatusId;
+}
 export function effort(issues) {
   return issues.reduce((total, issue) => ({ hours: total.hours + (Number(issue.estimated_hours) || 0), unestimated: total.unestimated + (issue.estimated_hours == null || issue.estimated_hours === '' ? 1 : 0), count: total.count + 1 }), { hours: 0, unestimated: 0, count: 0 });
 }

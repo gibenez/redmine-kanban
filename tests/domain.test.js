@@ -17,10 +17,16 @@ describe('deployment configuration', () => {
 });
 
 describe('planning semantics', () => {
-  it('backlog means New AND no target version, never all nonclosed issues', () => {
-    expect(isBacklog(issue, 1)).toBe(true);
-    expect(isBacklog({ ...issue, status: statuses[1] }, 1)).toBe(false);
-    expect(isBacklog({ ...issue, fixed_version: sprint }, 1)).toBe(false);
+  it('backlog means unplanned, narrowed to New unless the scope is widened', () => {
+    const narrow = { backlogStatusId: 1, allUnplanned: false, closedStatusIds: [5] };
+    const wide = { ...narrow, allUnplanned: true };
+    expect(isBacklog(issue, narrow)).toBe(true);
+    expect(isBacklog({ ...issue, status: statuses[1] }, narrow)).toBe(false);
+    expect(isBacklog({ ...issue, status: statuses[1] }, wide)).toBe(true);
+    // Widening admits every OPEN status; closed unplanned issues stay off the board.
+    expect(isBacklog({ ...issue, status: statuses[2] }, wide)).toBe(false);
+    expect(isBacklog({ ...issue, fixed_version: sprint }, narrow)).toBe(false);
+    expect(isBacklog({ ...issue, fixed_version: sprint }, wide)).toBe(false);
   });
   it('commits and changes status in one explicit move', () => {
     expect(movePatch(issue, 'status-2', sprint)).toEqual({ fixed_version_id: 10, status_id: 2 });

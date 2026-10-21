@@ -12,6 +12,12 @@ describe('server-side issue queries', () => {
     expect(issueQuery(scope, { query: ' #123 ', assignee: '7' })).toMatchObject({ issue_id: '123', assigned_to_id: '7', fixed_version_id: 10, status_id: '*' });
     expect(issueQuery(scope, { query: '123' })).not.toHaveProperty('subject');
   });
+  it('widens the backlog query to every open status when the backlog scope is widened', () => {
+    const wide = { ...scope, allUnplanned: true };
+    expect(issueQuery(wide, {}, true)).toMatchObject({ status_id: 'open', fixed_version_id: '!*' });
+    // Only the backlog column is scoped; sprint columns already show every status.
+    expect(issueQuery(wide, {})).toMatchObject({ status_id: '*', fixed_version_id: 10 });
+  });
 });
 
 describe('bounded backlog feed', () => {

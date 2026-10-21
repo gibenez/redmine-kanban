@@ -6,9 +6,14 @@ import { PlanningFeed } from './planning-feed.js';
 
 const $ = id => document.getElementById(id);
 const storageKey = 'redmine-sprint-board.api-key';
+// Backlog Scope is a personal view preference, not a Filter and not deployment config.
+const scopeStorageKey = 'redmine-sprint-board.all-unplanned';
 let api, config, statuses = [], projects = [], versions = [], memberships = [], issues = [], board;
 let sprint = null, projectId = '', blockedProjectId = '', busy = false, dragging = false, loading = false, epoch = 0, timer, editing;
 let feed, queryLoading = false, queryTimer, queryRevision = 0, backlogFailed = false;
+// Backlog Scope lives on the Backlog column header, so it is rebuilt with the board
+// rather than read from a persistent control.
+let allUnplannedScope = false;
 const filters = { query: '', tracker: '', assignee: '' };
 
 function notify(message, error = false) {
@@ -34,7 +39,7 @@ function options(select, rows, selected = '') {
 }
 function lock() {
   document.querySelectorAll('#workspace select, #workspace input, #workspace button, #edit-form input, #edit-form select, #edit-form button[type="submit"]').forEach(el => { el.disabled = busy || loading; });
-  document.querySelectorAll('.plan').forEach(el => { el.disabled = busy || loading || queryLoading || feed?.loadingMore; });
+  document.querySelectorAll('.plan, .scope-toggle').forEach(el => { el.disabled = busy || loading || queryLoading || feed?.loadingMore; });
   if ($('backlog-more')) $('backlog-more').disabled = busy || loading || queryLoading || feed?.loadingMore;
   $('workspace').setAttribute('aria-busy', String(busy || loading || queryLoading));
 }
@@ -44,7 +49,24 @@ function destroyBoard() {
 function cancelQuery() {
   clearTimeout(queryTimer); queryRevision++; feed?.cancel(); queryLoading = false;
 }
-function feedScope() { return { projectId, sprintId: sprint?.id, backlogStatusId: config.backlogStatusId }; }
+function allUnplanned() { return allUnplannedScope; }
+// An eye: the Backlog Scope is about which unplanned issues are visible. Slashed while the
+// Backlog is narrowed to the New status, because open work in other statuses is hidden.
+const eyeIcon = open => `<svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M1.2 8S3.7 3.4 8 3.4 14.8 8 14.8 8 12.3 12.6 8 12.6 1.2 8 1.2 8Z"/><circle cx="8" cy="8" r="2.1"/>${open ? '' : '<path d="M2.6 13.4 13.4 2.6"/>'}</svg>`;
+function scopeToggle() {
+  const label = allUnplannedScope ? 'Showing every open issue without a sprint. Click to show only the New status.' : 'Showing only the New status without a sprint. Click to show every open unplanned issue.';
+  return `<button type="button" class="scope-toggle" data-backlog-scope aria-label="Show all unplanned" aria-pressed="${allUnplannedScope}" title="${e(label)}">${eyeIcon(allUnplannedScope)}</button>`;
+}
+function toggleScope() {
+  allUnplannedScope = !allUnplannedScope;
+  try { localStorage.setItem(scopeStorageKey, allUnplannedScope ? '1' : '0'); } catch { /* Storage may be disabled. */ }
+  // Only the backlog query changes: sprints and memberships stay as they are.
+  if (api && feed && projectId) scheduleSearch(0);
+}
+function feedScope() { return { projectId, sprintId: sprint?.id, backlogStatusId: config.backlogStatusId, allUnplanned: allUnplanned() }; }
+function backlogScope() {
+  return { backlogStatusId: config.backlogStatusId, allUnplanned: allUnplanned(), closedStatusIds: statuses.filter(status => status.is_closed).map(status => status.id) };
+}
 function syncFeed(snapshot) {
   issues = [...new Map([...snapshot.backlog, ...snapshot.sprintVisible].map(issue => [issue.id, issue])).values()];
 }
@@ -119,8 +141,8 @@ function renderBoard() {
   $('sprint-state').textContent = sprint ? `${sprint.status === 'open' ? 'Open sprint' : 'Closed sprint · read only'}${sprint.due_date ? ` · Due ${sprint.due_date}` : ''}` : 'Create an open target version in Redmine to start planning.';
   $('totals').innerHTML = `<div><strong>${e(Number(total.hours.toFixed(2)))}</strong><span>estimated hours</span></div><div><strong>${total.count}</strong><span>issues</span></div><div><strong>${total.unestimated}</strong><span>unestimated</span></div>`;
   $('filtered').textContent = `Visible sprint: ${filtered.count} issues · ${Number(filtered.hours.toFixed(2))} h · ${filtered.unestimated} unestimated`;
-  const backlog = visible.filter(issue => isBacklog(issue, config.backlogStatusId));
-  const boards = [{ id: 'backlog', title: `Backlog <span class="count">${backlog.length} / ${feed?.snapshot.total ?? '?'}</span>`, class: 'backlog-board', item: backlog.map(card) }];
+  const backlog = visible.filter(issue => isBacklog(issue, backlogScope()));
+  const boards = [{ id: 'backlog', title: `Backlog <span class="count">${backlog.length} / ${feed?.snapshot.total ?? '?'}</span>${scopeToggle()}`, class: 'backlog-board', item: backlog.map(card) }];
   for (const statusId of config.columnStatusIds) {
     const items = visible.filter(issue => issue.fixed_version?.id === sprint?.id && issue.status.id === statusId);
     boards.push({ id: `status-${statusId}`, title: `${e(statuses.find(status => status.id === statusId).name)} <span class="count">${items.length}</span>`, item: items.map(card) });
@@ -324,8 +346,8 @@ async function mutate(id, patch) {
     syncFeed(snapshot);
     if (!writeConfirmed) throw new Error('Redmine did not retain all requested changes. Showing its confirmed values; check field permissions and workflow rules.');
     $('editor').close(); editing = null;
-    notify(patch.fixed_version_id === null && !isBacklog(confirmed, config.backlogStatusId)
-      ? `Issue #${id} removed from sprint. Its status is not the backlog status, so it is no longer shown here.`
+    notify(patch.fixed_version_id === null && !isBacklog(confirmed, backlogScope())
+      ? `Issue #${id} removed from sprint. ${allUnplanned() ? 'Its status is closed' : 'Its status is not the backlog status'}, so it is no longer shown here.`
       : `Issue #${id} saved in Redmine.`);
   } catch (error) {
     if (stamp === epoch) notify(writeConfirmed ? `Issue #${id} was saved, but reloading the board failed: ${error.message} Use Refresh; do not repeat the write.` : `Save not confirmed: ${error.message} Refresh before retrying if the connection failed.`, true);
@@ -416,6 +438,7 @@ for (const [id, field, eventName] of [['query', 'query', 'input'], ['tracker', '
   $(id).addEventListener(eventName, () => { filters[field] = $(id).value; scheduleSearch(field === 'query' ? 300 : 0); });
 }
 $('board').addEventListener('click', event => {
+  if (event.target.closest('[data-backlog-scope]')) { toggleScope(); return; }
   const button = event.target.closest('[data-edit]'); if (button) void openEditor(Number(button.dataset.edit));
 });
 $('close-editor').addEventListener('click', () => { if (!busy) { $('editor').close(); editing = null; } });
@@ -429,6 +452,9 @@ $('edit-form').addEventListener('submit', event => {
   } catch (error) { notify(error.message, true); }
 });
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') void refresh(); });
+try {
+  allUnplannedScope = localStorage.getItem(scopeStorageKey) === '1';
+} catch { /* Default to the narrow backlog without local storage. */ }
 try {
   const remembered = localStorage.getItem(storageKey);
   if (remembered) { $('forget-saved').hidden = false; $('remember').checked = true; void connect(remembered, true); }

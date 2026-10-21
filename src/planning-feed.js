@@ -1,8 +1,9 @@
 // Redmine applies all search/filter predicates BEFORE pagination.
-export function issueQuery({ projectId, sprintId, backlogStatusId }, filters = {}, backlog = false) {
+export function issueQuery({ projectId, sprintId, backlogStatusId, allUnplanned = false }, filters = {}, backlog = false) {
+  const backlogStatus = allUnplanned ? 'open' : backlogStatusId;
   const params = {
     project_id: projectId, subproject_id: '!*', sort: 'priority:desc,id:asc',
-    status_id: backlog ? backlogStatusId : '*', fixed_version_id: backlog ? '!*' : sprintId,
+    status_id: backlog ? backlogStatus : '*', fixed_version_id: backlog ? '!*' : sprintId,
   };
   if (filters.tracker) params.tracker_id = filters.tracker;
   if (filters.assignee) params.assigned_to_id = filters.assignee === 'none' ? '!*' : filters.assignee;

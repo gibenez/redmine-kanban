@@ -25,7 +25,9 @@ async function setup(page, { deny = false, ignored = false, denyVersions = false
     if (path.startsWith('/versions/')) return send({ version: versions.find(v => v.id === Number(path.match(/\d+/)[0])) });
     if (path === '/issues.json') {
       const version = url.searchParams.get('fixed_version_id'), project = Number(url.searchParams.get('project_id'));
-      let selected = issues.filter(issue => issue.project.id === project && (version === '!*' ? !issue.fixed_version && issue.status.id === Number(url.searchParams.get('status_id')) : issue.fixed_version?.id === Number(version)));
+      const status = url.searchParams.get('status_id');
+      const unplanned = issue => !issue.fixed_version && (status === 'open' ? !issue.status.is_closed : issue.status.id === Number(status));
+      let selected = issues.filter(issue => issue.project.id === project && (version === '!*' ? unplanned(issue) : issue.fixed_version?.id === Number(version)));
       const tracker = url.searchParams.get('tracker_id'), assignee = url.searchParams.get('assigned_to_id'), subject = url.searchParams.get('subject'), issueId = url.searchParams.get('issue_id');
       if (tracker) selected = selected.filter(issue => issue.tracker.id === Number(tracker));
       if (assignee) selected = selected.filter(issue => assignee === '!*' ? !issue.assigned_to : issue.assigned_to?.id === Number(assignee));
@@ -432,6 +434,43 @@ test('closed sprints are opt-in and read only', async ({ page }) => {
   await page.getByRole('button', { name: 'View #1', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Save changes' })).toBeDisabled();
   expect(writes).toEqual([]);
+});
+
+test('widening the backlog scope opts in to open unplanned issues, and is remembered', async ({ page }) => {
+  const fixture = await setup(page);
+  const unplanned = { tracker: { id: 1, name: 'Feature' }, priority: { id: 2, name: 'Normal' }, project: { id: 1, name: 'Team' }, estimated_hours: null };
+  fixture.issues.push(
+    { ...unplanned, id: 5, subject: 'Unplanned, in progress', status: { id: 2, name: 'Open' } },
+    { ...unplanned, id: 6, subject: 'Unplanned and done', status: { id: 5, name: 'Done', is_closed: true } },
+  );
+  await login(page, true);
+  await expect(page.locator('[data-id="backlog"] .kanban-item')).toHaveCount(2);
+  // The control lives in the Backlog column header, not the toolbar.
+  const toggle = page.locator('[data-id="backlog"] .scope-toggle');
+  await expect(toggle).toHaveAttribute('aria-pressed', 'false');
+  await expect(toggle).toHaveAttribute('title', /only the New status/);
+  await toggle.click();
+  await expect(page.locator('[data-id="backlog"] [data-eid="5"]')).toBeVisible();
+  // Widening admits OPEN unplanned issues only.
+  await expect(page.locator('[data-eid="6"]')).toHaveCount(0);
+  await expect(page.locator('[data-id="backlog"] .kanban-item')).toHaveCount(3);
+  await page.reload();
+  await expect(page.locator('#updated')).toContainText('Updated');
+  await expect(page.locator('[data-id="backlog"] .scope-toggle')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('[data-id="backlog"] [data-eid="5"]')).toBeVisible();
+});
+
+test('the backlog scope is not a filter and survives clearing a search', async ({ page }) => {
+  const fixture = await setup(page);
+  fixture.issues.push({ id: 5, subject: 'Unplanned, in progress', status: { id: 2, name: 'Open' }, tracker: { id: 1, name: 'Feature' }, priority: { id: 2, name: 'Normal' }, project: { id: 1, name: 'Team' }, estimated_hours: null });
+  await login(page);
+  await page.getByLabel('Show all unplanned').click();
+  await expect(page.locator('[data-id="backlog"] [data-eid="5"]')).toBeVisible();
+  await page.getByLabel('Find an issue').fill('underway');
+  await expect(page.locator('[data-id="backlog"] [data-eid="5"]')).toHaveCount(0);
+  await page.getByLabel('Find an issue').fill('');
+  await expect(page.getByLabel('Show all unplanned')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('[data-id="backlog"] [data-eid="5"]')).toBeVisible();
 });
 
 test('project changes clear the previous project’s issues', async ({ page }) => {

@@ -20,6 +20,13 @@ _Avoid_: Lane, swimlane, bucket
 A single issue as it appears inside a Column.
 _Avoid_: Ticket, task, tile
 
+**Unplanned**:
+An issue that has no Sprint.
+_Avoid_: Unassigned, loose, orphan
+
 **Backlog**:
-The Column of issues in the configured New status that have no Sprint.
-_Avoid_: Inbox, unplanned, icebox
+The Column of open Unplanned issues.
+_Avoid_: Inbox, icebox
+
+**Backlog Scope**:
+Whether the Backlog shows only Unplanned issues in the configured New status, or every open Unplanned issue.

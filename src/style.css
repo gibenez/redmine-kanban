@@ -139,6 +139,21 @@ input:focus, select:focus { border-color: var(--accent); }
 }
 /* Column totals are plain right-aligned secondary text in YouTrack, not a pill badge. */
 .count { flex-shrink: 0; font-weight: 400; font-size: 12px; color: var(--secondary); background: none; padding: 0; }
+/* Backlog Scope belongs to the Backlog column, so it rides in that column's header. */
+/* jKanban's own `.kanban-board header .kanban-title-board` rule outranks the shared header
+   rule above and keeps titles inline, so the Backlog header alone is made a flex row: title
+   and count stay together on the left, the scope toggle is pushed to the right edge. */
+.kanban-board header.backlog-board .kanban-title-board {
+  display: flex; align-items: center; justify-content: flex-start; gap: 4px; width: 100%;
+}
+.scope-toggle {
+  position: relative; flex: none; margin-left: auto; width: 20px; height: 20px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center; border-color: transparent;
+  background: none; color: var(--secondary); line-height: 1;
+}
+.scope-toggle svg { pointer-events: none; display: block; }
+.scope-toggle:hover:not(:disabled) { background: var(--tag); border-color: transparent; color: var(--text); }
+.scope-toggle[aria-pressed="true"] { color: var(--text); background: var(--tag); }
 .kanban-board .kanban-drag {
   flex: 1 1 0; padding: 8px; min-height: 0; overflow-y: auto; overflow-x: hidden;
   overscroll-behavior: contain; display: flex; flex-direction: column; gap: 8px;
