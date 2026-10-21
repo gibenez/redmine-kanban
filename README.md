@@ -104,6 +104,30 @@ This is **not transactional conflict detection**: another editor can race a read
 
 ## Local development
 
+### Docker with live reload
+
+With Docker Desktop (or Docker Engine with Compose v2) running:
+
+```sh
+./dev.sh
+```
+
+On first run, the script creates `.env` if missing and asks you to configure `REDMINE_URL` and the actual status IDs. It preserves an existing `.env`. Rerun the script after configuring it, then open **http://localhost:5173** once Vite is ready (set `DEV_PORT` to use another port).
+
+The script runs `docker compose --profile dev watch dev`, which builds the `dev` target of the same `Dockerfile` and runs Vite inside it. Compose copies your edits under `src/`, `public/` and `index.html` into the running container, and Vite refreshes the browser. Editing `vite.config.js` restarts the server; changing `package-lock.json` rebuilds the image. No host Node installation is needed, and `npm install` is not required on the host.
+
+Press **Ctrl+C** to stop watching, then remove the container:
+
+```sh
+docker compose --profile dev down
+```
+
+The `dev` service sits behind the `dev` profile, so ordinary `docker compose up` still starts only the production nginx service. The development port is bound to loopback. Restart after changing `.env`. If Redmine runs on your Mac, use `host.docker.internal` instead of `localhost` in `REDMINE_URL`; that URL also supplies browser issue links, so it must be reachable from both the container and your browser. On Linux, use a hostname or address reachable from both.
+
+Tests still run on the host (`npm test`, `npm run test:e2e`), as does the production image check in `tests/docker-smoke.sh`.
+
+### Without Docker
+
 Node **22.12+** (or Node 24 LTS recommended):
 
 ```sh

@@ -9,3 +9,30 @@ services:
       COLUMN_STATUS_IDS: ${COLUMN_STATUS_IDS:?Set ordered column status IDs in .env}
       REFRESH_SECONDS: ${REFRESH_SECONDS:-60}
     restart: unless-stopped
+
+  # Local development only: Vite with live reload. Started by ./dev.sh.
+  dev:
+    profiles: ["dev"]
+    build:
+      context: .
+      target: dev
+    ports:
+      - "127.0.0.1:${DEV_PORT:-5173}:5173"
+    env_file:
+      - .env
+    develop:
+      watch:
+        - action: sync
+          path: ./src
+          target: /app/src
+        - action: sync
+          path: ./public
+          target: /app/public
+        - action: sync
+          path: ./index.html
+          target: /app/index.html
+        - action: sync+restart
+          path: ./vite.config.js
+          target: /app/vite.config.js
+        - action: rebuild
+          path: ./package-lock.json

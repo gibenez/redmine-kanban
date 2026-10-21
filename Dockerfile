@@ -1,10 +1,16 @@
-FROM node:24-alpine AS build
+FROM node:24-alpine AS source
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci
 COPY index.html vite.config.js ./
 COPY public ./public
 COPY src ./src
+
+FROM source AS dev
+EXPOSE 5173
+CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0", "--port", "5173", "--strictPort"]
+
+FROM source AS build
 RUN npm run build
 
 FROM nginx:stable-alpine
