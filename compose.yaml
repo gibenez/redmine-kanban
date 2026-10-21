@@ -1,0 +1,11 @@
+services:
+  sprint-board:
+    build: .
+    ports:
+      - "${BOARD_PORT:-8080}:8080"
+    environment:
+      REDMINE_URL: ${REDMINE_URL:?Set your Redmine instance URL in .env}
+      BACKLOG_STATUS_ID: ${BACKLOG_STATUS_ID:?Set the New status ID in .env}
+      COLUMN_STATUS_IDS: ${COLUMN_STATUS_IDS:?Set ordered column status IDs in .env}
+      REFRESH_SECONDS: ${REFRESH_SECONDS:-60}
+    restart: unless-stopped

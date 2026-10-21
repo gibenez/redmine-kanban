@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="referrer" content="no-referrer">
+  <title>Redmine Sprint Board</title>
+  <link rel="stylesheet" href="/vendor/jkanban.min.css">
+  <link rel="stylesheet" href="/vendor/dragula.min.css">
+</head>
+<body>
+  <header class="masthead"><div><span class="eyebrow">REDMINE / TEAM PLANNING</span><h1>Sprint board<span class="accent">.</span></h1></div><div id="identity"></div></header>
+  <main>
+    <div id="notice" role="status" aria-live="polite" hidden></div>
+    <section id="login" class="login panel">
+      <span class="eyebrow">YOUR TEAM. YOUR WORKFLOW.</span><h2>Make room for the next sprint.</h2>
+      <p>Connect with your personal Redmine API key. Your permissions stay yours.</p>
+      <form id="login-form">
+        <label for="api-key">Personal API key</label><input id="api-key" name="key" type="password" required autocomplete="off" spellcheck="false">
+        <label class="checkbox"><input id="remember" type="checkbox"> Remember API key on this browser</label>
+        <p class="muted">Remembered keys are stored in this site's local storage. Only use this on a trusted browser.</p>
+        <button type="submit" class="primary">Connect to Redmine</button>
+        <button type="button" id="forget-saved" hidden>Forget saved key</button>
+      </form>
+    </section>
+    <section id="workspace" hidden>
+      <div class="planning-row">
+      <div class="toolbar panel">
+        <label>Project<select id="project" aria-label="Project"></select></label>
+        <label>Sprint<select id="sprint" aria-label="Sprint"></select></label>
+        <label class="checkbox"><input id="closed" type="checkbox"> Include closed sprints</label>
+        <button id="refresh" type="button">Refresh</button><span id="updated" class="muted"></span>
+      </div>
+      <section class="summary panel" aria-label="Sprint commitment"><div><span class="eyebrow">SPRINT COMMITMENT</span><h2 id="sprint-name">Select a sprint</h2><p id="sprint-state" class="muted"></p></div><div id="totals" class="totals"></div></section>
+      </div>
+      <details id="filter-controls" open>
+        <summary>Filters</summary>
+      <div class="filters">
+        <label class="search">Find an issue<input id="query" type="search" placeholder="Search subject or #ID"></label>
+        <div class="field"><label for="tracker">Tracker</label><select id="tracker"><option value="">All trackers</option></select></div>
+        <div class="field"><label for="assignee">Assignee</label><select id="assignee"><option value="">Everyone</option></select></div>
+        <span id="filtered" class="muted"></span>
+      </div>
+      </details>
+      <details class="board-help"><summary>Board help</summary><p class="muted board-hint">Drag between columns to change status. Move to backlog to remove from the sprint. Use Plan on a card for keyboard-accessible editing.</p></details>
+      <div id="board" aria-label="Backlog and sprint board"></div>
+      <p id="empty" class="muted" hidden>No matching issues.</p>
+    </section>
+  </main>
+  <dialog id="notice-dialog" aria-labelledby="notice-title">
+    <h2 id="notice-title">Full message</h2><p id="notice-message"></p>
+    <form method="dialog"><button>Close message</button></form>
+  </dialog>
+  <dialog id="editor" aria-labelledby="editor-title">
+    <form id="edit-form">
+      <div class="dialog-heading"><h2 id="editor-title">Plan issue</h2><button type="button" id="close-editor" aria-label="Close editor">×</button></div>
+      <p id="editor-subject"></p>
+      <p id="editor-notice" role="status" aria-live="polite" hidden></p>
+      <p id="editor-warning" class="muted"></p>
+      <label for="edit-assignee">Assignment</label><select id="edit-assignee"></select>
+      <label for="edit-estimate">Estimated hours</label><input id="edit-estimate" type="number" min="0" step="any" placeholder="Unestimated">
+      <label for="edit-status">Status</label><select id="edit-status"></select>
+      <label for="edit-destination">Planning destination</label>
+      <select id="edit-destination"><option value="sprint">Selected sprint</option><option value="backlog">Remove from sprint (keep status)</option></select>
+      <div class="dialog-actions"><a id="issue-link" target="_blank" rel="noopener noreferrer">Open in Redmine ↗</a><button type="submit" class="primary">Save changes</button></div>
+    </form>
+  </dialog>
+  <script src="/vendor/jkanban.min.js"></script>
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
