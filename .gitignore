@@ -6,3 +6,5 @@ dist/
 playwright-report/
 test-results/
 coverage/
+# Third-party documentation screenshots used only to measure; re-fetch, do not vendor.
+.scratch/sprint-planning/youtrack-shots/

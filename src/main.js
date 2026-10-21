@@ -8,7 +8,7 @@ const $ = id => document.getElementById(id);
 const storageKey = 'redmine-sprint-board.api-key';
 let api, config, statuses = [], projects = [], versions = [], memberships = [], issues = [], board;
 let sprint = null, projectId = '', blockedProjectId = '', busy = false, dragging = false, loading = false, epoch = 0, timer, editing;
-let feed, queryLoading = false, queryTimer, queryRevision = 0;
+let feed, queryLoading = false, queryTimer, queryRevision = 0, backlogFailed = false;
 const filters = { query: '', tracker: '', assignee: '' };
 
 function notify(message, error = false) {
@@ -80,11 +80,34 @@ function renderFilters() {
   if (filters.assignee && filters.assignee !== 'none' && !people.some(([id]) => String(id) === filters.assignee)) people.push([filters.assignee, $('assignee').selectedOptions[0]?.textContent || `Assignee #${filters.assignee}`]);
   options($('assignee'), [['', 'Everyone'], ['none', 'Unassigned'], ...people], filters.assignee);
 }
+// Redmine never returns a colour for a priority, and priorities are admin-configurable, so
+// the stripe is matched by name with a neutral fallback. See docs/adr/0001.
+const priorityNames = new Set(['low', 'normal', 'high', 'urgent', 'immediate']);
+function priorityClass(name) {
+  const key = String(name || '').trim().toLowerCase();
+  return `prio-${priorityNames.has(key) ? key : 'none'}`;
+}
 function card(issue) {
   const id = Number(issue.id);
+  const open = sprint?.status === 'open';
+  // Resolved issues strike through the ID, as on a YouTrack card.
+  const resolved = statuses.find(status => status.id === issue.status.id)?.is_closed;
+  const subject = e(issue.subject);
+  const action = `${open ? 'Plan' : 'View'} #${id}`;
+  const fields = [
+    `<span class="card-field">${e(issue.priority.name)}</span>`,
+    `<span class="card-field plain">${e(issue.tracker.name)}</span>`,
+    `<span class="card-field plain">${e(issue.status.name)}</span>`,
+    `<span class="card-field plain">${e(issue.assigned_to?.name || 'Unassigned')}</span>`,
+  ].join('');
+  const hours = issue.estimated_hours == null
+    ? '<strong class="unestimated" title="Unestimated">?</strong>'
+    : `<strong>${e(issue.estimated_hours)} h</strong>`;
   return {
-    id: String(id), class: sprint?.status === 'open' ? [] : ['not-draggable'],
-    title: `<div class="card-top"><a href="${e(linkToIssue(issue.id))}" target="_blank" rel="noopener noreferrer">#${id}</a><span>${e(issue.tracker.name)}</span></div><h3>${e(issue.subject)}</h3><div class="card-status">${e(issue.status.name)} · ${e(issue.priority.name)}</div><div class="card-bottom"><span>${e(issue.assigned_to?.name || 'Unassigned')}</span><strong>${issue.estimated_hours == null ? '? h' : `${e(issue.estimated_hours)} h`}</strong></div><button type="button" class="plan" data-edit="${id}">${sprint?.status === 'open' ? 'Plan' : 'View'} #${id}</button>`,
+    id: String(id), class: [...(open ? [] : ['not-draggable']), priorityClass(issue.priority.name)],
+    // The summary is clamped to three lines in CSS; title and aria-label keep the full text
+    // reachable for pointer and assistive technology alike.
+    title: `<div class="card-head"><a class="${resolved ? 'resolved' : ''}" href="${e(linkToIssue(issue.id))}" target="_blank" rel="noopener noreferrer"${resolved ? ' title="Resolved"' : ''}>#${id}</a><h3 title="${subject}" aria-label="${subject}">${subject}</h3></div><div class="card-bottom">${fields}${hours}</div><button type="button" class="plan" data-edit="${id}" aria-label="${action}" title="${action}">\u270E</button>`,
   };
 }
 function renderBoard() {
@@ -140,28 +163,62 @@ function renderBacklogFooter() {
   node.querySelector('.kanban-drag').setAttribute('aria-busy', String(feed.loadingMore));
   const footer = node.querySelector('footer'); footer.replaceChildren();
   const text = document.createElement('span'); text.className = 'muted';
-  text.textContent = feed.snapshot.hasMore ? 'Scroll for more issues' : 'All matching backlog issues loaded'; footer.append(text);
-  if (feed.snapshot.hasMore) {
+  text.textContent = !feed.snapshot.hasMore ? 'All matching backlog issues loaded'
+    : feed.loadingMore ? 'Loading…' : 'Scroll to load more';
+  footer.append(text);
+  // A page that failed cannot rely on scrolling to retry: the column may already be at its
+  // bottom, so no further scroll event would fire. Keep an explicit control for that case.
+  if (feed.snapshot.hasMore && backlogFailed && !feed.loadingMore) {
     const more = document.createElement('button'); more.type = 'button'; more.id = 'backlog-more';
-    more.textContent = feed.loadingMore ? 'Loading…' : 'Load 5 more';
-    more.disabled = busy || loading || queryLoading || feed.loadingMore;
+    more.textContent = 'Retry loading issues';
+    more.disabled = busy || loading || queryLoading;
     more.addEventListener('click', () => void loadMoreBacklog()); footer.append(more);
   }
 }
-async function loadMoreBacklog() {
+// Request a page that fills the visible column rather than a fixed five, measuring a
+// rendered card where one exists and falling back to the compact card height.
+const compactCardHeight = 90;
+function backlogPageSize() {
+  const container = board?.findBoard('backlog')?.querySelector('.kanban-drag');
+  const height = container?.clientHeight || $('board')?.clientHeight || window.innerHeight;
+  const card = container?.querySelector('.kanban-item');
+  const unit = card ? card.getBoundingClientRect().height + 8 : compactCardHeight;
+  // Two spare rows so a short column still offers something to scroll to; Redmine caps at 100.
+  return Math.min(100, Math.max(5, Math.ceil(height / unit) + 2));
+}
+// Compact cards mean the first page can fit without overflowing a tall column, which would
+// leave scroll-triggered paging unreachable. Fetch further pages until the column scrolls,
+// bounded so a tall screen cannot walk the whole backlog.
+// Called once a load has settled: loadMoreBacklog refuses to run while one is in flight.
+const autoFillPages = 4;
+async function fillBacklogColumn() {
+  const container = board?.findBoard('backlog')?.querySelector('.kanban-drag');
+  if (!container) return;
+  for (let page = 0; page < autoFillPages; page++) {
+    if (!feed?.snapshot.hasMore || container.scrollHeight > container.clientHeight) return;
+    const before = feed.snapshot.backlog.length;
+    await loadMoreBacklog({ silent: true });
+    if (!container.isConnected) return;
+    if (feed.snapshot.backlog.length === before) return;
+  }
+}
+async function loadMoreBacklog({ silent = false } = {}) {
   if (!api || !board || busy || loading || queryLoading || dragging || $('editor').open || feed?.loadingMore || !feed?.snapshot.hasMore) return;
-  notify('');
+  // Automatic fetches must not clear a notice the user has not read yet.
+  if (!silent) notify('');
+  feed.pageSize = backlogPageSize();
   const revision = queryRevision, activeBoard = board, restoreFocus = document.activeElement?.id === 'backlog-more';
   const pending = feed.next(); renderBacklogFooter(); lock();
   try {
     const snapshot = await pending;
     if (!snapshot || revision !== queryRevision) return;
+    backlogFailed = false;
     syncFeed(snapshot); renderFilters();
     if (board !== activeBoard) { renderBoard(); return; }
     for (const issue of snapshot.backlog) if (!board.findElement(String(issue.id))) board.addElement('backlog', card(issue));
     $('empty').hidden = issues.length > 0;
   } catch (error) {
-    if (revision === queryRevision) notify(`Could not load more backlog issues: ${error.message} Use Load 5 more to retry.`, true);
+    if (revision === queryRevision) { backlogFailed = true; notify(`Could not load more backlog issues: ${error.message} Use Retry loading issues, or scroll again.`, true); }
   } finally {
     if (revision === queryRevision) {
       renderBacklogFooter(); lock();
@@ -171,6 +228,7 @@ async function loadMoreBacklog() {
 }
 async function searchIssues(revision) {
   try {
+    feed.pageSize = backlogPageSize();
     const snapshot = await feed.load(feedScope(), filters, { refreshSprint: false });
     if (!snapshot || revision !== queryRevision) return;
     syncFeed(snapshot); renderFilters(); renderBoard();
@@ -181,7 +239,7 @@ async function searchIssues(revision) {
       notify(`Search failed: ${error.message} Change the search or use Refresh to retry.`, true);
     }
   } finally {
-    if (revision === queryRevision) { queryLoading = false; lock(); renderBacklogFooter(); }
+    if (revision === queryRevision) { queryLoading = false; lock(); renderBacklogFooter(); void fillBacklogColumn(); }
   }
 }
 function scheduleSearch(delay) {
@@ -216,6 +274,7 @@ async function refresh(projectChanged = false, retryDenied = false) {
     if (stamp !== epoch) return;
     versions = newVersions; memberships = newMemberships;
     chooseSprint(projectChanged ? null : sprint?.id);
+    feed.pageSize = backlogPageSize(); backlogFailed = false;
     const next = await feed.load(feedScope(), filters);
     if (!next || stamp !== epoch) return;
     syncFeed(next); blockedProjectId = '';
@@ -234,7 +293,7 @@ async function refresh(projectChanged = false, retryDenied = false) {
         $('totals').replaceChildren(); $('filtered').textContent = ''; $('updated').textContent = ''; $('empty').hidden = true;
       }
     }
-  } finally { if (stamp === epoch) { loading = false; lock(); renderBacklogFooter(); } }
+  } finally { if (stamp === epoch) { loading = false; lock(); renderBacklogFooter(); void fillBacklogColumn(); } }
 }
 
 async function mutate(id, patch) {
@@ -259,6 +318,7 @@ async function mutate(id, patch) {
     if (stamp !== epoch) return;
     writeConfirmed = matchesPatch(confirmed, patch);
     // Membership, filtering, ordering and page cursors may all change after a write.
+    feed.pageSize = backlogPageSize(); backlogFailed = false;
     const snapshot = await feed.load(feedScope(), filters);
     if (!snapshot || stamp !== epoch) return;
     syncFeed(snapshot);
@@ -270,7 +330,7 @@ async function mutate(id, patch) {
   } catch (error) {
     if (stamp === epoch) notify(writeConfirmed ? `Issue #${id} was saved, but reloading the board failed: ${error.message} Use Refresh; do not repeat the write.` : `Save not confirmed: ${error.message} Refresh before retrying if the connection failed.`, true);
   }
-  finally { if (stamp === epoch) { busy = false; lock(); renderFilters(); renderBoard(); } }
+  finally { if (stamp === epoch) { busy = false; lock(); renderFilters(); renderBoard(); void fillBacklogColumn(); } }
 }
 
 async function openEditor(id) {

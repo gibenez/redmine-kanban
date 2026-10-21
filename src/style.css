@@ -1,121 +1,250 @@
-:root { font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color: #24342f; background: #f5f6f3; font-synthesis: none; color-scheme: light; --green: #23654d; --border: #dce2dc; }
+/* Visual language transcribed from JetBrains Ring UI 7.0.131 (YouTrack's own component
+   library). See docs/adr/0001-jetbrains-ring-ui-visual-language.md. */
+:root {
+  /* Ring UI uses the platform font; there is no bundled webfont in YouTrack. */
+  font-family: system-ui, Arial, sans-serif;
+  font-size: 14px;
+  line-height: 20px;
+  font-synthesis: none;
+  font-variant-numeric: lining-nums tabular-nums slashed-zero;
+  color-scheme: light;
+
+  --unit: 8px;
+  --radius: 4px;
+  --radius-small: 2px;
+  --radius-large: 8px;
+
+  --content: #fff;          /* card and panel surface */
+  --sidebar: #f7f8fa;       /* recessed surface: column headers, toolbars */
+  --line: #dfe1e5;          /* hairline divider */
+  --border: #d3d5db;        /* control border */
+  --text: #27282e;
+  --secondary: #6c707e;
+  --disabled: #a8adbd;
+  --accent: #3369d6;
+  --accent-hover: #315fbd;
+  --link: #315fbd;
+  --link-hover: #2e55a3;
+  --tag: #ebecf0;
+  --tag-hover: #dfe1e5;
+  --hover-bg: #edf3ff;
+  --selected-bg: #d4e2ff;
+  --success: #1f8039;
+  --error: #cc3645;
+  --warning: #df9303;
+  --error-bg: #ffebec;
+  --error-border: #f2b6bb;
+  --success-bg: #e6f7e9;
+  --success-border: #89c398;
+  --shadow: 0 2px 8px rgb(0 28 54 / 10%), 0 1px 2px rgb(0 28 54 / 4%);
+
+  /* Priority stripes use Ring UI's muted border tier, as YouTrack does. Matched by
+     Redmine priority name; unknown names fall back to --priority-none. */
+  --priority-none: #d3d5db;
+  --priority-low: #89c398;
+  --priority-normal: #a8adbd;
+  --priority-high: #fed277;
+  --priority-urgent: #fdbd3d;
+  --priority-immediate: #f2b6bb;
+
+  color: var(--text);
+  background: var(--content);
+}
 * { box-sizing: border-box; }
 body { margin: 0; }
 [hidden] { display: none !important; }
 button, input, select { font: inherit; }
 button, select { cursor: pointer; }
-button { border: 1px solid #cbd6ce; background: white; border-radius: 7px; padding: 9px 14px; color: #294737; font-weight: 600; }
-button:hover { background: #edf3ed; }
+button {
+  border: 1px solid var(--border); background: var(--content); border-radius: var(--radius);
+  padding: 5px 12px; color: var(--text); font-weight: 500;
+}
+button:hover { background: var(--hover-bg); border-color: var(--accent); }
 button:disabled, input:disabled, select:disabled { opacity: .55; cursor: not-allowed; }
-button.primary { background: var(--green); color: white; border-color: var(--green); }
-a { color: var(--green); text-underline-offset: 3px; }
-:focus-visible { outline: 3px solid #d6a33c; outline-offset: 3px; }
-.masthead { padding: 28px 36px 24px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--border); background: white; gap: 20px; }
-h1 { font-size: 30px; margin: 5px 0 0; letter-spacing: -1.2px; }
-h2 { font-size: 24px; letter-spacing: -.7px; }
-.accent { color: #d69a32; }
-.eyebrow { font-size: 10px; letter-spacing: 1.9px; font-weight: 750; color: #697c6d; }
-#identity { display: flex; align-items: center; gap: 16px; font-size: 13px; }
-main { padding: 24px 36px 48px; }
-.panel { background: white; border: 1px solid var(--border); border-radius: 12px; }
-.login { max-width: 520px; padding: 36px; margin: 60px auto; }
-.login h2 { font-size: 32px; line-height: 1.15; }
-.login p { line-height: 1.6; }
-label { display: flex; flex-direction: column; gap: 7px; font-size: 12px; font-weight: 650; color: #526356; }
-input, select { color: #24342f; background: white; border: 1px solid #ccd7ce; border-radius: 6px; padding: 10px 12px; min-width: 0; }
-.checkbox { display: flex; flex-direction: row; align-items: center; gap: 8px; font-weight: 500; }
-.checkbox input { accent-color: var(--green); }
-.login .checkbox { margin: 18px 0 0; }
-.muted { color: #6a776d; font-size: 12px; }
-#notice { padding: 13px 16px; border: 1px solid #b3d2bb; background: #edf7ee; border-radius: 8px; margin-bottom: 20px; overflow-wrap: anywhere; }
-#notice.error { border-color: #e3bcb0; background: #fff1eb; color: #8a3420; }
-.toolbar { display: flex; align-items: end; flex-wrap: wrap; padding: 18px; gap: 20px; }
-.toolbar label:not(.checkbox) { min-width: 190px; }
-.toolbar .checkbox { padding-bottom: 10px; }
-#updated { margin-bottom: 11px; }
-.summary { display: flex; justify-content: space-between; align-items: center; padding: 32px 0 22px; gap: 28px; }
-.summary h2 { margin: 7px 0; }
-.totals { display: flex; gap: 38px; }
-.totals div { display: flex; flex-direction: column; gap: 6px; }
-.totals strong { font-size: 30px; font-weight: 650; letter-spacing: -1px; }
-.totals span { color: #6a776d; font-size: 12px; }
-.filters { display: flex; align-items: end; gap: 16px; padding: 16px 0; border-top: 1px solid var(--border); }
-.filters .search { min-width: 270px; }
-.filters .field { display: flex; flex-direction: column; gap: 7px; }
-.filters select { min-width: 145px; }
-#filtered { margin: 0 0 10px auto; }
-.board-hint { margin: 4px 0 18px; }
+button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+button.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+a { color: var(--link); text-underline-offset: 3px; }
+a:hover { color: var(--link-hover); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.masthead {
+  padding: 12px 16px; display: flex; align-items: center; justify-content: space-between;
+  border-bottom: 1px solid var(--line); background: var(--content); gap: 16px;
+}
+h1 { font-size: 20px; line-height: 24px; font-weight: 600; margin: 2px 0 0; letter-spacing: 0; }
+h2 { font-size: 16px; line-height: 24px; font-weight: 600; letter-spacing: 0; }
+.accent { color: var(--accent); }
+.eyebrow { font-size: 12px; line-height: 16px; font-weight: 400; letter-spacing: 0; color: var(--secondary); text-transform: none; }
+#identity { display: flex; align-items: center; gap: 12px; font-size: 12px; }
+main { padding: 16px; }
+.panel { background: var(--content); border: 1px solid var(--line); border-radius: var(--radius); }
+.login { max-width: 480px; padding: 24px; margin: 48px auto; box-shadow: var(--shadow); }
+.login h2 { font-size: 20px; line-height: 24px; margin-top: 4px; }
+.login p { line-height: 20px; color: var(--secondary); }
+label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; line-height: 16px; font-weight: 400; color: var(--secondary); }
+input, select {
+  color: var(--text); background: var(--content); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 5px 8px; min-width: 0;
+}
+input:focus, select:focus { border-color: var(--accent); }
+.checkbox { display: flex; flex-direction: row; align-items: center; gap: 8px; color: var(--text); }
+.checkbox input { accent-color: var(--accent); }
+.login .checkbox { margin: 16px 0 0; }
+.muted { color: var(--secondary); font-size: 12px; line-height: 16px; }
+#notice {
+  padding: 8px 12px; border: 1px solid var(--success-border); background: var(--success-bg);
+  border-radius: var(--radius); margin-bottom: 16px; overflow-wrap: anywhere;
+}
+#notice.error { border-color: var(--error-border); background: var(--error-bg); color: var(--error); }
+.toolbar { display: flex; align-items: end; flex-wrap: wrap; padding: 8px; gap: 16px; }
+.toolbar label:not(.checkbox) { min-width: 180px; }
+.toolbar .checkbox { padding-bottom: 6px; }
+#updated { margin-bottom: 7px; }
+.summary { display: flex; justify-content: space-between; align-items: center; padding: 16px 0; gap: 24px; }
+.summary h2 { margin: 4px 0; }
+.totals { display: flex; gap: 24px; }
+.totals div { display: flex; flex-direction: column; gap: 2px; }
+.totals strong { font-size: 20px; line-height: 24px; font-weight: 600; letter-spacing: 0; }
+.totals span { color: var(--secondary); font-size: 12px; line-height: 16px; }
+.filters { display: flex; align-items: end; gap: 16px; padding: 8px 0; border-top: 1px solid var(--line); }
+.filters .search { min-width: 240px; }
+.filters .field { display: flex; flex-direction: column; gap: 4px; }
+.filters select { min-width: 136px; }
+#filtered { margin: 0 0 8px auto; }
+.board-hint { margin: 4px 0 16px; }
 #board { flex: 1; min-height: 0; min-width: 0; }
-/* jKanban writes pixel widths and margins inline; the viewport owns sizing. */
-.kanban-container { display: flex; align-items: stretch; gap: 12px; width: 100% !important; height: 100%; }
-.kanban-board { float: none; display: flex; flex-direction: column; flex: 1 1 0; min-width: 0; width: auto !important; margin: 0 !important; border-radius: 10px; background: #eaf0e9; border: 1px solid #dde6dc; overflow-wrap: anywhere; }
-.kanban-board[data-id="backlog"] { background: #edece7; border-color: #dfded5; }
-.kanban-board header { flex: none; padding: 12px 10px; border-bottom: 1px solid #d9e1d7; }
-.kanban-board-header .kanban-title-board { display: flex; align-items: center; justify-content: space-between; font-size: 13px; width: 100%; }
-.count { font-weight: 500; font-size: 11px; padding: 3px 7px; background: #fff9; border-radius: 5px; }
-.kanban-board .kanban-drag { flex: 1 1 0; padding: 10px; min-height: 0; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; }
-.kanban-board footer { flex: none; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; }
+
+/* Board: YouTrack separates columns with hairlines over a flat canvas rather than drawing
+   each column as a rounded panel. jKanban writes pixel widths and margins inline; the
+   viewport owns sizing. */
+.kanban-container {
+  display: flex; align-items: stretch; gap: 0; width: 100% !important; height: 100%;
+  border: 1px solid var(--line); border-radius: var(--radius); background: var(--content);
+  overflow: hidden;
+}
+.kanban-board {
+  float: none; display: flex; flex-direction: column; flex: 1 1 0; min-width: 0;
+  width: auto !important; margin: 0 !important; border-radius: 0; background: transparent;
+  border: 0; border-left: 1px solid var(--line); overflow-wrap: anywhere;
+}
+.kanban-board:first-child { border-left: 0; }
+/* The Backlog is the only column that is not a Redmine status, and the only
+   drop-to-unplan target: a faint recessed tint, not a different colour. */
+.kanban-board[data-id="backlog"] { background: color-mix(in srgb, var(--sidebar) 60%, var(--content)); }
+.kanban-board header {
+  flex: none; padding: 6px 12px; border-bottom: 1px solid var(--line); background: var(--sidebar);
+}
+.kanban-board-header .kanban-title-board {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  font-size: 12px; line-height: 16px; font-weight: 600; width: 100%;
+}
+/* Column totals are plain right-aligned secondary text in YouTrack, not a pill badge. */
+.count { flex-shrink: 0; font-weight: 400; font-size: 12px; color: var(--secondary); background: none; padding: 0; }
+.kanban-board .kanban-drag {
+  flex: 1 1 0; padding: 8px; min-height: 0; overflow-y: auto; overflow-x: hidden;
+  overscroll-behavior: contain; display: flex; flex-direction: column; gap: 8px;
+}
+.kanban-board footer { flex: none; padding: 8px; display: flex; flex-direction: column; gap: 8px; }
 .kanban-board:not([data-id="backlog"]) footer { display: none; }
-.kanban-item { background: white; border-radius: 8px; padding: 14px; margin-bottom: 12px; border: 1px solid #e0e6de; box-shadow: 0 2px 2px #21352505; cursor: grab; overflow-wrap: anywhere; }
+
+/* Card: flat, 1px hairline, left priority stripe (~5px, measured from JetBrains' own
+   2026.2 board screenshots). No shadow. */
+.kanban-item {
+  position: relative; background: var(--content); border: 1px solid var(--line);
+  border-left: 5px solid var(--stripe, var(--priority-none)); border-radius: var(--radius);
+  padding: 8px 8px 8px 7px; margin-bottom: 0; cursor: grab; overflow-wrap: anywhere;
+}
+.kanban-item:hover { border-color: var(--border); border-left-color: var(--stripe, var(--priority-none)); }
+.kanban-item.prio-none { --stripe: var(--priority-none); }
+.kanban-item.prio-low { --stripe: var(--priority-low); }
+.kanban-item.prio-normal { --stripe: var(--priority-normal); }
+.kanban-item.prio-high { --stripe: var(--priority-high); }
+.kanban-item.prio-urgent { --stripe: var(--priority-urgent); }
+.kanban-item.prio-immediate { --stripe: var(--priority-immediate); }
+.kanban-item:focus-within { border-color: var(--accent); }
 .kanban-item.not-draggable { cursor: default; }
-.kanban-item h3 { font-size: 14px; font-weight: 600; line-height: 1.5; margin: 12px 0; }
-.card-top, .card-bottom { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; font-size: 11px; }
-.card-top span { background: #edf2ec; color: #60715e; padding: 3px 6px; border-radius: 4px; }
-.card-top a { font-weight: 650; }
-.card-status { font-size: 10px; color: #778174; margin-bottom: 17px; }
-.card-bottom { color: #5d6e61; }
-.card-bottom strong { white-space: normal; background: #f7f4e9; padding: 4px 6px; border-radius: 4px; color: #7a6943; }
-.plan { font-size: 11px; margin-top: 14px; padding: 5px 8px; }
-dialog { width: min(520px, calc(100% - 32px)); border: 1px solid var(--border); border-radius: 12px; padding: 25px; color: inherit; box-shadow: 0 20px 90px #162d3040; }
-dialog::backdrop { background: #14292277; }
-.dialog-heading { display: flex; align-items: center; justify-content: space-between; gap: 15px; }
+/* ID and summary share the first line, as on a YouTrack card. */
+.card-head { display: flex; align-items: baseline; gap: 8px; font-size: 14px; line-height: 20px; }
+.card-head a { flex: none; color: var(--secondary); text-decoration: none; }
+.card-head a:hover { color: var(--link); text-decoration: underline; }
+.card-head a.resolved { text-decoration: line-through; }
+.kanban-item h3 {
+  flex: 1; min-width: 0; font-size: 14px; line-height: 20px; font-weight: 400; margin: 0;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; overflow: hidden;
+}
+/* Field values are dot-and-text, not chips. */
+.card-bottom {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin-top: 8px;
+  font-size: 12px; line-height: 16px; color: var(--secondary);
+}
+.card-field { display: inline-flex; align-items: center; gap: 4px; }
+.card-field::before {
+  content: ''; width: 8px; height: 8px; border-radius: 50%; flex: none;
+  background: var(--stripe, var(--priority-none));
+}
+.card-field.plain::before { display: none; }
+.card-field.plain::before { display: none; }
+.card-bottom strong { margin-left: auto; font-weight: 400; color: var(--secondary); white-space: nowrap; }
+/* Not --disabled: that tier fails AA as text. */
+.card-bottom strong.unestimated { color: var(--secondary); }
+.plan {
+  position: absolute; top: 4px; right: 4px; width: 24px; height: 24px; padding: 0;
+  display: flex; align-items: center; justify-content: center; border-color: transparent;
+  background: none; color: var(--secondary); font-size: 14px; line-height: 1;
+}
+.plan:hover { background: var(--tag); border-color: transparent; color: var(--text); }
+.kanban-item:has(.plan) .card-head { padding-right: 24px; }
+dialog {
+  width: min(520px, calc(100% - 32px)); border: 1px solid var(--line); border-radius: var(--radius-large);
+  padding: 24px; color: inherit; background: var(--content); box-shadow: var(--shadow);
+}
+dialog::backdrop { background: rgb(0 28 54 / 30%); }
+.dialog-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .dialog-heading h2 { margin: 0; }
-dialog label { margin: 16px 0 7px; }
+dialog label { margin: 16px 0 4px; }
 dialog input, dialog select { width: 100%; }
-.dialog-actions { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-top: 25px; font-size: 12px; }
+.dialog-actions { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-top: 24px; font-size: 12px; }
+
 /* Only the authenticated board is viewport-bound; login and dialogs retain their flow. */
-body.board-active { height: 100dvh; overflow: hidden; display: flex; flex-direction: column; }
-.board-active .masthead { flex: none; padding: 12px 24px; }
-.board-active h1 { font-size: 25px; }
-.board-active main { flex: 1; min-height: 0; min-width: 0; display: flex; flex-direction: column; padding: 12px 24px 16px; }
-.board-active #notice { display: flex; align-items: center; gap: 12px; flex: none; padding: 6px 10px; margin-bottom: 6px; font-size: 13px; }
+body.board-active { height: 100dvh; overflow: hidden; display: flex; flex-direction: column; background: var(--content); }
+.board-active .masthead { flex: none; padding: 8px 16px; }
+.board-active h1 { font-size: 16px; line-height: 24px; }
+.board-active main { flex: 1; min-height: 0; min-width: 0; display: flex; flex-direction: column; padding: 8px 16px 16px; }
+.board-active #notice { display: flex; align-items: center; gap: 8px; flex: none; padding: 4px 8px; margin-bottom: 8px; font-size: 12px; }
 .board-active #notice span { min-width: 0; flex: 1; }
 .board-active #notice:has(button) span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .board-active #notice button { flex: none; }
-#notice button { padding: 3px 8px; }
+#notice button { padding: 1px 8px; font-size: 12px; }
 #notice-message { overflow-wrap: anywhere; }
 #notice-dialog { max-height: calc(100dvh - 32px); overflow: auto; }
 #workspace { flex: 1; min-height: 0; min-width: 0; display: flex; flex-direction: column; }
 #workspace > :not(#board) { flex: none; min-width: 0; }
-#workspace .toolbar { gap: 12px; padding: 10px 12px; }
-#workspace .toolbar label:not(.checkbox) { flex: 1 1 140px; min-width: 0; max-width: 230px; }
+#workspace .toolbar { gap: 8px; padding: 8px; }
+#workspace .toolbar label:not(.checkbox) { flex: 1 1 140px; min-width: 0; max-width: 224px; }
 #workspace select { max-width: 100%; }
-.planning-row { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
+.planning-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
 .planning-row > .toolbar { flex: 1 1 650px; min-width: 0; }
-#workspace .summary { flex: 1 1 400px; min-width: 0; padding: 10px 14px; gap: 16px; }
+#workspace .summary { flex: 1 1 400px; min-width: 0; padding: 8px 12px; gap: 16px; }
 #workspace .summary > div:first-child { min-width: 0; overflow-wrap: anywhere; }
-#workspace .summary h2 { font-size: 20px; margin: 4px 0; }
-#sprint-state { margin: 4px 0; }
-#workspace .totals { gap: 24px; flex-shrink: 0; }
-#workspace .totals strong { font-size: 24px; }
-#workspace .filters { padding: 8px 0; gap: 12px; }
+#workspace .summary h2 { font-size: 16px; line-height: 24px; margin: 2px 0; }
+#sprint-state { margin: 2px 0; }
+#workspace .totals { gap: 16px; flex-shrink: 0; }
+#workspace .totals strong { font-size: 16px; line-height: 24px; }
+#workspace .filters { padding: 8px 0; gap: 8px; }
 #filter-controls > summary { display: none; }
 #filter-controls .search { min-width: 0; flex: 1; }
 #workspace #filtered { max-width: 300px; }
-#workspace input, #workspace select { padding: 7px 9px; }
-.board-help { margin: 0 0 8px; font-size: 12px; color: #526356; }
+.board-help { margin: 0 0 8px; font-size: 12px; line-height: 16px; color: var(--secondary); }
 summary { cursor: pointer; }
-.board-hint { margin: 6px 0; }
-#empty { margin: 6px 0 0; }
+.board-hint { margin: 4px 0; }
+#empty { margin: 8px 0 0; }
 .kanban-title-board { gap: 4px; }
-.count { flex-shrink: 0; }
-.board-help[open] > summary { float: left; margin-right: 12px; }
+.board-help[open] > summary { float: left; margin-right: 8px; }
 .board-help[open] .board-hint { margin: 0; }
 .board-help::after { content: ''; display: block; clear: both; }
 @media (max-width: 1279px), (max-height: 719px) {
-  .board-active .masthead { padding: 8px 12px; }
-  .board-active main { padding: 8px 12px; }
-  #filter-controls > summary { display: list-item; padding: 6px 0; font-size: 12px; }
+  .board-active .masthead { padding: 8px; }
+  .board-active main { padding: 8px; }
+  #filter-controls > summary { display: list-item; padding: 4px 0; font-size: 12px; }
   #board { overflow-x: auto; }
   .kanban-board { flex: 1 0 220px; }
   .kanban-container { min-width: 100%; width: max-content !important; }
@@ -123,32 +252,58 @@ summary { cursor: pointer; }
   #workspace .toolbar label:not(.checkbox) { flex: 1 1 140px; }
   #workspace .filters { flex-wrap: wrap; }
   #workspace .filters .search { flex: 1 1 180px; }
-  #workspace .summary { padding: 8px 12px; }
+  #workspace .summary { padding: 8px; }
   #workspace #filtered { margin: 0; }
 }
-@media (max-width: 850px) { main { padding: 18px; } .masthead { padding: 22px 18px; } .summary, .filters { flex-wrap: wrap; } #identity { flex-direction: column; align-items: end; } #filtered { margin-left: 0; } .totals { gap: 25px; } }
+@media (max-width: 850px) {
+  main { padding: 8px; }
+  .masthead { padding: 8px; }
+  .summary, .filters { flex-wrap: wrap; }
+  #identity { flex-direction: column; align-items: end; }
+  #filtered { margin-left: 0; }
+  .totals { gap: 16px; }
+}
 
-/* Follow the OS preference, including changes while the page is open. */
+/* Follow the OS preference, including changes while the page is open. Ring UI's dark
+   surfaces invert the light relationship: cards sit darker than the columns holding them. */
 @media (prefers-color-scheme: dark) {
-  :root { color-scheme: dark; color: #e3ebe5; background: #141c19; --green: #347c58; --border: #3a4c40; }
-  .masthead, .panel, dialog, .kanban-item { background: #1e2924; }
-  button { color: #e3ebe5; background: #26362d; border-color: #526558; }
-  button:hover { background: #344c3e; }
-  button.primary { background: var(--green); border-color: var(--green); }
-  button.primary:hover { background: #3d8a64; }
-  a { color: #96d9b2; }
-  input, select { color: #e3ebe5; background: #17211c; border-color: #526558; }
-  input::placeholder { color: #a4b3a8; }
-  label, .board-help, .card-bottom { color: #c0cec3; }
-  .muted, .eyebrow, .totals span, .card-status { color: #adbbb0; }
-  #notice, #editor-notice.success { color: #c3e5cb; background: #20382a; border-color: #486c52; }
-  #notice.error, #editor-notice.error { color: #ffbcaa; background: #38251f; border-color: #805243; }
-  .kanban-board { background: #19251f; border-color: var(--border); }
-  .kanban-board[data-id="backlog"] { background: #282820; border-color: #4e5040; }
-  .kanban-board header, .kanban-item { border-color: var(--border); }
-  .count { background: #35473b; }
-  .card-top span { color: #c0cec3; background: #304236; }
-  .card-bottom strong { color: #e5d39a; background: #363324; }
-  dialog { box-shadow: 0 20px 90px #0008; }
-  dialog::backdrop { background: #0009; }
+  :root {
+    color-scheme: dark;
+    --content: #1e1f22;
+    --sidebar: #2b2d30;
+    --line: #43454a;
+    --border: #6f737a;
+    --text: #fff;
+    --secondary: #9da0a8;
+    --disabled: #6f737a;
+    --accent: #366acf;
+    --accent-hover: #3369d6;
+    --link: #99bbff;
+    --link-hover: #c0d6ff;
+    --tag: #43454a;
+    --tag-hover: #4e5157;
+    --hover-bg: #212d45;
+    --selected-bg: #2e436e;
+    --success: #4e8052;
+    --error: #bd5757;
+    --warning: #d6ae58;
+    --error-bg: #38251f;
+    --error-border: #805243;
+    --success-bg: #20382a;
+    --success-border: #486c52;
+    --shadow: 0 2px 8px rgb(0 0 0 / 50%), 0 1px 2px rgb(0 0 0 / 30%);
+    --priority-none: #6f737a;
+    --priority-low: #4e8052;
+    --priority-normal: #6f737a;
+    --priority-high: #d6ae58;
+    --priority-urgent: #e3a23c;
+    --priority-immediate: #bd5757;
+  }
+  body.board-active, .kanban-container { background: var(--sidebar); }
+  .kanban-board[data-id="backlog"] { background: color-mix(in srgb, #000 12%, transparent); }
+  /* Cards are darker than the column they sit in. */
+  .kanban-item { background: var(--content); }
+  #notice.error, #editor-notice.error { color: #ffbcaa; }
+  #notice, #editor-notice.success { color: #c3e5cb; }
+  button.primary { color: #fff; }
 }

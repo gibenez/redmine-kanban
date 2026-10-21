@@ -69,17 +69,17 @@ test('dark mode follows the system preference on login, board and dialogs', asyn
   await setup(page);
   await page.goto('/');
   await expect(page.locator('html')).toHaveCSS('color-scheme', 'dark');
-  await expect(page.locator('#login')).toHaveCSS('background-color', 'rgb(30, 41, 36)');
-  await expect(page.getByLabel('Personal API key')).toHaveCSS('background-color', 'rgb(23, 33, 28)');
+  await expect(page.locator('#login')).toHaveCSS('background-color', 'rgb(30, 31, 34)');
+  await expect(page.getByLabel('Personal API key')).toHaveCSS('background-color', 'rgb(30, 31, 34)');
   await page.getByLabel('Personal API key').fill('test-personal-key');
   await page.getByRole('button', { name: 'Connect to Redmine' }).click();
   await expect(page.locator('#updated')).toContainText('Updated');
-  await expect(page.locator('.summary')).toHaveCSS('background-color', 'rgb(30, 41, 36)');
-  await expect(page.locator('.kanban-item').first()).toHaveCSS('background-color', 'rgb(30, 41, 36)');
-  await expect(page.locator('#project')).toHaveCSS('color', 'rgb(227, 235, 229)');
+  await expect(page.locator('.summary')).toHaveCSS('background-color', 'rgb(30, 31, 34)');
+  await expect(page.locator('.kanban-item').first()).toHaveCSS('background-color', 'rgb(30, 31, 34)');
+  await expect(page.locator('#project')).toHaveCSS('color', 'rgb(255, 255, 255)');
   await page.getByRole('button', { name: 'Plan #1', exact: true }).click();
   await expect(page.locator('#editor')).toBeVisible();
-  await expect(page.locator('#editor')).toHaveCSS('background-color', 'rgb(30, 41, 36)');
+  await expect(page.locator('#editor')).toHaveCSS('background-color', 'rgb(30, 31, 34)');
   await page.getByRole('button', { name: 'Close editor' }).click();
   await page.route('**/redmine/issues.json?**', route => route.fulfill({ status: 422, json: { errors: ['A theme test error'] } }));
   await page.getByRole('button', { name: 'Refresh', exact: true }).click();
@@ -89,9 +89,9 @@ test('dark mode follows the system preference on login, board and dialogs', asyn
   await page.emulateMedia({ colorScheme: 'light' });
   await expect(page.locator('html')).toHaveCSS('color-scheme', 'light');
   await expect(page.locator('.summary')).toHaveCSS('background-color', 'rgb(255, 255, 255)');
-  await expect(page.locator('#notice')).toHaveCSS('background-color', 'rgb(255, 241, 235)');
+  await expect(page.locator('#notice')).toHaveCSS('background-color', 'rgb(255, 235, 236)');
   await page.emulateMedia({ colorScheme: 'dark' });
-  await expect(page.locator('.summary')).toHaveCSS('background-color', 'rgb(30, 41, 36)');
+  await expect(page.locator('.summary')).toHaveCSS('background-color', 'rgb(30, 31, 34)');
 });
 
 for (const viewport of [{ width: 1280, height: 720 }, { width: 1440, height: 1000 }]) {
@@ -168,14 +168,22 @@ test('compact board exposes filters and allows board-only horizontal scrolling',
   await expect(page.locator('#filter-controls > summary')).not.toBeVisible();
 });
 
-test('backlog initially requests only five issues, not every page', async ({ page }) => {
+test('backlog requests one column-sized page, not every page', async ({ page }) => {
   const fixture = await setup(page);
-  for (let id = 100; id < 110; id++) fixture.issues.push({ ...fixture.issues[0], id, subject: `Backlog ${id}` });
+  for (let id = 100; id < 130; id++) fixture.issues.push({ ...fixture.issues[0], id, subject: `Backlog ${id}` });
   await login(page);
-  await expect(page.locator('[data-id="backlog"] .kanban-item')).toHaveCount(5);
+  const column = page.getByLabel('Backlog issues', { exact: true });
+  const count = page.locator('[data-id="backlog"] .kanban-item');
   const requests = fixture.requests.filter(request => new URL(request.url()).searchParams.get('fixed_version_id') === '!*');
+  // One request, sized to the visible column: more than the old fixed five, far short of 32.
   expect(requests).toHaveLength(1);
-  expect(new URL(requests[0].url()).searchParams.get('limit')).toBe('5');
+  const limit = Number(new URL(requests[0].url()).searchParams.get('limit'));
+  expect(limit).toBeGreaterThan(5);
+  expect(limit).toBeLessThan(32);
+  await expect(count).toHaveCount(limit);
+  // Sized to overflow, so scrolling can take over from here.
+  expect(await column.evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true);
+  await expect(page.locator('[data-id="backlog"] footer')).toContainText('Scroll to load more');
 });
 
 test('server search finds a backlog issue beyond the loaded page', async ({ page }) => {
@@ -188,25 +196,24 @@ test('server search finds a backlog issue beyond the loaded page', async ({ page
   await expect(page.locator('[data-id="backlog"]')).toContainText('Unseen needle');
 });
 
-test('scrolling appends five at a time without duplicates or reloading metadata', async ({ page }) => {
+test('scrolling appends another page without duplicates or reloading metadata', async ({ page }) => {
   const fixture = await setup(page);
   for (let id = 100; id < 110; id++) fixture.issues.push({ ...fixture.issues[0], id, subject: `Backlog ${id}` });
   await login(page);
   const column = page.getByLabel('Backlog issues', { exact: true });
   const count = page.locator('[data-id="backlog"] .kanban-item');
   const metadataCount = fixture.requests.filter(request => new URL(request.url()).pathname.endsWith('/versions.json')).length;
-  await expect(count).toHaveCount(5);
+  const firstPage = Number(new URL(fixture.requests.filter(request => new URL(request.url()).searchParams.get('fixed_version_id') === '!*')[0].url()).searchParams.get('limit'));
+  await expect(count).toHaveCount(firstPage);
   await column.evaluate(element => { element.scrollTop = element.scrollHeight; });
-  await expect(count).toHaveCount(10);
   expect(await column.evaluate(element => element.scrollTop)).toBeGreaterThan(0);
-  await column.evaluate(element => { element.scrollTop = element.scrollHeight; });
   await expect(count).toHaveCount(12);
   await expect(page.locator('[data-id="backlog"] footer')).toContainText('All matching backlog issues loaded');
   const ids = await count.evaluateAll(elements => elements.map(element => element.dataset.eid));
   expect(new Set(ids).size).toBe(12);
   const requests = fixture.requests.filter(request => new URL(request.url()).searchParams.get('fixed_version_id') === '!*');
-  expect(requests.map(request => new URL(request.url()).searchParams.get('offset'))).toEqual(['0', '5', '10']);
-  expect(requests.every(request => new URL(request.url()).searchParams.get('limit') === '5')).toBe(true);
+  // The second page continues from where the first stopped rather than refetching it.
+  expect(requests.map(request => new URL(request.url()).searchParams.get('offset'))).toEqual(['0', String(firstPage)]);
   expect(fixture.requests.filter(request => new URL(request.url()).pathname.endsWith('/versions.json'))).toHaveLength(metadataCount);
 });
 
@@ -242,13 +249,13 @@ test('search is debounced and resets the backlog cursor', async ({ page }) => {
   const fixture = await setup(page);
   for (let id = 100; id < 110; id++) fixture.issues.push({ ...fixture.issues[0], id, subject: `Needle ${id}` });
   await login(page);
-  await page.getByRole('button', { name: 'Load 5 more', exact: true }).click();
-  await expect(page.locator('[data-id="backlog"] .kanban-item')).toHaveCount(10);
+  await expect(page.locator('[data-id="backlog"] .kanban-item').first()).toBeVisible();
   await page.getByLabel('Find an issue').fill('n');
   await page.getByLabel('Find an issue').fill('nee');
   await page.getByLabel('Find an issue').fill('needle');
   await page.clock.runFor(350);
-  await expect(page.locator('[data-id="backlog"] .kanban-item')).toHaveCount(5);
+  // One search for three keystrokes, restarted at offset 0.
+  await expect(page.locator('[data-id="backlog"] .kanban-item')).toHaveCount(10);
   const searches = fixture.requests.filter(request => new URL(request.url()).searchParams.has('subject') && new URL(request.url()).searchParams.get('fixed_version_id') === '!*');
   expect(searches).toHaveLength(1);
   expect(new URL(searches[0].url()).searchParams.get('subject')).toBe('~needle');
@@ -257,36 +264,50 @@ test('search is debounced and resets the backlog cursor', async ({ page }) => {
 
 test('a failed lazy page can be retried without skipping issues', async ({ page }) => {
   const fixture = await setup(page);
-  for (let id = 100; id < 106; id++) fixture.issues.push({ ...fixture.issues[0], id, subject: `Backlog ${id}` });
+  for (let id = 100; id < 130; id++) fixture.issues.push({ ...fixture.issues[0], id, subject: `Backlog ${id}` });
   let failed = false;
   await page.route('**/redmine/issues.json?**', route => {
     const params = new URL(route.request().url()).searchParams;
-    if (params.get('fixed_version_id') === '!*' && params.get('offset') === '5' && !failed) { failed = true; return route.fulfill({ status: 503, json: {} }); }
+    if (params.get('fixed_version_id') === '!*' && params.get('offset') !== '0' && !failed) { failed = true; return route.fulfill({ status: 503, json: {} }); }
     return route.fallback();
   });
   await login(page);
-  await page.getByRole('button', { name: 'Load 5 more', exact: true }).click();
+  const column = page.getByLabel('Backlog issues', { exact: true });
+  const count = page.locator('[data-id="backlog"] .kanban-item');
+  const firstPage = await count.count();
+  await column.evaluate(element => { element.scrollTop = element.scrollHeight; });
   await expect(page.locator('#notice')).toContainText('Could not load more backlog issues');
-  await expect(page.locator('[data-id="backlog"] .kanban-item')).toHaveCount(5);
-  await page.getByRole('button', { name: 'Load 5 more', exact: true }).click();
-  await expect(page.locator('[data-id="backlog"] .kanban-item')).toHaveCount(8);
+  await expect(count).toHaveCount(firstPage);
+  // Scrolling cannot retry from the bottom of the column, so an explicit control appears.
+  await page.getByRole('button', { name: 'Retry loading issues', exact: true }).click();
+  await expect.poll(() => count.count()).toBeGreaterThan(firstPage);
   await expect(page.locator('#notice')).toBeHidden();
+  await expect(page.getByRole('button', { name: 'Retry loading issues', exact: true })).toBeHidden();
+  const ids = await count.evaluateAll(elements => elements.map(element => element.dataset.eid));
+  expect(new Set(ids).size).toBe(ids.length);
 });
 
 test('a successful planning move resets pagination before fetching the next page', async ({ page }) => {
   const fixture = await setup(page);
-  for (let id = 100; id < 110; id++) fixture.issues.push({ ...fixture.issues[0], id, subject: `Backlog ${id}` });
+  for (let id = 100; id < 130; id++) fixture.issues.push({ ...fixture.issues[0], id, subject: `Backlog ${id}` });
   await login(page);
-  await page.getByRole('button', { name: 'Load 5 more', exact: true }).click();
-  await expect(page.locator('[data-id="backlog"] .kanban-item')).toHaveCount(10);
+  const column = page.getByLabel('Backlog issues', { exact: true });
+  const count = page.locator('[data-id="backlog"] .kanban-item');
+  const firstPage = await count.count();
+  await column.evaluate(element => { element.scrollTop = element.scrollHeight; });
+  await expect.poll(() => count.count()).toBeGreaterThan(firstPage);
   await drag(page, 1, 'status-2');
+  // The confirmation survives the reload that follows the write.
   await expect(page.locator('#notice')).toContainText('Issue #1 saved');
-  await expect(page.locator('[data-id="backlog"] .kanban-item')).toHaveCount(5);
-  await expect(page.locator('[data-id="backlog"] .count')).toHaveText('5 / 11');
-  await page.getByRole('button', { name: 'Load 5 more', exact: true }).click();
-  await expect(page.locator('[data-id="backlog"] .kanban-item')).toHaveCount(10);
-  const ids = await page.locator('[data-id="backlog"] .kanban-item').evaluateAll(elements => elements.map(element => element.dataset.eid));
-  expect(new Set(ids).size).toBe(10); expect(ids).not.toContain('1');
+  // Back to a single column-sized page with the cursor reset. The page is measured again,
+  // so it need not match the first exactly: the notice row costs the column some height.
+  await expect.poll(() => count.count()).toBeLessThan(firstPage * 2);
+  const reset = await count.count();
+  await expect(page.locator('[data-id="backlog"] .count')).toHaveText(`${reset} / 31`);
+  await column.evaluate(element => { element.scrollTop = element.scrollHeight; });
+  await expect.poll(() => count.count()).toBeGreaterThan(reset);
+  const ids = await count.evaluateAll(elements => elements.map(element => element.dataset.eid));
+  expect(new Set(ids).size).toBe(ids.length); expect(ids).not.toContain('1');
 });
 
 test('project versions 403 explains the denied resource and keeps project selection usable', async ({ page }) => {
