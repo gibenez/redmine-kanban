@@ -81,6 +81,37 @@ async function login(page) {
 }
 const column = (page, id) => page.locator(`[data-id="${id}"]`);
 
+for (const activation of ['click', 'keyboard']) {
+  test(`Build Sprint summary ID opens its Redmine issue via ${activation}`, async ({ page }) => {
+    const fixture = await setup(page);
+    await page.context().route('https://redmine.example.test/issues/101', route => route.fulfill({ contentType: 'text/html', body: '<h1>Build Sprint #101</h1>' }));
+    await login(page);
+    const boardUrl = page.url();
+    const link = page.locator('#sprint-name').getByRole('link', { name: '#101', exact: true });
+    await expect(link).toHaveAttribute('href', 'https://redmine.example.test/issues/101');
+    await expect(link).toHaveAttribute('rel', 'noopener noreferrer');
+    const node = await link.elementHandle();
+    await page.getByLabel('Find an issue').fill('Member');
+    await expect(page.locator('#workspace')).toHaveAttribute('aria-busy', 'false');
+    expect(await node.evaluate(element => element.isConnected)).toBe(true);
+    const [issuePage] = await Promise.all([
+      page.waitForEvent('popup'),
+      activation === 'click' ? link.click() : link.focus().then(() => page.keyboard.press('Enter')),
+    ]);
+    await issuePage.waitForLoadState();
+    expect(issuePage.url()).toBe('https://redmine.example.test/issues/101');
+    expect(await issuePage.evaluate(() => window.opener)).toBeNull();
+    expect(page.url()).toBe(boardUrl);
+    expect(fixture.writes).toEqual([]);
+    await issuePage.close();
+    await page.getByLabel('Sprint', { exact: true }).selectOption('100');
+    await expect(page.locator('#sprint-name').getByRole('link', { name: '#100', exact: true })).toHaveAttribute('href', 'https://redmine.example.test/issues/100');
+    await page.getByLabel('Category', { exact: true }).selectOption('none');
+    await expect(page.locator('#sprint-name')).toHaveText('No sprint selected');
+    await expect(page.locator('#sprint-name a')).toHaveCount(0);
+  });
+}
+
 test('mini guide includes Build Sprint and category scope guidance in Build mode', async ({ page }) => {
   await setup(page); await login(page);
   await page.getByRole('button', { name: 'Help', exact: true }).click();

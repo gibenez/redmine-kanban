@@ -898,6 +898,8 @@ test('versions 403 pauses polling but manual Refresh retries after permissions c
 test('loads backlog, all sprint statuses and totals without executing issue HTML', async ({ page }) => {
   const errors = []; page.on('pageerror', error => errors.push(error.message));
   const fixture = await setup(page); await login(page);
+  // Target-version IDs are not issue IDs and must not become issue links.
+  await expect(page.locator('#sprint-name a')).toHaveCount(0);
   await expect(page.locator('[data-id="backlog"] .kanban-item')).toHaveCount(2);
   await expect(page.locator('[data-id="status-2"]')).toContainText('Already underway');
   await expect(page.locator('[data-id="other"]')).toContainText('Unmapped status still visible');

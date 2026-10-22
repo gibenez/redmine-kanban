@@ -190,11 +190,32 @@ function card(issue) {
     title: `<div class="card-head"><a class="${resolved ? 'resolved' : ''}" href="${e(linkToIssue(issue.id))}" target="_blank" rel="noopener noreferrer"${resolved ? ' title="Resolved"' : ''}>#${id}</a><h3 title="${subject}" aria-label="${subject}">${subject}</h3></div><div class="card-bottom">${fields}</div><div class="card-footer"><span class="card-assignee" title="Assignee: ${e(assignee)}"><span class="avatar${issue.assigned_to ? '' : ' unassigned'}" aria-hidden="true">${e(initials)}</span><span>${e(assignee)}</span></span>${hours}</div><button type="button" class="plan" data-edit="${id}" aria-label="${action}" title="${action}"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m10.5 2.5 3 3M3 10l7.5-7.5a2.1 2.1 0 0 1 3 3L6 13l-4 1 1-4Z"/></svg></button>`,
   };
 }
+function renderSprintHeading() {
+  const heading = $('sprint-name');
+  if (!sprint || !buildMode()) {
+    const name = sprint?.name || 'No sprint selected';
+    if (heading.textContent !== name || heading.querySelector('a')) heading.textContent = name;
+    return;
+  }
+  let link = heading.querySelector('a');
+  if (!link) {
+    link = document.createElement('a');
+    link.target = '_blank'; link.rel = 'noopener noreferrer';
+    heading.replaceChildren(document.createTextNode(''), link, document.createTextNode(')'));
+  }
+  const prefix = `${sprint.subject} (`;
+  if (heading.firstChild.textContent !== prefix) heading.firstChild.textContent = prefix;
+  const id = `#${sprint.id}`;
+  if (link.textContent !== id) link.textContent = id;
+  link.href = linkToIssue(sprint.id);
+  link.title = `Open Build Sprint ${id} in Redmine`;
+}
+
 function renderBoard() {
   if (dragging) return;
   const visible = issues;
   const total = effort(feed?.snapshot.sprintAll || []), filtered = effort(feed?.snapshot.sprintVisible || []);
-  $('sprint-name').textContent = sprint?.name || 'No sprint selected';
+  renderSprintHeading();
   $('sprint-state').textContent = sprint ? `${sprint.status === 'open' ? 'Open sprint' : 'Closed sprint · read only'}${sprint.due_date ? ` · Due ${sprint.due_date}` : ''}` : buildMode() ? 'Create an open Build issue in this category in Redmine to start planning.' : 'Create an open target version in Redmine to start planning.';
   const totalsMarkup = `<div><strong>${e(Number(total.hours.toFixed(2)))}</strong><span>estimated hours</span></div><div><strong>${total.count}</strong><span>issues</span></div><div><strong>${total.unestimated}</strong><span>unestimated</span></div>`;
   if ($('totals').innerHTML !== totalsMarkup) $('totals').innerHTML = totalsMarkup;
