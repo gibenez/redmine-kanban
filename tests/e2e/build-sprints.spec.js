@@ -81,6 +81,16 @@ async function login(page) {
 }
 const column = (page, id) => page.locator(`[data-id="${id}"]`);
 
+test('mini guide includes Build Sprint and category scope guidance in Build mode', async ({ page }) => {
+  await setup(page); await login(page);
+  await page.getByRole('button', { name: 'Help', exact: true }).click();
+  await expect(page.locator('#build-help')).toBeVisible();
+  await expect(page.locator('#build-help')).toContainText('C button');
+  await expect(page.locator('#build-help')).toContainText('preserves its other Build Sprint Memberships');
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#help-dialog')).not.toBeVisible();
+});
+
 test('contributors load category metadata without Manage categories permission', async ({ page }) => {
   const fixture = await setup(page, { denyCategories: true });
   await page.goto('/');

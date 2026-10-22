@@ -1,5 +1,6 @@
 const jKanban = window.jKanban;
 import './style.css';
+import { reconcileBoard } from './board-view.js';
 import { RedmineClient, RedmineError } from './api.js';
 import { validateConfig, isBacklog, effort, movePatch, parseEstimate, assertTransition, matchesPatch, escapeHtml as e } from './domain.js';
 import { PlanningFeed } from './planning-feed.js';
@@ -12,7 +13,8 @@ const storageKey = 'redmine-sprint-board.api-key';
 const scopeStorageKey = 'redmine-sprint-board.all-unplanned';
 let api, config, statuses = [], projects = [], versions = [], memberships = [], issues = [], board;
 let sprint = null, projectId = '', blockedProjectId = '', busy = false, dragging = false, loading = false, epoch = 0, timer, editing;
-let feed, queryLoading = false, queryTimer, queryRevision = 0, backlogFailed = false;
+let feed, queryLoading = false, queryTimer, queryRevision = 0, backlogFailed = false, searchFailed = false;
+const observedLists = new WeakSet();
 // Backlog Scope lives on the Backlog column header, so it is rebuilt with the board
 // rather than read from a persistent control.
 let allUnplannedScope = false;
@@ -45,6 +47,9 @@ function notify(message, error = false) {
   $('editor-notice').hidden = !message || !$('editor').open;
 }
 function options(select, rows, selected = '') {
+  if (select.options.length === rows.length && rows.every(([value, label], index) => select.options[index].value === String(value) && select.options[index].textContent === String(label))) {
+    select.value = String(selected); return;
+  }
   select.replaceChildren(...rows.map(([value, label]) => {
     const option = document.createElement('option'); option.value = value; option.textContent = label; return option;
   }));
@@ -55,9 +60,19 @@ function lock() {
   document.querySelectorAll('.plan, .scope-toggle').forEach(el => { el.disabled = busy || loading || queryLoading || feed?.loadingMore; });
   if ($('backlog-more')) $('backlog-more').disabled = busy || loading || queryLoading || feed?.loadingMore;
   $('workspace').setAttribute('aria-busy', String(busy || loading || queryLoading));
+  $('board').setAttribute('aria-busy', String(loading || queryLoading));
 }
 function destroyBoard() {
   board?.drake?.destroy(); board?.drakeBoard?.destroy(); board = null; $('board').replaceChildren();
+}
+function clearBoardCards() {
+  if (!board) return;
+  const emptyColumns = board.options.boards.map(column => {
+    const title = document.createElement('div'); title.innerHTML = column.title;
+    const count = title.querySelector('.count'); if (count) count.textContent = '0';
+    return { ...column, title: title.innerHTML, item: [] };
+  });
+  reconcileBoard(board, emptyColumns);
 }
 function cancelQuery() {
   clearTimeout(queryTimer); queryRevision++; feed?.cancel(); queryLoading = false;
@@ -93,7 +108,7 @@ function forget() {
   $('editor').close(); editing = null; destroyBoard();
   issues = []; versions = []; memberships = []; projects = []; categories = []; sprint = null; projectId = ''; blockedProjectId = ''; buildTrackerId = undefined;
   document.body.classList.remove('board-active');
-  $('notice-dialog').close();
+  $('notice-dialog').close(); $('help-dialog').close(); $('build-help').hidden = true;
   $('workspace').hidden = true; $('login').hidden = false; $('identity').replaceChildren(); notify('API key forgotten on this browser.');
 }
 function linkToIssue(id) { return `${config.redminePublicUrl}/issues/${Number(id)}`; }
@@ -117,10 +132,16 @@ function renderFilters() {
 }
 // Redmine never returns a colour for a priority, and priorities are admin-configurable, so
 // the stripe is matched by name with a neutral fallback. See docs/adr/0001.
-const priorityNames = new Set(['low', 'normal', 'high', 'urgent', 'immediate']);
+const priorityNames = new Map([
+  ['low', 'low'], ['bassa', 'low'], ['basso', 'low'],
+  ['normal', 'normal'], ['normale', 'normal'], ['medium', 'normal'], ['media', 'normal'], ['medio', 'normal'],
+  ['high', 'high'], ['alta', 'high'], ['alto', 'high'],
+  ['urgent', 'urgent'], ['urgente', 'urgent'],
+  ['immediate', 'immediate'], ['immediata', 'immediate'], ['immediato', 'immediate'],
+]);
 function priorityClass(name) {
   const key = String(name || '').trim().toLowerCase();
-  return `prio-${priorityNames.has(key) ? key : 'none'}`;
+  return `prio-${priorityNames.get(key) || 'none'}`;
 }
 function card(issue) {
   const id = Number(issue.id);
@@ -129,11 +150,12 @@ function card(issue) {
   const resolved = statuses.find(status => status.id === issue.status.id)?.is_closed;
   const subject = e(issue.subject);
   const action = `${open ? 'Plan' : 'View'} #${id}`;
+  const assignee = issue.assigned_to?.name || 'Unassigned';
+  const initials = issue.assigned_to ? assignee.trim().split(/\s+/u).map(part => Array.from(part)[0]).filter(Boolean).slice(0, 2).join('') : '–';
   const fields = [
-    `<span class="card-field">${e(issue.priority.name)}</span>`,
-    `<span class="card-field plain">${e(issue.tracker.name)}</span>`,
-    `<span class="card-field plain">${e(issue.status.name)}</span>`,
-    `<span class="card-field plain">${e(issue.assigned_to?.name || 'Unassigned')}</span>`,
+    `<span class="card-field" title="Priority: ${e(issue.priority.name)}">${e(issue.priority.name)}</span>`,
+    `<span class="card-field plain" title="Tracker: ${e(issue.tracker.name)}">${e(issue.tracker.name)}</span>`,
+    `<span class="card-field plain" title="Status: ${e(issue.status.name)}">${e(issue.status.name)}</span>`,
   ].join('');
   const hours = issue.estimated_hours == null
     ? '<strong class="unestimated" title="Unestimated">?</strong>'
@@ -142,18 +164,21 @@ function card(issue) {
     id: String(id), class: [...(open ? [] : ['not-draggable']), priorityClass(issue.priority.name)],
     // The summary is clamped to three lines in CSS; title and aria-label keep the full text
     // reachable for pointer and assistive technology alike.
-    title: `<div class="card-head"><a class="${resolved ? 'resolved' : ''}" href="${e(linkToIssue(issue.id))}" target="_blank" rel="noopener noreferrer"${resolved ? ' title="Resolved"' : ''}>#${id}</a><h3 title="${subject}" aria-label="${subject}">${subject}</h3></div><div class="card-bottom">${fields}${hours}</div><button type="button" class="plan" data-edit="${id}" aria-label="${action}" title="${action}">\u270E</button>`,
+    title: `<div class="card-head"><a class="${resolved ? 'resolved' : ''}" href="${e(linkToIssue(issue.id))}" target="_blank" rel="noopener noreferrer"${resolved ? ' title="Resolved"' : ''}>#${id}</a><h3 title="${subject}" aria-label="${subject}">${subject}</h3></div><div class="card-bottom">${fields}</div><div class="card-footer"><span class="card-assignee" title="Assignee: ${e(assignee)}"><span class="avatar${issue.assigned_to ? '' : ' unassigned'}" aria-hidden="true">${e(initials)}</span><span>${e(assignee)}</span></span>${hours}</div><button type="button" class="plan" data-edit="${id}" aria-label="${action}" title="${action}"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m10.5 2.5 3 3M3 10l7.5-7.5a2.1 2.1 0 0 1 3 3L6 13l-4 1 1-4Z"/></svg></button>`,
   };
 }
 function renderBoard() {
   if (dragging) return;
-  destroyBoard();
   const visible = issues;
   const total = effort(feed?.snapshot.sprintAll || []), filtered = effort(feed?.snapshot.sprintVisible || []);
   $('sprint-name').textContent = sprint?.name || 'No sprint selected';
   $('sprint-state').textContent = sprint ? `${sprint.status === 'open' ? 'Open sprint' : 'Closed sprint · read only'}${sprint.due_date ? ` · Due ${sprint.due_date}` : ''}` : buildMode() ? 'Create an open Build issue in this category in Redmine to start planning.' : 'Create an open target version in Redmine to start planning.';
-  $('totals').innerHTML = `<div><strong>${e(Number(total.hours.toFixed(2)))}</strong><span>estimated hours</span></div><div><strong>${total.count}</strong><span>issues</span></div><div><strong>${total.unestimated}</strong><span>unestimated</span></div>`;
-  $('filtered').textContent = `Visible sprint: ${filtered.count} issues · ${Number(filtered.hours.toFixed(2))} h · ${filtered.unestimated} unestimated`;
+  const totalsMarkup = `<div><strong>${e(Number(total.hours.toFixed(2)))}</strong><span>estimated hours</span></div><div><strong>${total.count}</strong><span>issues</span></div><div><strong>${total.unestimated}</strong><span>unestimated</span></div>`;
+  if ($('totals').innerHTML !== totalsMarkup) $('totals').innerHTML = totalsMarkup;
+  const filtering = Object.values(filters).some(value => String(value).trim());
+  $('filtered').textContent = filtering
+    ? `Visible sprint: ${filtered.count} issues · ${Number(filtered.hours.toFixed(2))} h · ${filtered.unestimated} unestimated`
+    : '';
   const backlogIds = new Set(feed?.snapshot.backlog.map(issue => issue.id));
   const backlog = visible.filter(issue => backlogIds.has(issue.id));
   const boards = [{ id: 'backlog', title: `Backlog <span class="count">${backlog.length} / ${feed?.snapshot.total ?? '?'}</span>${scopeToggle()}${categoryToggle()}`, class: 'backlog-board', item: backlog.map(card) }];
@@ -162,8 +187,9 @@ function renderBoard() {
     boards.push({ id: `status-${statusId}`, title: `${e(statuses.find(status => status.id === statusId).name)} <span class="count">${items.length}</span>`, item: items.map(card) });
   }
   const other = visible.filter(issue => selectedMember(issue) && !config.columnStatusIds.includes(issue.status.id));
-  if (other.length) boards.push({ id: 'other', title: 'Other statuses (unmapped)', item: other.map(card) });
-  board = new jKanban({
+  // Filtered-out unmapped work must not make its Column disappear or resize its neighbors.
+  if ((feed?.snapshot.sprintAll || []).some(issue => !config.columnStatusIds.includes(issue.status.id))) boards.push({ id: 'other', title: `Other statuses (unmapped) <span class="count">${other.length}</span>`, item: other.map(card) });
+  if (!board) board = new jKanban({
     element: '#board', gutter: '16px', widthBoard: '290px', responsive: 0, dragBoards: false, boards,
     dragEl: () => { if (busy || loading || queryLoading || feed?.loadingMore || sprint?.status !== 'open') board.drake.cancel(true); else dragging = true; },
     dragendEl: () => { dragging = false; },
@@ -178,6 +204,7 @@ function renderBoard() {
       return false;
     },
   });
+  reconcileBoard(board, boards);
   for (const column of $('board').querySelectorAll('.kanban-board')) {
     const list = column.querySelector('.kanban-drag');
     list.tabIndex = 0;
@@ -185,9 +212,12 @@ function renderBoard() {
   }
   const container = board.findBoard('backlog').querySelector('.kanban-drag');
   container.setAttribute('aria-label', 'Backlog issues'); container.tabIndex = 0;
-  container.addEventListener('scroll', () => {
-    if (container.scrollTop > 0 && container.scrollTop + container.clientHeight >= container.scrollHeight - 64) void loadMoreBacklog();
-  }, { passive: true });
+  if (!observedLists.has(container)) {
+    observedLists.add(container);
+    container.addEventListener('scroll', () => {
+      if (container.scrollTop > 0 && container.scrollTop + container.clientHeight >= container.scrollHeight - 64) void loadMoreBacklog();
+    }, { passive: true });
+  }
   renderBacklogFooter(); lock();
   $('empty').hidden = visible.length > 0;
 }
@@ -196,20 +226,25 @@ function renderBacklogFooter() {
   if (!board || !feed) return;
   const node = board.findBoard('backlog');
   node.querySelector('.count').textContent = `${feed.snapshot.backlog.length} / ${feed.snapshot.total ?? '?'}`;
-  node.querySelector('.kanban-drag').setAttribute('aria-busy', String(feed.loadingMore));
-  const footer = node.querySelector('footer'); footer.replaceChildren();
-  const text = document.createElement('span'); text.className = 'muted';
-  text.textContent = !feed.snapshot.hasMore ? 'All matching backlog issues loaded'
-    : feed.loadingMore ? 'Loading…' : 'Scroll to load more';
-  footer.append(text);
+  node.querySelector('.kanban-drag').setAttribute('aria-busy', String(feed.loadingMore || queryLoading));
+  const footer = node.querySelector('footer');
+  let text = footer.querySelector('span');
+  if (!text) { text = document.createElement('span'); text.className = 'muted'; footer.append(text); }
+  const message = queryLoading ? 'Updating results…' : searchFailed ? 'Previous results · search failed'
+    : !feed.snapshot.hasMore ? 'All matching backlog issues loaded'
+      : feed.loadingMore ? 'Loading…' : 'Scroll to load more';
+  if (text.textContent !== message) text.textContent = message;
   // A page that failed cannot rely on scrolling to retry: the column may already be at its
   // bottom, so no further scroll event would fire. Keep an explicit control for that case.
-  if (feed.snapshot.hasMore && backlogFailed && !feed.loadingMore) {
-    const more = document.createElement('button'); more.type = 'button'; more.id = 'backlog-more';
+  if (feed.snapshot.hasMore && backlogFailed && !feed.loadingMore && !queryLoading && !searchFailed) {
+    let more = $('backlog-more');
+    if (!more) {
+      more = document.createElement('button'); more.type = 'button'; more.id = 'backlog-more';
+      more.addEventListener('click', () => void loadMoreBacklog()); footer.append(more);
+    }
     more.textContent = 'Retry loading issues';
     more.disabled = busy || loading || queryLoading;
-    more.addEventListener('click', () => void loadMoreBacklog()); footer.append(more);
-  }
+  } else $('backlog-more')?.remove();
 }
 // Request a page that fills the visible column rather than a fixed five, measuring a
 // rendered card where one exists and falling back to the compact card height.
@@ -239,7 +274,7 @@ async function fillBacklogColumn() {
   }
 }
 async function loadMoreBacklog({ silent = false } = {}) {
-  if (!api || !board || busy || loading || queryLoading || dragging || $('editor').open || feed?.loadingMore || !feed?.snapshot.hasMore) return;
+  if (!api || !board || busy || loading || queryLoading || searchFailed || dragging || $('editor').open || feed?.loadingMore || !feed?.snapshot.hasMore) return;
   // Automatic fetches must not clear a notice the user has not read yet.
   if (!silent) notify('');
   feed.pageSize = backlogPageSize();
@@ -269,11 +304,12 @@ async function searchIssues(revision) {
     feed.pageSize = backlogPageSize();
     const snapshot = await feed.load(feedScope(), filters, { refreshSprint: false });
     if (!snapshot || revision !== queryRevision) return;
-    syncFeed(snapshot); renderFilters(); renderBoard();
+    searchFailed = false; syncFeed(snapshot); renderFilters(); renderBoard();
   } catch (error) {
     if (revision === queryRevision) {
+      searchFailed = true;
       if (error.status === 403) blockedProjectId = projectId;
-      $('filtered').textContent = 'Search unavailable';
+      $('filtered').textContent = 'Search unavailable · showing previous results';
       notify(`Search failed: ${error.message} Change the search or use Refresh to retry.`, true);
     }
   } finally {
@@ -281,9 +317,10 @@ async function searchIssues(revision) {
   }
 }
 function scheduleSearch(delay) {
-  cancelQuery(); queryLoading = true; notify('');
+  cancelQuery(); queryLoading = true; searchFailed = false; notify('');
   board?.drake?.cancel(true); dragging = false;
-  issues = []; destroyBoard(); $('empty').hidden = true; $('filtered').textContent = 'Searching Redmine…'; lock();
+  // Keep the last confirmed view throughout debounce and the network request.
+  $('filtered').textContent = 'Searching Redmine…'; lock(); renderBacklogFooter();
   const revision = queryRevision;
   queryTimer = setTimeout(() => void searchIssues(revision), delay);
 }
@@ -330,16 +367,16 @@ async function refresh(projectChanged = false, retryDenied = false) {
     feed.pageSize = backlogPageSize(); backlogFailed = false;
     const next = await feed.load(feedScope(), filters);
     if (!next || stamp !== epoch) return;
-    syncFeed(next); blockedProjectId = '';
+    searchFailed = false; syncFeed(next); blockedProjectId = '';
     renderFilters(); renderBoard();
     $('updated').textContent = `Updated ${new Date().toLocaleTimeString()}`;
   } catch (error) {
     if (stamp === epoch) {
       if (error.status === 403) blockedProjectId = projectId;
       notify(`Refresh failed: ${error.message}${error.status === 403 ? ' Automatic refresh is paused for this project.' : ''}`, true);
-      if (projectChanged || error.status === 403) {
+      if (projectChanged || error.status === 403 || !issues.length) {
         issues = []; versions = []; memberships = []; sprint = null;
-        renderFilters(); destroyBoard();
+        renderFilters(); clearBoardCards();
         options($('sprint'), [['', 'Sprints unavailable']]);
         $('sprint-name').textContent = 'Sprint data unavailable';
         $('sprint-state').textContent = 'See the error above. Choose another project or retry with Refresh.';
@@ -462,7 +499,7 @@ async function connect(key, remember) {
     ]);
     if (stamp !== epoch) return;
     config = validateConfig(raw, statusData); statuses = statusData; projects = projectData;
-    feed = newFeed(); $('category-control').hidden = !buildMode();
+    feed = newFeed(); $('category-control').hidden = !buildMode(); $('build-help').hidden = !buildMode();
     if (!projects.length) throw new Error('No projects are visible to your account.');
     try {
       if (remember) localStorage.setItem(storageKey, key); else localStorage.removeItem(storageKey);
@@ -485,27 +522,34 @@ function syncCompactControls() { $('filter-controls').open = !compactViewport.ma
 compactViewport.addEventListener('change', syncCompactControls);
 syncCompactControls();
 
+$('open-help').addEventListener('click', () => $('help-dialog').showModal());
+$('close-help').addEventListener('click', () => $('help-dialog').close());
 $('forget-saved').addEventListener('click', forget);
 $('login-form').addEventListener('submit', event => { event.preventDefault(); void connect($('api-key').value.trim(), $('remember').checked); });
 $('project').addEventListener('change', () => {
   cancelQuery(); feed = newFeed();
   projectId = $('project').value; issues = []; sprint = null; versions = []; memberships = [];
   Object.assign(filters, { query: '', tracker: '', assignee: '' }); $('query').value = '';
-  destroyBoard(); void refresh(true);
+  clearBoardCards(); void refresh(true);
 });
 $('category').addEventListener('change', () => {
   cancelQuery(); feed = newFeed(); categoryId = $('category').value; remember('category', categoryId);
-  issues = []; sprint = null; destroyBoard(); void refresh(false, true);
+  issues = []; sprint = null; void refresh(false, true);
 });
 $('sprint').addEventListener('change', () => {
   cancelQuery(); feed = newFeed();
-  sprint = versions.find(version => version.id === Number($('sprint').value)); issues = []; destroyBoard(); void refresh(false, true);
+  sprint = versions.find(version => version.id === Number($('sprint').value)); issues = []; void refresh(false, true);
 });
-$('closed').addEventListener('change', () => { cancelQuery(); issues = []; destroyBoard(); void refresh(false, true); });
+$('closed').addEventListener('change', () => { cancelQuery(); issues = []; void refresh(false, true); });
 $('refresh').addEventListener('click', () => { notify(''); void refresh(false, true); });
 for (const [id, field, eventName] of [['query', 'query', 'input'], ['tracker', 'tracker', 'change'], ['assignee', 'assignee', 'change']]) {
   $(id).addEventListener(eventName, () => { filters[field] = $(id).value; scheduleSearch(field === 'query' ? 300 : 0); });
 }
+// jKanban cancels every Card click with preventDefault(). Stop link clicks before
+// that handler, without cancelling native navigation (new tabs, modifiers, Enter).
+$('board').addEventListener('click', event => {
+  if (event.target.closest('.card-head a[href]')) event.stopPropagation();
+}, { capture: true });
 $('board').addEventListener('click', event => {
   if (event.target.closest('[data-backlog-scope]')) { toggleScope(); return; }
   if (event.target.closest('[data-category-scope]')) {

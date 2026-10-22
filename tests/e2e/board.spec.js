@@ -66,6 +66,276 @@ async function drag(page, id, target) {
   await source.dragTo(destination);
 }
 
+for (const activation of ['click', 'keyboard']) {
+  test(`issue ID opens Redmine in a new tab via ${activation}`, async ({ page }) => {
+    const fixture = await setup(page);
+    await page.route('**/config.json', route => route.fulfill({ json: {
+      redminePublicUrl: 'https://redmine.example.test', backlogStatusId: 1,
+      columnStatusIds: [1, 2, 3, 5], refreshSeconds: 60,
+    } }));
+    let navigationHeaders;
+    await page.context().route('https://redmine.example.test/issues/1', route => {
+      navigationHeaders = route.request().headers();
+      return route.fulfill({ contentType: 'text/html', body: '<h1>Redmine issue #1</h1>' });
+    });
+    await login(page);
+    const boardUrl = page.url();
+    const link = page.getByRole('link', { name: '#1', exact: true });
+    const [issuePage] = await Promise.all([
+      page.waitForEvent('popup', { timeout: 2000 }),
+      activation === 'click' ? link.click() : link.focus().then(() => page.keyboard.press('Enter')),
+    ]);
+    await issuePage.waitForLoadState();
+    expect(issuePage.url()).toBe('https://redmine.example.test/issues/1');
+    expect(await issuePage.evaluate(() => window.opener)).toBeNull();
+    expect(navigationHeaders['x-redmine-api-key']).toBeUndefined();
+    expect(page.url()).toBe(boardUrl);
+    expect(fixture.writes).toEqual([]);
+    await expect(page.locator('#editor')).not.toBeVisible();
+    await issuePage.close();
+  });
+}
+
+for (const control of ['query', 'tracker', 'assignee']) {
+  test(`${control} updates only matching cards without removing the board`, async ({ page }) => {
+    await setup(page); await login(page);
+    await page.evaluate(() => {
+      window.stableBoard = document.querySelector('.kanban-container');
+      window.stableColumns = [...document.querySelectorAll('.kanban-board')];
+      window.stableCard = document.querySelector('[data-eid="2"]');
+      window.stableHeading = window.stableCard.querySelector('h3');
+      window.boardRemovals = 0;
+      new MutationObserver(records => {
+        for (const record of records) for (const node of record.removedNodes) {
+          if (node === window.stableBoard || window.stableColumns.includes(node) || node === window.stableCard) window.boardRemovals++;
+        }
+      }).observe(document.getElementById('board'), { childList: true, subtree: true });
+    });
+    let release;
+    const gate = new Promise(resolve => { release = resolve; });
+    await page.route('**/redmine/issues.json?**', async route => { await gate; await route.fallback(); });
+    if (control === 'query') await page.getByLabel('Find an issue').fill('Already');
+    if (control === 'tracker') await page.getByLabel('Tracker', { exact: true }).selectOption('1');
+    if (control === 'assignee') await page.getByLabel('Assignee', { exact: true }).selectOption('7');
+    try {
+      await expect(page.locator('#workspace')).toHaveAttribute('aria-busy', 'true');
+      expect(await page.evaluate(() => window.stableBoard.isConnected && window.stableColumns.every(node => node.isConnected))).toBe(true);
+      await expect(page.locator('[data-eid="2"]')).toBeVisible();
+    } finally { release(); }
+    await expect(page.locator('#workspace')).toHaveAttribute('aria-busy', 'false');
+    expect(await page.evaluate(() => ({
+      sameBoard: window.stableBoard === document.querySelector('.kanban-container'),
+      sameColumns: window.stableColumns.every(node => node.isConnected),
+      sameCard: window.stableCard === document.querySelector('[data-eid="2"]'),
+      sameHeading: window.stableHeading === document.querySelector('[data-eid="2"] h3'),
+      removals: window.boardRemovals,
+    }))).toEqual({ sameBoard: true, sameColumns: true, sameCard: true, sameHeading: true, removals: 0 });
+  });
+}
+
+test('unchanged filters preserve column scroll, horizontal scroll, focus and card nodes', async ({ page }) => {
+  await page.setViewportSize({ width: 800, height: 650 });
+  const fixture = await setup(page);
+  for (let id = 100; id < 120; id++) fixture.issues.push({ ...fixture.issues[1], id, subject: `Already underway ${id}` });
+  await login(page);
+  await page.locator('#filter-controls > summary').click();
+  await page.evaluate(() => {
+    const board = document.getElementById('board'), list = document.querySelector('[data-id="status-2"] .kanban-drag');
+    board.scrollLeft = 300; list.scrollTop = 160; list.focus({ preventScroll: true });
+    window.position = { x: board.scrollLeft, y: list.scrollTop, list, card: list.firstElementChild };
+    document.getElementById('tracker').value = '1';
+    document.getElementById('tracker').dispatchEvent(new Event('change'));
+  });
+  await expect(page.locator('#workspace')).toHaveAttribute('aria-busy', 'false');
+  expect(await page.evaluate(() => ({
+    x: document.getElementById('board').scrollLeft, y: window.position.list.scrollTop,
+    sameFocus: document.activeElement === window.position.list,
+    sameCard: window.position.card === window.position.list.firstElementChild,
+    expectedX: window.position.x, expectedY: window.position.y,
+  }))).toEqual({ x: 300, y: 160, sameFocus: true, sameCard: true, expectedX: 300, expectedY: 160 });
+});
+
+test('failed search keeps the confirmed cards and does not page with the previous filter', async ({ page }) => {
+  const fixture = await setup(page);
+  for (let id = 100; id < 130; id++) fixture.issues.push({ ...fixture.issues[0], id });
+  await login(page);
+  const before = await page.locator('[data-id="backlog"] .kanban-item').count();
+  await page.evaluate(() => { window.confirmedCard = document.querySelector('[data-eid="1"]'); });
+  let failedRequests = 0;
+  await page.route('**/redmine/issues.json?**', route => { failedRequests++; return route.fulfill({ status: 422, json: { errors: ['Search unavailable'] } }); });
+  await page.getByLabel('Find an issue').fill('failed');
+  await expect(page.locator('#filtered')).toContainText('showing previous results');
+  await expect(page.locator('[data-id="backlog"] .kanban-item')).toHaveCount(before);
+  expect(await page.evaluate(() => window.confirmedCard.isConnected)).toBe(true);
+  const requestsAfterFailure = failedRequests;
+  await page.getByLabel('Backlog issues', { exact: true }).evaluate(node => { node.scrollTop = node.scrollHeight; });
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  expect(failedRequests).toBe(requestsAfterFailure);
+  await expect(page.locator('[data-id="backlog"] footer')).toContainText('Previous results');
+  await page.unroute('**/redmine/issues.json?**');
+  await page.getByLabel('Find an issue').fill('Build');
+  await expect(page.locator('#workspace')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.locator('#filtered')).not.toContainText('unavailable');
+});
+
+test('filtered totals appear only with active filters and do not shift the layout', async ({ page }) => {
+  await setup(page); await login(page);
+  const summary = page.locator('#filtered');
+  await expect(summary).toBeEmpty();
+  const before = await page.locator('#board').boundingBox();
+  const searchBefore = await page.locator('#query').boundingBox();
+  const filterRow = await page.locator('.filters').boundingBox();
+  const lastFilter = await page.locator('#assignee').boundingBox();
+  expect(Math.abs(lastFilter.x + lastFilter.width - filterRow.x - filterRow.width)).toBeLessThanOrEqual(1);
+  await page.getByLabel('Find an issue').fill('#2');
+  await expect(summary).toContainText('1 issues · 3 h · 0 unestimated');
+  await expect(page.locator('#totals')).toContainText('2issues');
+  expect(await page.locator('#board').boundingBox()).toEqual(before);
+  expect(await page.locator('#query').boundingBox()).toEqual(searchBefore);
+  await page.getByLabel('Find an issue').fill('');
+  await expect(page.locator('#workspace')).toHaveAttribute('aria-busy', 'false');
+  await expect(summary).toBeEmpty();
+  await page.getByLabel('Tracker', { exact: true }).selectOption('1');
+  await expect(summary).toContainText('Visible sprint:');
+  await page.getByLabel('Tracker', { exact: true }).selectOption('');
+  await expect(page.locator('#workspace')).toHaveAttribute('aria-busy', 'false');
+  await expect(summary).toBeEmpty();
+  expect(await page.locator('#board').boundingBox()).toEqual(before);
+});
+
+test('empty search results do not change the board or column geometry', async ({ page }) => {
+  await setup(page); await login(page);
+  const before = await page.locator('.kanban-container').boundingBox();
+  const columns = await page.locator('.kanban-board').evaluateAll(nodes => nodes.map(node => node.getBoundingClientRect().toJSON()));
+  await page.getByLabel('Find an issue').fill('No issue can match this');
+  await expect(page.locator('#empty')).toBeVisible();
+  await expect(page.locator('.kanban-item')).toHaveCount(0);
+  expect(await page.locator('.kanban-container').boundingBox()).toEqual(before);
+  expect(await page.locator('.kanban-board').evaluateAll(nodes => nodes.map(node => node.getBoundingClientRect().toJSON()))).toEqual(columns);
+});
+
+test('a delayed old search cannot overwrite newer results', async ({ page }) => {
+  await setup(page); await login(page);
+  let release, started;
+  const gate = new Promise(resolve => { release = resolve; });
+  const firstRequest = new Promise(resolve => { started = resolve; });
+  await page.route('**/redmine/issues.json?**', async route => {
+    const params = new URL(route.request().url()).searchParams;
+    if (params.get('subject') === '~Build' && params.get('fixed_version_id') === '!*') {
+      started(); await gate;
+    }
+    await route.fallback();
+  });
+  await page.getByLabel('Find an issue').fill('Build');
+  await firstRequest;
+  await page.getByLabel('Find an issue').fill('Already');
+  try {
+    await expect(page.locator('#workspace')).toHaveAttribute('aria-busy', 'false');
+    await expect(page.locator('[data-id="backlog"] .kanban-item')).toHaveCount(0);
+    await expect(page.locator('[data-eid="2"]')).toBeVisible();
+  } finally { release(); }
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  await expect(page.locator('[data-id="backlog"] .kanban-item')).toHaveCount(0);
+  await expect(page.getByLabel('Find an issue')).toHaveValue('Already');
+});
+
+test('refresh patches changed fields without replacing cards or their controls', async ({ page }) => {
+  const fixture = await setup(page); await login(page);
+  await page.evaluate(() => {
+    window.updatedCard = document.querySelector('[data-eid="2"]');
+    window.updatedTitle = window.updatedCard.querySelector('h3');
+    window.updatedButton = window.updatedCard.querySelector('.plan');
+  });
+  fixture.issues[1].subject = 'Updated on Redmine';
+  fixture.issues[1].priority = { id: 5, name: 'Urgent' };
+  fixture.issues[1].estimated_hours = 8;
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click();
+  await expect(page.locator('[data-eid="2"] h3')).toHaveText('Updated on Redmine');
+  await expect(page.locator('[data-eid="2"]')).toHaveClass(/prio-urgent/);
+  await expect(page.locator('[data-eid="2"] .card-footer strong')).toHaveText('8 h');
+  expect(await page.evaluate(() => window.updatedCard === document.querySelector('[data-eid="2"]') && window.updatedTitle === window.updatedCard.querySelector('h3') && window.updatedButton === window.updatedCard.querySelector('.plan'))).toBe(true);
+});
+
+for (const name of ['High', 'Alta']) {
+  test(`priority ${name} has a visibly colored label, not just a muted stripe`, async ({ page }) => {
+    const fixture = await setup(page);
+    fixture.issues[0].priority = { id: 42, name };
+    await login(page);
+    const priority = page.locator('[data-eid="1"] .card-field').first();
+    const colors = await priority.evaluate(node => ({
+      text: getComputedStyle(node).color, background: getComputedStyle(node).backgroundColor,
+      neutral: getComputedStyle(node.parentElement).color,
+      stripe: getComputedStyle(node.closest('.kanban-item')).borderLeftColor,
+      fallback: getComputedStyle(node.closest('.kanban-item')).getPropertyValue('--priority-none').trim(),
+    }));
+    expect(colors.text).not.toBe(colors.neutral);
+    expect(colors.background).not.toBe('rgba(0, 0, 0, 0)');
+    await expect(page.locator('[data-eid="1"]')).toHaveClass(/prio-high/);
+  });
+}
+
+test('column heading text, counts and scope controls share the same vertical center', async ({ page }) => {
+  await setup(page); await login(page);
+  const headers = await page.locator('.kanban-board header').evaluateAll(nodes => nodes.map(header => {
+    const title = header.querySelector('.kanban-title-board');
+    const range = document.createRange(); range.selectNodeContents(title.firstChild);
+    const text = range.getBoundingClientRect(), bounds = header.getBoundingClientRect();
+    const count = header.querySelector('.count')?.getBoundingClientRect();
+    const toggle = header.querySelector('.scope-toggle')?.getBoundingClientRect();
+    return { top: bounds.top, height: bounds.height, center: bounds.top + bounds.height / 2,
+      textCenter: text.top + text.height / 2,
+      countCenter: count ? count.top + count.height / 2 : null,
+      toggleCenter: toggle ? toggle.top + toggle.height / 2 : null };
+  }));
+  for (const header of headers) {
+    expect(header.top).toBe(headers[0].top);
+    expect(header.height).toBe(headers[0].height);
+    expect(Math.abs(header.textCenter - headers[0].textCenter)).toBeLessThanOrEqual(1);
+    expect(Math.abs(header.textCenter - header.center)).toBeLessThanOrEqual(1);
+    if (header.countCenter != null) expect(Math.abs(header.countCenter - header.center)).toBeLessThanOrEqual(1);
+    if (header.toggleCenter != null) expect(Math.abs(header.toggleCenter - header.center)).toBeLessThanOrEqual(1);
+  }
+});
+
+test('topbar help is keyboard-accessible before login and returns focus on Escape', async ({ page }) => {
+  await page.goto('/');
+  const help = page.getByRole('banner').getByRole('button', { name: 'Help', exact: true });
+  await expect(help).toHaveText('?');
+  await help.focus(); await page.keyboard.press('Enter');
+  await expect(page.getByRole('dialog', { name: 'Sprint board · Quick guide' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Close help', exact: true })).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#help-dialog')).not.toBeVisible();
+  await expect(help).toBeFocused();
+});
+
+for (const theme of ['light', 'dark']) {
+  test(`mini guide fits a narrow ${theme} viewport without changing the board`, async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 650 });
+    await page.emulateMedia({ colorScheme: theme });
+    const fixture = await setup(page); await login(page);
+    await expect(page.locator('.board-help')).toHaveCount(0);
+    const board = await page.locator('.kanban-container').elementHandle();
+    const before = await page.locator('#board').boundingBox();
+    const help = page.getByRole('button', { name: 'Help', exact: true });
+    await expect(help).toBeInViewport(); await help.click();
+    const guide = page.getByRole('dialog', { name: 'Sprint board · Quick guide' });
+    await expect(guide).toBeVisible(); await expect(guide).toBeInViewport();
+    await expect(guide).toContainText('Drag a Card');
+    await expect(page.locator('#build-help')).not.toBeVisible();
+    await expect(guide).toHaveCSS('background-color', theme === 'dark' ? 'rgb(30, 31, 34)' : 'rgb(255, 255, 255)');
+    const geometry = await guide.boundingBox();
+    expect(geometry.x).toBeGreaterThanOrEqual(0);
+    expect(geometry.x + geometry.width).toBeLessThanOrEqual(390);
+    expect(geometry.y + geometry.height).toBeLessThanOrEqual(650);
+    await page.getByRole('button', { name: 'Close help', exact: true }).click();
+    await expect(help).toBeFocused();
+    expect(await board.evaluate(node => node.isConnected)).toBe(true);
+    expect(await page.locator('#board').boundingBox()).toEqual(before);
+    expect(fixture.writes).toEqual([]);
+  });
+}
+
 test('dark mode follows the system preference on login, board and dialogs', async ({ page }) => {
   await page.emulateMedia({ colorScheme: 'dark' });
   await setup(page);
@@ -95,6 +365,99 @@ test('dark mode follows the system preference on login, board and dialogs', asyn
   await page.emulateMedia({ colorScheme: 'dark' });
   await expect(page.locator('.summary')).toHaveCSS('background-color', 'rgb(30, 31, 34)');
 });
+
+test('appearance overrides the OS, persists, and returns to live system mode', async ({ page }) => {
+  await setup(page);
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await page.goto('/');
+  const appearance = page.getByLabel('Appearance', { exact: true });
+  await expect(appearance).toHaveValue('system');
+  await appearance.selectOption('light');
+  await expect(page.locator('html')).toHaveCSS('color-scheme', 'light');
+  await page.reload();
+  await expect(appearance).toHaveValue('light');
+  await expect(page.locator('html')).toHaveCSS('color-scheme', 'light');
+  await appearance.selectOption('dark');
+  await page.emulateMedia({ colorScheme: 'light' });
+  await expect(page.locator('html')).toHaveCSS('color-scheme', 'dark');
+  await appearance.selectOption('system');
+  await expect(page.locator('html')).toHaveCSS('color-scheme', 'light');
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await expect(page.locator('html')).toHaveCSS('color-scheme', 'dark');
+  expect(await page.evaluate(() => localStorage.getItem('redmine-sprint-board.theme'))).toBeNull();
+});
+
+test('appearance works without storage and ignores invalid stored preferences', async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem('redmine-sprint-board.theme', 'invalid');
+    Storage.prototype.setItem = () => { throw new Error('Storage unavailable'); };
+    Storage.prototype.removeItem = () => { throw new Error('Storage unavailable'); };
+  });
+  await page.goto('/');
+  await expect(page.getByLabel('Appearance', { exact: true })).toHaveValue('system');
+  await page.getByLabel('Appearance', { exact: true }).selectOption('dark');
+  await expect(page.locator('html')).toHaveCSS('color-scheme', 'dark');
+  await page.getByLabel('Appearance', { exact: true }).selectOption('light');
+  await expect(page.locator('html')).toHaveCSS('color-scheme', 'light');
+});
+
+for (const mode of ['light', 'dark']) {
+  test(`Alta is red, Media yellow and Bassa green in ${mode} mode`, async ({ page }) => {
+    await page.emulateMedia({ colorScheme: mode });
+    const fixture = await setup(page);
+    ['Alta', 'Media', 'Bassa', 'Normale'].forEach((name, index) => { fixture.issues[index].priority = { id: index + 40, name }; });
+    await login(page);
+    const colors = mode === 'light'
+      ? ['rgb(220, 71, 71)', 'rgb(224, 181, 27)', 'rgb(60, 155, 85)']
+      : ['rgb(239, 116, 116)', 'rgb(226, 195, 77)', 'rgb(106, 191, 123)'];
+    for (let index = 0; index < 3; index++) {
+      await expect(page.locator(`[data-eid="${index + 1}"]`)).toHaveCSS('border-left-color', colors[index]);
+    }
+    // Normal/Normale and Medium/Media represent the same middle tier.
+    await expect(page.locator('[data-eid="4"]')).toHaveCSS('border-left-color', colors[1]);
+  });
+
+  test(`cards keep priority colors consistent and metadata aligned in ${mode} mode`, async ({ page }) => {
+    const fixture = await setup(page);
+    const names = ['Low', 'Normal', 'High', 'Urgent', 'Immediate', 'Custom priority'];
+    names.forEach((name, index) => fixture.issues.push({ ...fixture.issues[0], id: 100 + index,
+      subject: `Issue with ${name.toLowerCase()} priority`, priority: { id: 100 + index, name },
+      assigned_to: { id: 9, name: 'Alexandra Example With A Very Long Name' } }));
+    await login(page);
+    await page.getByLabel('Appearance', { exact: true }).selectOption(mode);
+    const colors = [];
+    for (let index = 0; index < names.length; index++) {
+      const card = page.locator(`[data-eid="${100 + index}"]`);
+      await expect(card).toBeVisible();
+      const geometry = await card.evaluate(node => {
+        const field = node.querySelector('.card-field');
+        const assignee = node.querySelector('.card-assignee').getBoundingClientRect();
+        const hours = node.querySelector('.card-footer strong').getBoundingClientRect();
+        const bounds = node.getBoundingClientRect();
+        const luminance = color => color.match(/[\d.]+/g).slice(0, 3).map(Number).map(value => {
+          value /= 255; return value <= .04045 ? value / 12.92 : ((value + .055) / 1.055) ** 2.4;
+        }).reduce((sum, value, index) => sum + value * [.2126, .7152, .0722][index], 0);
+        const ink = luminance(getComputedStyle(field).color), fill = luminance(getComputedStyle(field).backgroundColor);
+        return { contrast: (Math.max(ink, fill) + .05) / (Math.min(ink, fill) + .05), stripe: getComputedStyle(node).borderLeftColor, dot: getComputedStyle(field, '::before').backgroundColor,
+          assigneeRight: assignee.right, hoursLeft: hours.left, hoursRight: hours.right, cardRight: bounds.right };
+      });
+      expect(geometry.dot).toBe(geometry.stripe);
+      expect(geometry.contrast).toBeGreaterThanOrEqual(4.5);
+      expect(geometry.assigneeRight).toBeLessThanOrEqual(geometry.hoursLeft);
+      expect(geometry.hoursRight).toBeLessThan(geometry.cardRight);
+      colors.push(geometry.stripe);
+    }
+    expect(new Set(colors.slice(0, 5)).size).toBe(5);
+    const fallback = await page.locator('html').evaluate(node => getComputedStyle(node).getPropertyValue('--priority-none').trim());
+    expect(colors[5]).toBe(await page.evaluate(color => {
+      const node = document.createElement('span'); node.style.color = color; document.body.append(node);
+      const value = getComputedStyle(node).color; node.remove(); return value;
+    }, fallback));
+    await expect(page.locator('[data-id="status-2"] .kanban-title-board')).toHaveCSS('display', 'flex');
+    expect(fixture.writes).toEqual([]);
+    if (process.env.UI_SCREENSHOTS) await page.screenshot({ path: `/tmp/sprint-board-${mode}.png` });
+  });
+}
 
 for (const viewport of [{ width: 1280, height: 720 }, { width: 1440, height: 1000 }]) {
   test(`board fits ${viewport.width}×${viewport.height} with independently scrolling columns`, async ({ page }) => {
@@ -132,8 +495,9 @@ for (const viewport of [{ width: 1280, height: 720 }, { width: 1440, height: 100
     const before = await header.boundingBox();
     await status.evaluate(node => { node.scrollTop = node.scrollHeight; });
     expect(await header.boundingBox()).toEqual(before);
-    await page.getByText('Board help', { exact: true }).click();
+    await page.getByRole('button', { name: 'Help', exact: true }).click();
     expect(await page.evaluate(() => document.scrollingElement.scrollHeight)).toBe(viewport.height);
+    await page.getByRole('button', { name: 'Close help', exact: true }).click();
     await page.getByRole('button', { name: 'Forget key / Sign out' }).click();
     await expect(page.locator('body')).not.toHaveClass(/board-active/);
   });
@@ -168,6 +532,21 @@ test('compact board exposes filters and allows board-only horizontal scrolling',
   await page.setViewportSize({ width: 1280, height: 720 });
   await expect(page.getByLabel('Find an issue')).toBeVisible();
   await expect(page.locator('#filter-controls > summary')).not.toBeVisible();
+});
+
+test('phone layout keeps appearance, planning controls and board inside the viewport', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await setup(page); await login(page);
+  await expect(page.getByLabel('Appearance', { exact: true })).toBeInViewport();
+  await expect(page.getByLabel('Project', { exact: true })).toBeInViewport();
+  await expect(page.getByLabel('Sprint', { exact: true })).toBeInViewport();
+  const geometry = await page.evaluate(() => ({
+    pageWidth: document.scrollingElement.scrollWidth, pageHeight: document.scrollingElement.scrollHeight,
+    boardHeight: document.getElementById('board').clientHeight,
+  }));
+  expect(geometry.pageWidth).toBe(390);
+  expect(geometry.pageHeight).toBe(844);
+  expect(geometry.boardHeight).toBeGreaterThan(200);
 });
 
 test('backlog requests one column-sized page, not every page', async ({ page }) => {
@@ -256,10 +635,13 @@ test('search is debounced and resets the backlog cursor', async ({ page }) => {
   await page.getByLabel('Find an issue').fill('nee');
   await page.getByLabel('Find an issue').fill('needle');
   await page.clock.runFor(350);
-  // One search for three keystrokes, restarted at offset 0.
-  await expect(page.locator('[data-id="backlog"] .kanban-item')).toHaveCount(10);
+  // One search for three keystrokes, restarted at offset 0. The stable board lets
+  // pagination measure real Cards rather than falling back to an empty-board estimate.
+  await expect(page.locator('#workspace')).toHaveAttribute('aria-busy', 'false');
   const searches = fixture.requests.filter(request => new URL(request.url()).searchParams.has('subject') && new URL(request.url()).searchParams.get('fixed_version_id') === '!*');
   expect(searches).toHaveLength(1);
+  const limit = Number(new URL(searches[0].url()).searchParams.get('limit'));
+  await expect(page.locator('[data-id="backlog"] .kanban-item')).toHaveCount(Math.min(10, limit));
   expect(new URL(searches[0].url()).searchParams.get('subject')).toBe('~needle');
   expect(new URL(searches[0].url()).searchParams.get('offset')).toBe('0');
 });
@@ -426,11 +808,14 @@ test('does not persist the key without consent', async ({ page }) => {
 
 test('closed sprints are opt-in and read only', async ({ page }) => {
   const { writes } = await setup(page); await login(page);
+  const container = await page.locator('.kanban-container').elementHandle();
   await expect(page.getByLabel('Sprint', { exact: true }).locator('option')).toHaveCount(1);
   await page.getByLabel('Include closed sprints').check();
   await expect(page.getByLabel('Sprint', { exact: true }).locator('option')).toHaveCount(2);
+  expect(await container.evaluate(node => node.isConnected)).toBe(true);
   await page.getByLabel('Sprint', { exact: true }).selectOption('11');
   await expect(page.locator('#sprint-state')).toContainText('read only');
+  expect(await container.evaluate(node => node.isConnected)).toBe(true);
   await page.getByRole('button', { name: 'View #1', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Save changes' })).toBeDisabled();
   expect(writes).toEqual([]);

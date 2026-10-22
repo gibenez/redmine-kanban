@@ -35,14 +35,19 @@ Specifically:
    and `4px` radius; type follows `14px/20px` body, `12px/16px` secondary, weights 500/600.
 2. **`system-ui`, not a bundled webfont.** Ring UI sets
    `--ring-font-family: system-ui, Arial, sans-serif`.
-3. **Dot-and-text, not chips.** Card metadata renders as plain text preceded by a small
-   coloured dot, matching YouTrack's cards.
+3. **Quiet secondary metadata, explicit priority labels.** Tracker and status stay plain
+   text. Priority uses a coloured dot, tinted background and readable coloured text. This
+   revises the original dot-and-text-only treatment after user feedback that priority
+   colours were not visible enough.
 4. **Hairline columns.** Columns are separated by 1px `#DFE1E5` rules under a `#F7F8FA`
    header strip, rather than drawn as rounded panels. The Backlog keeps a faint recessed
    tint because it is the only column that is not a Redmine status and the only
    drop-to-unplan target.
-5. **Priority drives a left stripe,** from Ring UI's muted *border* colour tier, via a
-   hardcoded Redmine-priority-name → colour map with a neutral fallback.
+5. **Priority drives a left stripe and label,** using the requested green for Low,
+   yellow for Medium/Normal, and red for High, with orange for Urgent and rose for
+   Immediate, and theme-specific label contrast. This deliberately replaces the original
+   muted border tier for legibility. English and Italian stock names map to the same
+   semantic colours; unknown names retain a neutral fallback, never an ID-based guess.
 6. **Summaries clamp to three lines,** with the full subject exposed via `title` and
    `aria-label`.
 

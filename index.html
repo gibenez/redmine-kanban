@@ -5,11 +5,16 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="referrer" content="no-referrer">
   <title>Redmine Sprint Board</title>
+  <meta name="color-scheme" content="light dark">
+  <script src="/theme.js"></script>
   <link rel="stylesheet" href="/vendor/jkanban.min.css">
   <link rel="stylesheet" href="/vendor/dragula.min.css">
 </head>
 <body>
-  <header class="masthead"><div><span class="eyebrow">REDMINE / TEAM PLANNING</span><h1>Sprint board<span class="accent">.</span></h1></div><div id="identity"></div></header>
+  <header class="masthead">
+    <div class="brand"><span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9.5 4v16M14.5 4v16M4 9h16"/></svg></span><div><span class="eyebrow">Redmine / Team planning</span><h1>Sprint board</h1></div></div>
+    <div class="masthead-actions"><label class="theme-control" for="theme">Appearance<select id="theme" aria-label="Appearance"><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></label><button id="open-help" class="help-button" type="button" aria-label="Help" aria-haspopup="dialog" aria-controls="help-dialog" title="Quick guide">?</button><div id="identity"></div></div>
+  </header>
   <main>
     <div id="notice" role="status" aria-live="polite" hidden></div>
     <section id="login" class="login panel">
@@ -37,17 +42,27 @@
       <details id="filter-controls" open>
         <summary>Filters</summary>
       <div class="filters">
-        <label class="search">Find an issue<input id="query" type="search" placeholder="Search subject or #ID"></label>
+        <div class="search field"><div class="search-heading"><label for="query">Find an issue</label><span id="filtered" class="muted" role="status" aria-live="polite"></span></div><input id="query" type="search" placeholder="Search subject or #ID"></div>
         <div class="field"><label for="tracker">Tracker</label><select id="tracker"><option value="">All trackers</option></select></div>
         <div class="field"><label for="assignee">Assignee</label><select id="assignee"><option value="">Everyone</option></select></div>
-        <span id="filtered" class="muted"></span>
       </div>
       </details>
-      <details class="board-help"><summary>Board help</summary><p class="muted board-hint">Drag between columns to change status. Move to backlog to remove from the sprint. The eye toggle in the Backlog header widens it from the New status to every open unplanned issue. In Build mode, the C toggle restricts backlog to the selected category; removing membership preserves other Build relations. Use Plan on a card for keyboard-accessible editing.</p></details>
       <div id="board" aria-label="Backlog and sprint board"></div>
       <p id="empty" class="muted" hidden>No matching issues.</p>
     </section>
   </main>
+  <dialog id="help-dialog" aria-labelledby="help-title">
+    <div class="dialog-heading"><h2 id="help-title">Sprint board · Quick guide</h2><button id="close-help" type="button" aria-label="Close help" autofocus>×</button></div>
+    <dl class="quick-guide">
+      <div><dt>Choose your Sprint</dt><dd>Select a Project and Sprint. Commitment totals always include the whole Sprint, even when you filter.</dd></div>
+      <div><dt>Plan and update work</dt><dd>Drag a Card into a Sprint Column to plan it and set its status. Move it to Backlog to remove it from the selected Sprint, without resetting its status. Use the pencil button for keyboard-accessible planning, assignment and estimates.</dd></div>
+      <div><dt>Find an issue</dt><dd>Search by subject or exact issue ID, such as #123. Combine Tracker and Assignee filters to narrow the results. Scroll each Column independently; Backlog loads more as you scroll.</dd></div>
+      <div><dt>Widen the Backlog</dt><dd>The eye button switches between Unplanned issues in the New status and all open Unplanned issues.</dd></div>
+      <div id="build-help" hidden><dt>Planning with Build Sprints</dt><dd>Choose a Category for its Build Sprints. The C button limits Backlog to that Category. Removing an issue from the selected Build Sprint preserves its other Build Sprint Memberships.</dd></div>
+      <div><dt>Permissions stay yours</dt><dd>Closed Sprints are read only. Redmine checks your permissions and workflow; changes appear only after they are confirmed. Open an issue ID to view its details in Redmine.</dd></div>
+    </dl>
+    <p class="muted guide-hint">Press Esc or use × to close this guide.</p>
+  </dialog>
   <dialog id="notice-dialog" aria-labelledby="notice-title">
     <h2 id="notice-title">Full message</h2><p id="notice-message"></p>
     <form method="dialog"><button>Close message</button></form>

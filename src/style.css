@@ -38,20 +38,45 @@
   --success-border: #89c398;
   --shadow: 0 2px 8px rgb(0 28 54 / 10%), 0 1px 2px rgb(0 28 54 / 4%);
 
-  /* Priority stripes use Ring UI's muted border tier, as YouTrack does. Matched by
-     Redmine priority name; unknown names fall back to --priority-none. */
-  --priority-none: #d3d5db;
-  --priority-low: #89c398;
-  --priority-normal: #a8adbd;
-  --priority-high: #fed277;
-  --priority-urgent: #fdbd3d;
-  --priority-immediate: #f2b6bb;
+  /* Deliberately stronger than the original muted stripes: priority must be readable
+     at a glance, including Normal. Names, never arbitrary Redmine IDs, select colors. */
+  --priority-none: #a8adbd;
+  --priority-low: #3c9b55;
+  --priority-normal: #e0b51b;
+  --priority-high: #dc4747;
+  --priority-urgent: #ed7c3a;
+  --priority-immediate: #d84b67;
+  --priority-low-ink: #246b34;
+  --priority-normal-ink: #735900;
+  --priority-high-ink: #b12e35;
+  --priority-urgent-ink: #a3440b;
+  --priority-immediate-ink: #b02943;
+  --priority-low-fill: #edf7ed;
+  --priority-normal-fill: #fff8cc;
+  --priority-high-fill: #ffeded;
+  --priority-urgent-fill: #fff0e5;
+  --priority-immediate-fill: #ffeaf0;
 
   color: var(--text);
   background: var(--content);
 }
 * { box-sizing: border-box; }
-body { margin: 0; }
+body { margin: 0; background: var(--sidebar); }
+.brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.brand-mark { display: grid; place-items: center; width: 32px; height: 32px; border-radius: var(--radius); background: var(--accent); color: #fff; flex: none; }
+.brand-mark svg { width: 24px; height: 24px; }
+.masthead-actions { display: flex; align-items: center; justify-content: flex-end; gap: 16px; min-width: 0; }
+.theme-control { flex-direction: row; align-items: center; gap: 8px; }
+.help-button { display: inline-grid; place-items: center; flex: none; width: 32px; height: 32px; padding: 0; font-weight: 600; font-size: 16px; }
+#help-dialog { width: min(520px, calc(100% - 32px)); max-height: calc(100dvh - 32px); overflow-y: auto; }
+#close-help { display: inline-grid; place-items: center; flex: none; width: 28px; height: 28px; padding: 0; font-size: 20px; }
+.quick-guide { margin: 20px 0 0; }
+.quick-guide > div + div { margin-top: 14px; }
+.quick-guide dt { font-size: 13px; font-weight: 600; margin-bottom: 3px; }
+.quick-guide dd { margin: 0; color: var(--secondary); font-size: 13px; line-height: 19px; }
+.guide-hint { border-top: 1px solid var(--line); padding-top: 12px; margin: 18px 0 0; }
+.theme-control select { font-size: 12px; padding: 4px 6px; }
+#identity:not(:empty) { border-left: 1px solid var(--line); padding-left: 16px; }
 [hidden] { display: none !important; }
 button, input, select { font: inherit; }
 button, select { cursor: pointer; }
@@ -83,12 +108,15 @@ main { padding: 16px; }
 label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; line-height: 16px; font-weight: 400; color: var(--secondary); }
 input, select {
   color: var(--text); background: var(--content); border: 1px solid var(--border);
-  border-radius: var(--radius); padding: 5px 8px; min-width: 0;
+  border-radius: var(--radius); padding: 5px 8px; min-width: 0; min-height: 32px;
 }
 input:focus, select:focus { border-color: var(--accent); }
 .checkbox { display: flex; flex-direction: row; align-items: center; gap: 8px; color: var(--text); }
 .checkbox input { accent-color: var(--accent); }
 .login .checkbox { margin: 16px 0 0; }
+.login #api-key { width: 100%; margin-top: 4px; }
+input[type="checkbox"] { min-height: 0; flex: none; }
+input::placeholder { color: var(--secondary); opacity: 1; }
 .muted { color: var(--secondary); font-size: 12px; line-height: 16px; }
 #notice {
   padding: 8px 12px; border: 1px solid var(--success-border); background: var(--success-bg);
@@ -109,8 +137,9 @@ input:focus, select:focus { border-color: var(--accent); }
 .filters .search { min-width: 240px; }
 .filters .field { display: flex; flex-direction: column; gap: 4px; }
 .filters select { min-width: 136px; }
-#filtered { margin: 0 0 8px auto; }
-.board-hint { margin: 4px 0 16px; }
+.search-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; height: 16px; }
+.search-heading label { flex: none; }
+#filtered { margin: 0; }
 #board { flex: 1; min-height: 0; min-width: 0; }
 
 /* Board: YouTrack separates columns with hairlines over a flat canvas rather than drawing
@@ -123,35 +152,35 @@ input:focus, select:focus { border-color: var(--accent); }
 }
 .kanban-board {
   float: none; display: flex; flex-direction: column; flex: 1 1 0; min-width: 0;
-  width: auto !important; margin: 0 !important; border-radius: 0; background: transparent;
-  border: 0; border-left: 1px solid var(--line); overflow-wrap: anywhere;
+  width: auto !important; margin: 0 !important; border-radius: 0; background: var(--sidebar);
+  border: 0; border-left: 1px solid var(--line); overflow-wrap: anywhere; transition: none;
 }
 .kanban-board:first-child { border-left: 0; }
 /* The Backlog is the only column that is not a Redmine status, and the only
    drop-to-unplan target: a faint recessed tint, not a different colour. */
 .kanban-board[data-id="backlog"] { background: color-mix(in srgb, var(--sidebar) 60%, var(--content)); }
 .kanban-board header {
-  flex: none; padding: 6px 12px; border-bottom: 1px solid var(--line); background: var(--sidebar);
+  flex: none; display: flex; align-items: center; height: 40px; padding: 0 10px;
+  border-bottom: 1px solid var(--line); background: var(--sidebar);
 }
-.kanban-board-header .kanban-title-board {
+.kanban-board header .kanban-title-board {
   display: flex; align-items: center; justify-content: space-between; gap: 8px;
-  font-size: 12px; line-height: 16px; font-weight: 600; width: 100%;
+  font-size: 12px; line-height: 16px; font-weight: 600; width: 100%; min-height: 24px;
 }
 /* Column totals are plain right-aligned secondary text in YouTrack, not a pill badge. */
 .count { flex-shrink: 0; font-weight: 400; font-size: 12px; color: var(--secondary); background: none; padding: 0; }
-/* Backlog Scope belongs to the Backlog column, so it rides in that column's header. */
-/* jKanban's own `.kanban-board header .kanban-title-board` rule outranks the shared header
-   rule above and keeps titles inline, so the Backlog header alone is made a flex row: title
-   and count stay together on the left, the scope toggle is pushed to the right edge. */
+/* Backlog keeps its count beside the label and pushes scope controls to the right.
+   Its height and vertical alignment are identical to every status header. */
 .kanban-board header.backlog-board .kanban-title-board {
   display: flex; align-items: center; justify-content: flex-start; gap: 4px; width: 100%;
 }
 .scope-toggle {
-  position: relative; flex: none; margin-left: auto; width: 20px; height: 20px; padding: 0;
+  position: relative; flex: none; margin-left: auto; width: 24px; height: 24px; padding: 0;
   display: inline-flex; align-items: center; justify-content: center; border-color: transparent;
   background: none; color: var(--secondary); line-height: 1;
 }
 .scope-toggle svg { pointer-events: none; display: block; }
+.scope-toggle + .scope-toggle { margin-left: 0; }
 .scope-toggle:hover:not(:disabled) { background: var(--tag); border-color: transparent; color: var(--text); }
 .scope-toggle[aria-pressed="true"] { color: var(--text); background: var(--tag); }
 .kanban-board .kanban-drag {
@@ -166,17 +195,18 @@ input:focus, select:focus { border-color: var(--accent); }
 .kanban-item {
   position: relative; background: var(--content); border: 1px solid var(--line);
   border-left: 5px solid var(--stripe, var(--priority-none)); border-radius: var(--radius);
-  padding: 8px 8px 8px 7px; margin-bottom: 0; cursor: grab; overflow-wrap: anywhere;
+  padding: 8px 8px 8px 7px; margin-bottom: 0; cursor: grab; overflow-wrap: anywhere; transition: none;
 }
-.kanban-item:hover { border-color: var(--border); border-left-color: var(--stripe, var(--priority-none)); }
-.kanban-item.prio-none { --stripe: var(--priority-none); }
-.kanban-item.prio-low { --stripe: var(--priority-low); }
-.kanban-item.prio-normal { --stripe: var(--priority-normal); }
-.kanban-item.prio-high { --stripe: var(--priority-high); }
-.kanban-item.prio-urgent { --stripe: var(--priority-urgent); }
-.kanban-item.prio-immediate { --stripe: var(--priority-immediate); }
+.kanban-item:hover { border-color: var(--secondary); border-left-color: var(--stripe, var(--priority-none)); cursor: grab; }
+.kanban-item:active:not(.not-draggable) { cursor: grabbing; }
+.kanban-item.prio-none { --stripe: var(--priority-none); --priority-ink: var(--text); --priority-fill: var(--tag); }
+.kanban-item.prio-low { --stripe: var(--priority-low); --priority-ink: var(--priority-low-ink); --priority-fill: var(--priority-low-fill); }
+.kanban-item.prio-normal { --stripe: var(--priority-normal); --priority-ink: var(--priority-normal-ink); --priority-fill: var(--priority-normal-fill); }
+.kanban-item.prio-high { --stripe: var(--priority-high); --priority-ink: var(--priority-high-ink); --priority-fill: var(--priority-high-fill); }
+.kanban-item.prio-urgent { --stripe: var(--priority-urgent); --priority-ink: var(--priority-urgent-ink); --priority-fill: var(--priority-urgent-fill); }
+.kanban-item.prio-immediate { --stripe: var(--priority-immediate); --priority-ink: var(--priority-immediate-ink); --priority-fill: var(--priority-immediate-fill); }
 .kanban-item:focus-within { border-color: var(--accent); }
-.kanban-item.not-draggable { cursor: default; }
+.kanban-item.not-draggable, .kanban-item.not-draggable:hover { cursor: default; }
 /* ID and summary share the first line, as on a YouTrack card. */
 .card-head { display: flex; align-items: baseline; gap: 8px; font-size: 14px; line-height: 20px; }
 .card-head a { flex: none; color: var(--secondary); text-decoration: none; }
@@ -186,21 +216,25 @@ input:focus, select:focus { border-color: var(--accent); }
   flex: 1; min-width: 0; font-size: 14px; line-height: 20px; font-weight: 400; margin: 0;
   display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; overflow: hidden;
 }
-/* Field values are dot-and-text, not chips. */
+/* A colored priority label anchors the metadata; secondary fields stay quiet. */
 .card-bottom {
-  display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin-top: 8px;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; margin-top: 8px;
   font-size: 12px; line-height: 16px; color: var(--secondary);
 }
-.card-field { display: inline-flex; align-items: center; gap: 4px; }
+.card-field { display: inline-flex; align-items: center; gap: 4px; min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
 .card-field::before {
   content: ''; width: 8px; height: 8px; border-radius: 50%; flex: none;
   background: var(--stripe, var(--priority-none));
 }
+.card-field:not(.plain) { padding: 1px 5px; border-radius: 3px; font-weight: 500; color: var(--priority-ink); background: var(--priority-fill); }
 .card-field.plain::before { display: none; }
-.card-field.plain::before { display: none; }
-.card-bottom strong { margin-left: auto; font-weight: 400; color: var(--secondary); white-space: nowrap; }
-/* Not --disabled: that tier fails AA as text. */
-.card-bottom strong.unestimated { color: var(--secondary); }
+.card-footer { display: flex; align-items: center; gap: 8px; margin-top: 6px; font-size: 12px; line-height: 16px; color: var(--secondary); }
+.card-assignee { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.card-assignee > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.avatar { display: grid; place-items: center; flex: none; width: 20px; height: 20px; border-radius: 50%; background: var(--selected-bg); color: var(--link); font-size: 9px; font-weight: 600; text-transform: uppercase; }
+.avatar.unassigned { background: var(--tag); color: var(--secondary); }
+.card-footer strong { margin-left: auto; font-weight: 500; color: var(--text); white-space: nowrap; }
+.card-footer strong.unestimated { color: var(--secondary); }
 .plan {
   position: absolute; top: 4px; right: 4px; width: 24px; height: 24px; padding: 0;
   display: flex; align-items: center; justify-content: center; border-color: transparent;
@@ -222,6 +256,8 @@ dialog input, dialog select { width: 100%; }
 /* Only the authenticated board is viewport-bound; login and dialogs retain their flow. */
 body.board-active { height: 100dvh; overflow: hidden; display: flex; flex-direction: column; background: var(--content); }
 .board-active .masthead { flex: none; padding: 8px 16px; }
+.board-active .brand .eyebrow { font-size: 11px; line-height: 14px; }
+.board-active .brand h1 { margin: 0; }
 .board-active h1 { font-size: 16px; line-height: 24px; }
 .board-active main { flex: 1; min-height: 0; min-width: 0; display: flex; flex-direction: column; padding: 8px 16px 16px; }
 .board-active #notice { display: flex; align-items: center; gap: 8px; flex: none; padding: 4px 8px; margin-bottom: 8px; font-size: 12px; }
@@ -231,7 +267,7 @@ body.board-active { height: 100dvh; overflow: hidden; display: flex; flex-direct
 #notice button { padding: 1px 8px; font-size: 12px; }
 #notice-message { overflow-wrap: anywhere; }
 #notice-dialog { max-height: calc(100dvh - 32px); overflow: auto; }
-#workspace { flex: 1; min-height: 0; min-width: 0; display: flex; flex-direction: column; }
+#workspace { position: relative; flex: 1; min-height: 0; min-width: 0; display: flex; flex-direction: column; }
 #workspace > :not(#board) { flex: none; min-width: 0; }
 #workspace .toolbar { gap: 8px; padding: 8px; }
 #workspace .toolbar label:not(.checkbox) { flex: 1 1 140px; min-width: 0; max-width: 224px; }
@@ -242,20 +278,27 @@ body.board-active { height: 100dvh; overflow: hidden; display: flex; flex-direct
 #workspace .summary > div:first-child { min-width: 0; overflow-wrap: anywhere; }
 #workspace .summary h2 { font-size: 16px; line-height: 24px; margin: 2px 0; }
 #sprint-state { margin: 2px 0; }
-#workspace .totals { gap: 16px; flex-shrink: 0; }
+#workspace .totals { gap: 16px; flex-shrink: 0; border-left: 1px solid var(--line); padding-left: 16px; }
+#workspace .totals div { min-width: 40px; }
+#workspace .totals strong { color: var(--text); }
+#workspace .summary .eyebrow { font-size: 10px; font-weight: 600; letter-spacing: .06em; }
+#workspace .toolbar { background: var(--sidebar); }
+#workspace #updated { margin-left: auto; white-space: nowrap; }
+#workspace #query { padding-left: 28px; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='none' stroke='%236c707e' stroke-width='1.5'%3E%3Ccircle cx='6.5' cy='6.5' r='4.5'/%3E%3Cpath d='m10 10 4 4'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: 8px center; }
+#editor-subject { line-height: 22px; overflow-wrap: anywhere; }
+#editor-notice { padding: 8px 12px; border-radius: var(--radius); }
+#editor-notice.error { color: var(--error); background: var(--error-bg); }
+#editor-notice.success { color: var(--success); background: var(--success-bg); }
 #workspace .totals strong { font-size: 16px; line-height: 24px; }
 #workspace .filters { padding: 8px 0; gap: 8px; }
 #filter-controls > summary { display: none; }
 #filter-controls .search { min-width: 0; flex: 1; }
-#workspace #filtered { max-width: 300px; }
-.board-help { margin: 0 0 8px; font-size: 12px; line-height: 16px; color: var(--secondary); }
+#workspace #filtered { min-width: 0; text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#board[aria-busy="true"] { cursor: progress; }
+#board .kanban-drag { overflow-anchor: none; }
 summary { cursor: pointer; }
-.board-hint { margin: 4px 0; }
-#empty { margin: 8px 0 0; }
+#empty { position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%); margin: 0; padding: 6px 12px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--content); pointer-events: none; white-space: nowrap; }
 .kanban-title-board { gap: 4px; }
-.board-help[open] > summary { float: left; margin-right: 8px; }
-.board-help[open] .board-hint { margin: 0; }
-.board-help::after { content: ''; display: block; clear: both; }
 @media (max-width: 1279px), (max-height: 719px) {
   .board-active .masthead { padding: 8px; }
   .board-active main { padding: 8px; }
@@ -268,21 +311,18 @@ summary { cursor: pointer; }
   #workspace .filters { flex-wrap: wrap; }
   #workspace .filters .search { flex: 1 1 180px; }
   #workspace .summary { padding: 8px; }
-  #workspace #filtered { margin: 0; }
 }
 @media (max-width: 850px) {
   main { padding: 8px; }
   .masthead { padding: 8px; }
   .summary, .filters { flex-wrap: wrap; }
   #identity { flex-direction: column; align-items: end; }
-  #filtered { margin-left: 0; }
   .totals { gap: 16px; }
 }
 
-/* Follow the OS preference, including changes while the page is open. Ring UI's dark
-   surfaces invert the light relationship: cards sit darker than the columns holding them. */
-@media (prefers-color-scheme: dark) {
-  :root {
+/* Dark surfaces follow Ring UI. The pre-paint theme script resolves System / Light / Dark
+   and listens for OS changes while System is selected. */
+:root[data-color-scheme="dark"] {
     color-scheme: dark;
     --content: #1e1f22;
     --sidebar: #2b2d30;
@@ -308,17 +348,35 @@ summary { cursor: pointer; }
     --success-border: #486c52;
     --shadow: 0 2px 8px rgb(0 0 0 / 50%), 0 1px 2px rgb(0 0 0 / 30%);
     --priority-none: #6f737a;
-    --priority-low: #4e8052;
-    --priority-normal: #6f737a;
-    --priority-high: #d6ae58;
-    --priority-urgent: #e3a23c;
-    --priority-immediate: #bd5757;
+    --priority-low: #6abf7b;
+    --priority-normal: #e2c34d;
+    --priority-high: #ef7474;
+    --priority-urgent: #f39856;
+    --priority-immediate: #ea718c;
+    --priority-low-ink: #95dfa6;
+    --priority-normal-ink: #f4dc7c;
+    --priority-high-ink: #ffb1b1;
+    --priority-urgent-ink: #ffbc8a;
+    --priority-immediate-ink: #ff9aae;
+    --priority-low-fill: #24392a;
+    --priority-normal-fill: #3b351e;
+    --priority-high-fill: #42272a;
+    --priority-urgent-fill: #442e21;
+    --priority-immediate-fill: #422832;
   }
-  body.board-active, .kanban-container { background: var(--sidebar); }
-  .kanban-board[data-id="backlog"] { background: color-mix(in srgb, #000 12%, transparent); }
-  /* Cards are darker than the column they sit in. */
-  .kanban-item { background: var(--content); }
-  #notice.error, #editor-notice.error { color: #ffbcaa; }
-  #notice, #editor-notice.success { color: #c3e5cb; }
-  button.primary { color: #fff; }
+  :root[data-color-scheme="dark"] body.board-active, :root[data-color-scheme="dark"] .kanban-container { background: var(--sidebar); }
+  :root[data-color-scheme="dark"] .kanban-board[data-id="backlog"] { background: color-mix(in srgb, #000 12%, var(--sidebar)); }
+  :root[data-color-scheme="dark"] #notice.error, :root[data-color-scheme="dark"] #editor-notice.error { color: #ffbcaa; }
+  :root[data-color-scheme="dark"] #notice.success, :root[data-color-scheme="dark"] #editor-notice.success { color: #c3e5cb; }
+
+@media (max-width: 600px) {
+  .masthead { gap: 8px; align-items: flex-start; }
+  .masthead-actions { gap: 8px; flex-wrap: wrap; }
+  .theme-control { font-size: 0; gap: 0; }
+  #identity:not(:empty) { border: 0; padding: 0; font-size: 11px; gap: 4px; }
+  #identity button { font-size: 11px; padding: 3px 6px; }
+  .brand-mark { display: none; }
+  .brand .eyebrow { font-size: 10px; }
+  #workspace .summary { flex-wrap: wrap; gap: 8px; }
+  #workspace .totals { flex: 1; border-left: 0; padding-left: 0; justify-content: space-between; }
 }
