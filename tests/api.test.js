@@ -41,6 +41,31 @@ describe('Redmine REST boundary', () => {
     await new RedmineClient('key').update(8, { fixed_version_id: null });
     expect(fetch.mock.calls[0][1]).toMatchObject({ method: 'PUT', body: '{"issue":{"fixed_version_id":null}}' });
   });
+  it('reads categories through contributor-accessible project metadata, without pagination', async () => {
+    const fetch = vi.fn().mockResolvedValue(json({ project: { id: 1, issue_categories: [{ id: 4, name: 'Web' }] } }));
+    vi.stubGlobal('fetch', fetch);
+    expect(await new RedmineClient('key').projectCategories(1)).toEqual([{ id: 4, name: 'Web' }]);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    const url = fetch.mock.calls[0][0];
+    expect(url.pathname).toBe('/redmine/projects/1.json');
+    expect([...url.searchParams.entries()]).toEqual([['include', 'issue_categories']]);
+  });
+  it('rejects missing category metadata rather than treating it as an empty project', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json({ project: { id: 1 } })));
+    await expect(new RedmineClient('key').projectCategories(1)).rejects.toThrow('missing project issue_categories');
+  });
+  it('reads and writes only symmetric relates payloads through dedicated endpoints', async () => {
+    const fetch = vi.fn().mockResolvedValueOnce(json({ relations: [{ id: 3, relation_type: 'relates', issue_id: 8, issue_to_id: 9 }] }))
+      .mockResolvedValueOnce(json({ relation: { id: 4 } }, 201)).mockResolvedValueOnce(new Response(null, { status: 204 }));
+    vi.stubGlobal('fetch', fetch);
+    const client = new RedmineClient('key');
+    expect(await client.relations(8)).toHaveLength(1);
+    await client.relate(8, 9); await client.unrelate(4);
+    expect(fetch.mock.calls[0][0].pathname).toBe('/redmine/issues/8/relations.json');
+    expect(fetch.mock.calls[1][1]).toMatchObject({ method: 'POST', body: '{"relation":{"issue_to_id":9,"relation_type":"relates"}}' });
+    expect(fetch.mock.calls[2][0].pathname).toBe('/redmine/relations/4.json');
+    expect(fetch.mock.calls[2][1]).toMatchObject({ method: 'DELETE' });
+  });
   it('reports permissions and redacts keys echoed by upstream errors', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(json({}, 403)).mockResolvedValueOnce(json({ errors: ['bad personal-secret'] }, 422)));
     const client = new RedmineClient('personal-secret');

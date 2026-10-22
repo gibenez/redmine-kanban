@@ -3,6 +3,8 @@ import './style.css';
 import { RedmineClient, RedmineError } from './api.js';
 import { validateConfig, isBacklog, effort, movePatch, parseEstimate, assertTransition, matchesPatch, escapeHtml as e } from './domain.js';
 import { PlanningFeed } from './planning-feed.js';
+import { BuildPlanningFeed } from './build-planning-feed.js';
+import { buildTracker, asBuildSprint, saveBuildIssue, sprintRelations } from './build-sprints.js';
 
 const $ = id => document.getElementById(id);
 const storageKey = 'redmine-sprint-board.api-key';
@@ -15,6 +17,17 @@ let feed, queryLoading = false, queryTimer, queryRevision = 0, backlogFailed = f
 // rather than read from a persistent control.
 let allUnplannedScope = false;
 const filters = { query: '', tracker: '', assignee: '' };
+let categories = [], categoryId = 'none', categoryOnly = true, buildTrackerId;
+const buildMode = () => config?.sprintSource === 'build';
+const newFeed = () => buildMode() ? new BuildPlanningFeed(api) : new PlanningFeed(api);
+const closedStatusIds = () => statuses.filter(status => status.is_closed).map(status => status.id);
+const preferenceKey = name => `redmine-sprint-board.${name}.${projectId}`;
+function preference(name, fallback = null) { try { return localStorage.getItem(preferenceKey(name)) ?? fallback; } catch { return fallback; } }
+function remember(name, value) { try { localStorage.setItem(preferenceKey(name), String(value)); } catch { /* Optional personal preferences. */ } }
+function selectedMember(issue) { return Boolean(sprint) && (buildMode() ? issue.sprintMember : issue.fixed_version?.id === sprint.id); }
+function categoryToggle() {
+  return buildMode() ? `<button type="button" class="scope-toggle" data-category-scope aria-label="Filter backlog by category" aria-pressed="${categoryOnly}" title="Show backlog issues only in the selected category.">C</button>` : '';
+}
 
 function notify(message, error = false) {
   const compactMessage = document.body.classList.contains('board-active') && message.length > 180;
@@ -63,9 +76,9 @@ function toggleScope() {
   // Only the backlog query changes: sprints and memberships stay as they are.
   if (api && feed && projectId) scheduleSearch(0);
 }
-function feedScope() { return { projectId, sprintId: sprint?.id, backlogStatusId: config.backlogStatusId, allUnplanned: allUnplanned() }; }
+function feedScope() { return { projectId, sprintId: sprint?.id, backlogStatusId: config.backlogStatusId, allUnplanned: allUnplanned(), buildTrackerId, categoryId, categoryOnly, builds: versions }; }
 function backlogScope() {
-  return { backlogStatusId: config.backlogStatusId, allUnplanned: allUnplanned(), closedStatusIds: statuses.filter(status => status.is_closed).map(status => status.id) };
+  return { backlogStatusId: config.backlogStatusId, allUnplanned: allUnplanned(), closedStatusIds: closedStatusIds(), sprintSource: config.sprintSource, buildTrackerId };
 }
 function syncFeed(snapshot) {
   issues = [...new Map([...snapshot.backlog, ...snapshot.sprintVisible].map(issue => [issue.id, issue])).values()];
@@ -78,7 +91,7 @@ function forget() {
   $('login-form').querySelector('button').disabled = false;
   $('forget-saved').hidden = true;
   $('editor').close(); editing = null; destroyBoard();
-  issues = []; versions = []; memberships = []; projects = []; sprint = null; projectId = ''; blockedProjectId = '';
+  issues = []; versions = []; memberships = []; projects = []; categories = []; sprint = null; projectId = ''; blockedProjectId = ''; buildTrackerId = undefined;
   document.body.classList.remove('board-active');
   $('notice-dialog').close();
   $('workspace').hidden = true; $('login').hidden = false; $('identity').replaceChildren(); notify('API key forgotten on this browser.');
@@ -138,16 +151,17 @@ function renderBoard() {
   const visible = issues;
   const total = effort(feed?.snapshot.sprintAll || []), filtered = effort(feed?.snapshot.sprintVisible || []);
   $('sprint-name').textContent = sprint?.name || 'No sprint selected';
-  $('sprint-state').textContent = sprint ? `${sprint.status === 'open' ? 'Open sprint' : 'Closed sprint · read only'}${sprint.due_date ? ` · Due ${sprint.due_date}` : ''}` : 'Create an open target version in Redmine to start planning.';
+  $('sprint-state').textContent = sprint ? `${sprint.status === 'open' ? 'Open sprint' : 'Closed sprint · read only'}${sprint.due_date ? ` · Due ${sprint.due_date}` : ''}` : buildMode() ? 'Create an open Build issue in this category in Redmine to start planning.' : 'Create an open target version in Redmine to start planning.';
   $('totals').innerHTML = `<div><strong>${e(Number(total.hours.toFixed(2)))}</strong><span>estimated hours</span></div><div><strong>${total.count}</strong><span>issues</span></div><div><strong>${total.unestimated}</strong><span>unestimated</span></div>`;
   $('filtered').textContent = `Visible sprint: ${filtered.count} issues · ${Number(filtered.hours.toFixed(2))} h · ${filtered.unestimated} unestimated`;
-  const backlog = visible.filter(issue => isBacklog(issue, backlogScope()));
-  const boards = [{ id: 'backlog', title: `Backlog <span class="count">${backlog.length} / ${feed?.snapshot.total ?? '?'}</span>${scopeToggle()}`, class: 'backlog-board', item: backlog.map(card) }];
+  const backlogIds = new Set(feed?.snapshot.backlog.map(issue => issue.id));
+  const backlog = visible.filter(issue => backlogIds.has(issue.id));
+  const boards = [{ id: 'backlog', title: `Backlog <span class="count">${backlog.length} / ${feed?.snapshot.total ?? '?'}</span>${scopeToggle()}${categoryToggle()}`, class: 'backlog-board', item: backlog.map(card) }];
   for (const statusId of config.columnStatusIds) {
-    const items = visible.filter(issue => issue.fixed_version?.id === sprint?.id && issue.status.id === statusId);
+    const items = visible.filter(issue => selectedMember(issue) && issue.status.id === statusId);
     boards.push({ id: `status-${statusId}`, title: `${e(statuses.find(status => status.id === statusId).name)} <span class="count">${items.length}</span>`, item: items.map(card) });
   }
-  const other = visible.filter(issue => issue.fixed_version?.id === sprint?.id && !config.columnStatusIds.includes(issue.status.id));
+  const other = visible.filter(issue => selectedMember(issue) && !config.columnStatusIds.includes(issue.status.id));
   if (other.length) boards.push({ id: 'other', title: 'Other statuses (unmapped)', item: other.map(card) });
   board = new jKanban({
     element: '#board', gutter: '16px', widthBoard: '290px', responsive: 0, dragBoards: false, boards,
@@ -237,7 +251,9 @@ async function loadMoreBacklog({ silent = false } = {}) {
     backlogFailed = false;
     syncFeed(snapshot); renderFilters();
     if (board !== activeBoard) { renderBoard(); return; }
-    for (const issue of snapshot.backlog) if (!board.findElement(String(issue.id))) board.addElement('backlog', card(issue));
+    // An open issue can also be visible in a selected closed sprint as history.
+    // Deduplicate within Backlog, not across the entire board.
+    for (const issue of snapshot.backlog) if (!board.findBoard('backlog').querySelector(`[data-eid="${Number(issue.id)}"]`)) board.addElement('backlog', card(issue));
     $('empty').hidden = issues.length > 0;
   } catch (error) {
     if (revision === queryRevision) { backlogFailed = true; notify(`Could not load more backlog issues: ${error.message} Use Retry loading issues, or scroll again.`, true); }
@@ -272,9 +288,11 @@ function scheduleSearch(delay) {
   queryTimer = setTimeout(() => void searchIssues(revision), delay);
 }
 function chooseSprint(previousId) {
-  const available = versions.filter(version => version.status === 'open' || ($('closed').checked && version.status === 'closed'));
-  available.sort((a, b) => (a.due_date || '9999').localeCompare(b.due_date || '9999') || a.name.localeCompare(b.name));
-  sprint = available.find(version => version.id === Number(previousId)) || available.find(version => version.status === 'open') || available[0] || null;
+  const available = versions.filter(version => (!buildMode() || String(version.category?.id || 'none') === categoryId) && (version.status === 'open' || ($('closed').checked && version.status === 'closed')));
+  available.sort(buildMode() ? (a, b) => b.id - a.id : (a, b) => (a.due_date || '9999').localeCompare(b.due_date || '9999') || a.name.localeCompare(b.name));
+  const preferred = previousId || (buildMode() ? preference(`sprint.${categoryId}`) : null);
+  sprint = available.find(version => version.id === Number(preferred)) || available.find(version => version.status === 'open') || available[0] || null;
+  if (buildMode() && sprint) remember(`sprint.${categoryId}`, sprint.id);
   options($('sprint'), available.length ? available.map(version => [version.id, version.name + (version.status === 'closed' ? ' (closed)' : '')]) : [['', 'No open sprints']], sprint?.id || '');
 }
 async function refresh(projectChanged = false, retryDenied = false) {
@@ -286,8 +304,21 @@ async function refresh(projectChanged = false, retryDenied = false) {
   const stamp = epoch;
   try {
     const project = projects.find(item => String(item.id) === projectId);
+    if (buildMode()) {
+      buildTrackerId = buildTracker(project, config.buildTrackerId);
+      categories = await api.projectCategories(projectId);
+      if (stamp !== epoch) return;
+      categories.sort((a, b) => a.name.localeCompare(b.name));
+      const preferred = projectChanged ? preference('category') : categoryId;
+      categoryId = preferred === 'none' || categories.some(c => String(c.id) === preferred) ? preferred : String(categories[0]?.id || 'none');
+      if (projectChanged) categoryOnly = preference('category-only', '1') !== '0';
+      options($('category'), [...categories.map(c => [c.id, c.name]), ['none', 'Uncategorized']], categoryId);
+      remember('category', categoryId);
+    }
     const [newVersions, newMemberships] = await Promise.all([
-      api.list(`/projects/${projectId}/versions.json`, 'versions').catch(error => {
+      (buildMode()
+        ? api.list('/issues.json', 'issues', { project_id: projectId, subproject_id: '!*', tracker_id: buildTrackerId, status_id: $('closed').checked ? '*' : 'open', sort: 'id:desc' }).then(rows => rows.filter(issue => issue.project.id === Number(projectId) && issue.tracker.id === buildTrackerId).map(issue => asBuildSprint(issue, closedStatusIds())))
+        : api.list(`/projects/${projectId}/versions.json`, 'versions')).catch(error => {
         if (error.status === 403) throw new RedmineError(`Cannot load sprints for project "${project?.name || projectId}" (#${projectId}): Redmine returned 403 Forbidden. Check that Issue tracking is enabled and your project role has View issues permission. If both are correct, check plugin or gateway restrictions. Select another project, or click Refresh after access is corrected.`, 403);
         throw error;
       }),
@@ -319,6 +350,7 @@ async function refresh(projectChanged = false, retryDenied = false) {
 }
 
 async function mutate(id, patch) {
+  if (buildMode()) return mutateBuild(id, patch);
   if (busy || loading || queryLoading || feed?.loadingMore || !api) return;
   if (!Object.keys(patch).length) { renderBoard(); return; }
   cancelQuery(); busy = true; lock();
@@ -355,12 +387,44 @@ async function mutate(id, patch) {
   finally { if (stamp === epoch) { busy = false; lock(); renderFilters(); renderBoard(); void fillBacklogColumn(); } }
 }
 
+async function mutateBuild(id, patch) {
+  if (busy || loading || queryLoading || feed?.loadingMore || !api) return;
+  cancelQuery(); busy = true; lock();
+  const stamp = epoch, currentApi = api;
+  let message, failed = false;
+  try {
+    if (sprint?.status !== 'open') throw new Error('Closed sprints are read only.');
+    await saveBuildIssue(currentApi, id, sprint, patch, { closedStatusIds: closedStatusIds(), trackerId: buildTrackerId });
+    if (stamp !== epoch) return;
+    $('editor').close(); editing = null;
+    message = patch.sprint_member === false
+      ? `Issue #${id} removed from this sprint. Other Build relations, Category and target version are unchanged; another open Build or the backlog scope may keep it out of backlog.`
+      : `Issue #${id} saved in Redmine.`;
+  } catch (error) { failed = true; message = `Save not confirmed: ${error.message}`; }
+  finally {
+    if (stamp === epoch) {
+      try {
+        feed.pageSize = backlogPageSize(); backlogFailed = false;
+        const snapshot = await feed.load(feedScope(), filters);
+        if (stamp === epoch && snapshot) syncFeed(snapshot);
+      } catch (error) {
+        failed = true; message += ` Board reload failed: ${error.message} Use Refresh before retrying.`;
+        if (stamp === epoch) { issues = []; feed.snapshot = { ...feed.snapshot, backlog: [], sprintAll: [], sprintVisible: [], total: null, hasMore: false }; }
+      }
+      if (stamp === epoch) {
+        busy = false; notify(message, failed); lock(); renderFilters(); renderBoard(); void fillBacklogColumn();
+      }
+    }
+  }
+}
+
 async function openEditor(id) {
   if (busy || loading || queryLoading || feed?.loadingMore) return;
   loading = true; lock();
   const stamp = epoch;
   try {
     const issue = await api.issue(id);
+    if (buildMode() && sprint) issue.sprintMember = sprintRelations(await api.relations(sprint.id), id, sprint.id).length > 0;
     if (stamp !== epoch) return;
     editing = issue;
     $('editor-notice').hidden = true;
@@ -370,7 +434,7 @@ async function openEditor(id) {
     $('edit-estimate').value = issue.estimated_hours ?? '';
     const allowed = new Map([issue.status, ...(issue.allowed_statuses || [])].map(status => [status.id, status.name]));
     options($('edit-status'), [...allowed], issue.status.id);
-    $('edit-destination').value = issue.fixed_version?.id === sprint?.id ? 'sprint' : 'backlog';
+    $('edit-destination').value = selectedMember(issue) ? 'sprint' : 'backlog';
     $('issue-link').href = linkToIssue(issue.id);
     $('editor-warning').textContent = sprint?.status === 'open' ? 'Redmine enforces workflow and field permissions. Removing from a sprint does not reset status.' : 'Read only. Select an open sprint to plan issues.';
     $('editor').showModal();
@@ -398,6 +462,7 @@ async function connect(key, remember) {
     ]);
     if (stamp !== epoch) return;
     config = validateConfig(raw, statusData); statuses = statusData; projects = projectData;
+    feed = newFeed(); $('category-control').hidden = !buildMode();
     if (!projects.length) throw new Error('No projects are visible to your account.');
     try {
       if (remember) localStorage.setItem(storageKey, key); else localStorage.removeItem(storageKey);
@@ -423,13 +488,17 @@ syncCompactControls();
 $('forget-saved').addEventListener('click', forget);
 $('login-form').addEventListener('submit', event => { event.preventDefault(); void connect($('api-key').value.trim(), $('remember').checked); });
 $('project').addEventListener('change', () => {
-  cancelQuery(); feed = new PlanningFeed(api);
+  cancelQuery(); feed = newFeed();
   projectId = $('project').value; issues = []; sprint = null; versions = []; memberships = [];
   Object.assign(filters, { query: '', tracker: '', assignee: '' }); $('query').value = '';
   destroyBoard(); void refresh(true);
 });
+$('category').addEventListener('change', () => {
+  cancelQuery(); feed = newFeed(); categoryId = $('category').value; remember('category', categoryId);
+  issues = []; sprint = null; destroyBoard(); void refresh(false, true);
+});
 $('sprint').addEventListener('change', () => {
-  cancelQuery(); feed = new PlanningFeed(api);
+  cancelQuery(); feed = newFeed();
   sprint = versions.find(version => version.id === Number($('sprint').value)); issues = []; destroyBoard(); void refresh(false, true);
 });
 $('closed').addEventListener('change', () => { cancelQuery(); issues = []; destroyBoard(); void refresh(false, true); });
@@ -439,6 +508,9 @@ for (const [id, field, eventName] of [['query', 'query', 'input'], ['tracker', '
 }
 $('board').addEventListener('click', event => {
   if (event.target.closest('[data-backlog-scope]')) { toggleScope(); return; }
+  if (event.target.closest('[data-category-scope]')) {
+    categoryOnly = !categoryOnly; remember('category-only', categoryOnly ? '1' : '0'); scheduleSearch(0); return;
+  }
   const button = event.target.closest('[data-edit]'); if (button) void openEditor(Number(button.dataset.edit));
 });
 $('close-editor').addEventListener('click', () => { if (!busy) { $('editor').close(); editing = null; } });
@@ -447,7 +519,7 @@ $('edit-form').addEventListener('submit', event => {
   event.preventDefault(); if (!editing || busy) return;
   try {
     if (sprint?.status !== 'open') throw new Error('Select an open sprint before editing issues.');
-    const patch = { assigned_to_id: $('edit-assignee').value ? Number($('edit-assignee').value) : null, estimated_hours: parseEstimate($('edit-estimate').value), status_id: Number($('edit-status').value), fixed_version_id: $('edit-destination').value === 'sprint' ? sprint.id : null };
+    const patch = { assigned_to_id: $('edit-assignee').value ? Number($('edit-assignee').value) : null, estimated_hours: parseEstimate($('edit-estimate').value), status_id: Number($('edit-status').value), ...(buildMode() ? { sprint_member: $('edit-destination').value === 'sprint' } : { fixed_version_id: $('edit-destination').value === 'sprint' ? sprint.id : null }) };
     void mutate(editing.id, patch);
   } catch (error) { notify(error.message, true); }
 });

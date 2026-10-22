@@ -11,6 +11,8 @@ export default defineConfig(({ mode }) => {
     backlogStatusId: env.BACKLOG_STATUS_ID ? Number(env.BACKLOG_STATUS_ID) : defaults.backlogStatusId,
     columnStatusIds: env.COLUMN_STATUS_IDS ? env.COLUMN_STATUS_IDS.split(',').map(Number) : defaults.columnStatusIds,
     refreshSeconds: env.REFRESH_SECONDS ? Number(env.REFRESH_SECONDS) : defaults.refreshSeconds,
+    sprintSource: env.SPRINT_SOURCE || defaults.sprintSource,
+    buildTrackerId: env.BUILD_TRACKER_ID ? Number(env.BUILD_TRACKER_ID) : defaults.buildTrackerId,
   };
   return {
     plugins: [{

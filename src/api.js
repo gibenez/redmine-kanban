@@ -62,4 +62,14 @@ export class RedmineClient {
   }
   issue(id) { return this.request(`/issues/${Number(id)}.json`, { params: { include: 'allowed_statuses' } }).then(data => data.issue); }
   update(id, patch) { return this.request(`/issues/${Number(id)}.json`, { method: 'PUT', body: { issue: patch } }); }
+  async projectCategories(id, options = {}) {
+    // The standalone category endpoint requires Manage categories even for GET.
+    // Project metadata exposes the same names/IDs with ordinary project-view access.
+    const data = await this.request(`/projects/${Number(id)}.json`, { ...options, params: { include: 'issue_categories' } });
+    if (!Array.isArray(data.project?.issue_categories)) throw new RedmineError('Invalid Redmine response: missing project issue_categories.');
+    return data.project.issue_categories;
+  }
+  relations(id, options = {}) { return this.list(`/issues/${Number(id)}/relations.json`, 'relations', {}, options); }
+  relate(id, otherId) { return this.request(`/issues/${Number(id)}/relations.json`, { method: 'POST', body: { relation: { issue_to_id: Number(otherId), relation_type: 'relates' } } }); }
+  unrelate(id) { return this.request(`/relations/${Number(id)}.json`, { method: 'DELETE' }); }
 }

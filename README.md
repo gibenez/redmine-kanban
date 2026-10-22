@@ -6,7 +6,7 @@ A frontend-only sprint planner for one team. [jKanban](https://github.com/riktar
 
 - Redmine **5.0+**, with REST API enabled under Administration → Settings → API.
 - Each user supplies their own API key from their Redmine account page. Existing Redmine sessions are not reused.
-- At least one visible project. Create target versions in Redmine to represent sprints.
+- At least one visible project. Create target versions for standard planning, or enable Build-issue mode for Category-scoped sprints.
 - Docker Compose. The board can run anywhere that can reach your Redmine URL; no shared Docker network or access to Redmine's Docker setup is required.
 - HTTPS for the board and public Redmine URLs outside local development. Terminate board TLS at your existing ingress/reverse proxy.
 
@@ -26,6 +26,8 @@ Open `http://localhost:8080` locally. For production, route your HTTPS ingress t
 | `BACKLOG_STATUS_ID` | Actual ID of your **New** status. |
 | `COLUMN_STATUS_IDS` | Comma-separated status IDs in board order, e.g. `1,2,3,5`. These examples are not universal Redmine defaults. |
 | `REFRESH_SECONDS` | Active-tab refresh interval; default 60, minimum 15. |
+| `SPRINT_SOURCE` | `version` (default) or `build` for Category-scoped Build-issue sprints. |
+| `BUILD_TRACKER_ID` | Optional enabled Build tracker ID. When blank, Build mode resolves the exact tracker name `Build` for the selected project; missing trackers produce an error. |
 | `BOARD_PORT` | Published local port; default 8080. |
 
 Discover status IDs from **your** Redmine installation:
@@ -55,7 +57,29 @@ Successful login verifies the API key, not access to every project. In stock Red
 
 The board identifies the denied project, clears unavailable data, and pauses automatic refresh after a 403 rather than repeatedly requesting forbidden data. Choose another project, or click **Refresh** after access is corrected. It cannot grant permissions or bypass a Redmine denial. A forbidden membership-list request is handled separately by limiting assignee choices; it does not block the whole board.
 
-## How planning works
+## Build-issue planning
+
+For a project whose modules use Category and whose sprints are Build issues, set:
+
+```dotenv
+SPRINT_SOURCE=build
+BUILD_TRACKER_ID=9 # Replace with your actual Build tracker ID, or leave blank to resolve Build by name.
+```
+
+Recreate the container or restart the development server after changing `.env`. Equivalent browser configuration fields are `sprintSource: "build"` and `buildTrackerId: 9` (or `null` for name lookup).
+
+- Categories are read through `GET /projects/:id.json?include=issue_categories`, which needs ordinary project-view access. The standalone `/projects/:id/issue_categories.json` endpoint requires **Manage categories**, even for reads, and is deliberately not used. Contributors do not need category-management rights.
+- Select **Project → Category → Sprint**. Uncategorized is supported. Sprint labels are `subject (#ID)`, newest issue first. The last category is remembered per project and sprint per category; otherwise the first alphabetical category and newest open Build are selected. Empty categories show “No open sprints”; create Builds in Redmine, not on the board.
+- A sprint is closed when its Build issue has a closed Redmine status. **Include closed sprints** exposes read-only history.
+- Only **relates to** links define membership, in either direction. Multiple Build memberships are allowed. Adding membership creates a link; removing it deletes only the selected Build's relates link. Other links and all target versions are untouched. Build issues never appear as work cards.
+- Backlog means open work with **no open Build membership**, retaining the New/all-open eye toggle. Existing target versions and links to closed Builds do not prevent backlog eligibility. Removing one membership may leave an issue out of backlog if another open Build still relates to it.
+- The **C** toggle in the Backlog header filters backlog to the selected category, defaults on, and remembers your choice per project. Its tooltip is “Show backlog issues only in the selected category.” This is independent of the eye toggle and search filters. Sprint columns include members from any category in the selected project; cross-category planning never changes Category. Other projects and subprojects remain excluded.
+- All visible open Builds in the project are inspected to determine membership, including Builds in other categories. If that lookup fails, the board fails rather than presenting planned work as backlog. Redmine still applies search/status/category filters before candidate pagination; the board filters candidate pages against membership, buffering at most one server page. Sparse backlog can require scanning several candidate pages. Its total is `?` until the candidate stream is exhausted; it does not scan the whole backlog solely to count it.
+- Relation changes and issue field updates are separate operations. The board rechecks sprint state and workflow before writing, verifies both results, reports observed partial state, and refreshes after errors without attempting rollback. Redmine permissions must allow viewing related issues and managing issue relations, as well as the requested field/status edits. Hidden issues and relations cannot be inferred or bypassed.
+
+See [ADR 0002](docs/adr/0002-build-issue-sprint-membership.md). The following version-specific membership rules apply only to the default `version` mode; status columns, filters, estimates and workflow rules also apply in Build mode.
+
+## How version-based planning works
 
 - Select a project and a sprint (Redmine target version). The board excludes subprojects.
 - **Backlog = no target version.** By default it is narrowed to the configured New status; use the **Show all unplanned** eye toggle at the right of the Backlog column header (crossed out while narrowed) to widen it to every open status with no target version. Closed issues never appear in the backlog, and issues assigned to any version are never backlog. The setting is a personal view preference: it is remembered per browser, is not a filter, and **Show all unplanned** survives clearing the search and filters.
@@ -90,7 +114,7 @@ Cards return to their original location immediately after a drop and move only a
 
 Refresh runs while the tab is visible and pauses during dragging, editing, saves, searches, page loads, or while the backlog is scrolled away from the top, so it does not disrupt reading the list. Manual **Refresh** resets the backlog to its first page of matches. A confirmed write also reloads that first page so changed membership/order cannot leave an invalid pagination cursor. Failed lazy-page requests keep their offset; because a column already scrolled to its bottom cannot raise another scroll event, a **Retry loading issues** button appears in the backlog footer until the page succeeds.
 
-Project/sprint selection is locked during metadata loads and saves, but remains available while a search is pending; changing scope discards the old search/page response. The server's current version state is checked before writes, so a newly closed sprint cannot be knowingly edited from a stale view. Redmine uses offset pagination, not a snapshot: concurrent changes elsewhere can still shift page boundaries; duplicate IDs are suppressed, and Refresh starts a fresh result set.
+Project/sprint selection is locked during metadata loads and saves, but remains available while a search is pending; changing scope discards the old search/page response. The server's current sprint state (version or Build issue status) is checked before writes, so a newly closed sprint cannot be knowingly edited from a stale view. Redmine uses offset pagination, not a snapshot: concurrent changes elsewhere can still shift page boundaries; duplicate IDs are suppressed, and Refresh starts a fresh result set.
 
 This is **not transactional conflict detection**: another editor can race a read or update. No force-write/retry loop is used. If a write response or confirmation is lost, it may already have succeeded; the board says "Save not confirmed" and asks you to refresh before retrying. Redmine journals remain the authoritative history.
 
@@ -102,7 +126,7 @@ This is **not transactional conflict detection**: another editor can race a read
 - Dependencies are bundled locally; there are no CDN scripts, remote fonts, analytics, or raw Redmine HTML rendering. All issue/status/member strings passed to jKanban's HTML interface are escaped.
 - Production nginx supplies a restrictive CSP (inline **style attributes** are allowed for jKanban/Dragula layout; inline scripts are not), no-store responses, no-referrer, frame restrictions and nosniff.
 - API credentials go only in `X-Redmine-API-Key`; browser cookies, Basic auth, and Redmine user-impersonation headers are not forwarded. Responses cannot set browser cookies. API responses are sandboxed and API access logs are disabled in this container. Check logging policies on your ingress and Redmine as well.
-- The proxy only permits required GET JSON endpoints and PUT `/issues/:id.json`; it is not a general Redmine proxy or an authentication layer. Exposing it also exposes that part of your Redmine API. Use your normal network perimeter and rate limiting.
+- The proxy only permits required GET JSON endpoints, PUT `/issues/:id.json`, POST `/issues/:id/relations.json`, and DELETE `/relations/:id.json`; it is not a general Redmine proxy or an authentication layer. Exposing it also exposes that part of your Redmine API. Use your normal network perimeter and rate limiting.
 
 ## Local development
 
@@ -157,8 +181,10 @@ The Docker smoke suite requires Docker, curl, jq and the installed Chromium brow
 - `src/api.js`: authenticated, paginated Redmine REST boundary.
 - `src/domain.js`: backlog, movement, totals and validation rules.
 - `src/planning-feed.js`: server-side queries, bounded backlog pages, sprint totals, cancellation and cursor lifecycle.
+- `src/build-sprints.js`: Build tracker identity, symmetric membership and verified relation/field writes.
+- `src/build-planning-feed.js`: project-wide open-Build membership index and category-scoped candidate paging.
 - `src/main.js`: connection lifecycle, incremental rendering, editor and verified mutations.
 - `docker/`: runtime config and restricted nginx proxy.
 - `public/vendor/`: pinned jKanban browser distribution and license notices; see [THIRD_PARTY.md](THIRD_PARTY.md).
 
-Redmine API references: [issues / allowed statuses](https://www.redmine.org/projects/redmine/wiki/Rest_Issues), [statuses](https://www.redmine.org/projects/redmine/wiki/Rest_IssueStatuses), [versions](https://www.redmine.org/projects/redmine/wiki/Rest_Versions), [memberships](https://www.redmine.org/projects/redmine/wiki/Rest_Memberships).
+Redmine API references: [issues / allowed statuses](https://www.redmine.org/projects/redmine/wiki/Rest_Issues), [statuses](https://www.redmine.org/projects/redmine/wiki/Rest_IssueStatuses), [versions](https://www.redmine.org/projects/redmine/wiki/Rest_Versions), [memberships](https://www.redmine.org/projects/redmine/wiki/Rest_Memberships), [categories](https://www.redmine.org/projects/redmine/wiki/Rest_IssueCategories), [relations](https://www.redmine.org/projects/redmine/wiki/Rest_IssueRelations).
