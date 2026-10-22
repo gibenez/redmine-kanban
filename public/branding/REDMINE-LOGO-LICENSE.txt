@@ -1,0 +1,10 @@
+Redmine Logo is Copyright (C) 2009 Martin Herr and is licensed under the
+Creative Commons Attribution-Share Alike 2.5 Generic license.
+https://creativecommons.org/licenses/by-sa/2.5/
+
+Source and attribution: https://www.redmine.org/projects/redmine/wiki/Logo
+Original asset: https://www.redmine.org/attachments/download/3462/redmine_fluid_icon.png
+Local asset: redmine-logo.png (unmodified, displayed at a smaller size)
+
+The Redmine name and logo identify the upstream project; their use does not
+imply endorsement of this Sprint Board by the Redmine project.

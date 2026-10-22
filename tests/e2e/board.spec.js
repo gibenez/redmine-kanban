@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 
-async function setup(page, { deny = false, ignored = false, denyVersions = false } = {}) {
+async function setup(page, { deny = false, ignored = false, denyVersions = false, user = { id: 7, firstname: 'Team', lastname: 'Member' } } = {}) {
   const statuses = [{ id: 1, name: 'New' }, { id: 2, name: 'Open' }, { id: 3, name: 'Review' }, { id: 5, name: 'Done', is_closed: true }];
   const versions = [{ id: 10, name: 'Sprint 10', status: 'open' }, { id: 11, name: 'Sprint 9', status: 'closed' }];
   const base = { tracker: { id: 1, name: 'Feature' }, priority: { id: 2, name: 'Normal' }, project: { id: 1, name: 'Team' }, allowed_statuses: statuses };
@@ -15,7 +15,7 @@ async function setup(page, { deny = false, ignored = false, denyVersions = false
     const request = route.request(), url = new URL(request.url()), path = url.pathname.replace('/redmine', '');
     requests.push(request);
     const send = data => route.fulfill({ json: data });
-    if (path === '/users/current.json') return send({ user: { id: 7, firstname: 'Team', lastname: 'Member' } });
+    if (path === '/users/current.json') return send({ user });
     if (path === '/issue_statuses.json') return send({ issue_statuses: [...statuses, { id: 8, name: 'Waiting' }] });
     if (path === '/enumerations/issue_priorities.json') return send({ issue_priorities: [{ id: 2, name: 'Normal' }] });
     if (path === '/projects.json') return send({ projects: [{ id: 1, name: 'Team', trackers: [{ id: 1, name: 'Feature' }, { id: 2, name: 'Bug' }] }, { id: 2, name: 'Other project', trackers: [{ id: 1, name: 'Feature' }] }] });
@@ -60,6 +60,15 @@ async function login(page, remember = false) {
   if (remember) await page.getByLabel('Remember API key on this browser').check();
   await page.getByRole('button', { name: 'Connect to Redmine' }).click();
   await expect(page.locator('#updated')).toContainText('Updated');
+}
+async function signOut(page) {
+  await page.getByRole('button', { name: /^Account:/ }).click();
+  await page.getByRole('button', { name: 'Sign out', exact: true }).click();
+}
+async function setAppearance(page, mode) {
+  const button = page.getByRole('button', { name: /^Appearance:/ });
+  for (let step = 0; step < 3 && await button.getAttribute('data-theme') !== mode; step++) await button.click();
+  await expect(button).toHaveAttribute('data-theme', mode);
 }
 async function drag(page, id, target) {
   const source = page.locator(`[data-eid="${id}"] h3`), destination = page.locator(`[data-id="${target}"] .kanban-drag`);
@@ -366,21 +375,132 @@ test('dark mode follows the system preference on login, board and dialogs', asyn
   await expect(page.locator('.summary')).toHaveCSS('background-color', 'rgb(30, 31, 34)');
 });
 
+for (const theme of ['light', 'dark']) {
+  test(`initials avatar opens a dismissible account popover in ${theme} mode`, async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 650 });
+    await page.emulateMedia({ colorScheme: theme });
+    const fixture = await setup(page, { user: { id: 7, firstname: 'Giacomo', lastname: 'Benedetti' } });
+    await login(page, true);
+    const avatar = page.getByRole('button', { name: 'Account: Giacomo Benedetti', exact: true });
+    const popover = page.getByRole('dialog', { name: 'Account', exact: true });
+    await expect(avatar).toHaveText('GB');
+    await expect(avatar).toBeInViewport();
+    await expect(page.locator('#user-name')).not.toBeVisible();
+    await expect(page.getByRole('button', { name: 'Sign out', exact: true })).not.toBeVisible();
+    const before = await page.locator('#board').boundingBox();
+    await avatar.click();
+    await expect(popover).toBeVisible();
+    await expect(avatar).toHaveAttribute('aria-expanded', 'true');
+    await expect(popover).toContainText('Giacomo Benedetti');
+    await expect(popover).toHaveCSS('background-color', theme === 'dark' ? 'rgb(30, 31, 34)' : 'rgb(255, 255, 255)');
+    const bounds = await popover.boundingBox(), anchor = await avatar.boundingBox();
+    expect(Math.abs(bounds.x + bounds.width - anchor.x - anchor.width)).toBeLessThanOrEqual(1);
+    expect(bounds.x).toBeGreaterThanOrEqual(8);
+    expect(bounds.y).toBeGreaterThanOrEqual(anchor.y + anchor.height);
+    expect(bounds.y + bounds.height).toBeLessThanOrEqual(650);
+    expect(await page.locator('#board').boundingBox()).toEqual(before);
+    await page.getByRole('heading', { name: 'Sprint board', exact: true }).click();
+    await expect(popover).not.toBeVisible();
+    await expect(avatar).toHaveAttribute('aria-expanded', 'false');
+    await avatar.focus(); await page.keyboard.press('Enter');
+    await expect(popover).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Sign out', exact: true })).toBeFocused();
+    await page.keyboard.press('Escape');
+    await expect(popover).not.toBeVisible();
+    await expect(avatar).toBeFocused();
+    await signOut(page);
+    await expect(page.getByLabel('Personal API key')).toBeFocused();
+    await expect(page.locator('#identity')).not.toBeVisible();
+    await expect(popover).not.toBeVisible();
+    expect(await page.evaluate(() => localStorage.getItem('redmine-sprint-board.api-key'))).toBeNull();
+    expect(fixture.writes).toEqual([]);
+  });
+}
+
+for (const [user, initials] of [
+  [{ id: 7, firstname: 'Giacomo Andrea', lastname: 'Benedetti' }, 'GB'],
+  [{ id: 7, login: 'giacomo.benedetti' }, 'GB'],
+  [{ id: 7, firstname: 'Giacomo' }, 'G'],
+]) {
+  test(`account initials use first and last names or login: ${JSON.stringify(user)}`, async ({ page }) => {
+    await setup(page, { user }); await login(page);
+    await expect(page.locator('#user-avatar')).toHaveText(initials);
+  });
+}
+
+for (const viewport of [{ width: 1280, height: 720 }, { width: 390, height: 650 }]) {
+  test(`refresh lives in the topbar and last update in a thin bottom bar at ${viewport.width}px`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    const fixture = await setup(page);
+    await page.goto('/');
+    await expect(page.locator('#refresh')).not.toBeVisible();
+    await expect(page.locator('#statusbar')).not.toBeVisible();
+    await login(page);
+    const refresh = page.getByRole('banner').getByRole('button', { name: 'Refresh', exact: true });
+    const statusbar = page.getByRole('contentinfo', { name: 'Board status' });
+    await expect(refresh).toBeInViewport();
+    await expect(refresh).toHaveText('');
+    await expect(refresh.locator('svg')).toBeVisible();
+    await expect(page.locator('.toolbar #refresh, .toolbar #updated')).toHaveCount(0);
+    await expect(statusbar).toContainText('Updated');
+    const status = await statusbar.boundingBox(), board = await page.locator('#board').boundingBox();
+    expect(status.height).toBe(24);
+    expect(status.x).toBe(0); expect(status.width).toBe(viewport.width);
+    expect(status.y + status.height).toBe(viewport.height);
+    expect(board.y + board.height).toBeLessThanOrEqual(status.y);
+    const previousUpdate = await page.locator('#updated').textContent();
+    const previousRequests = fixture.requests.length;
+    let release;
+    const gate = new Promise(resolve => { release = resolve; });
+    await page.route('**/redmine/issues.json?**', async route => { await gate; await route.fallback(); });
+    await refresh.click();
+    try {
+      await expect(refresh).toBeDisabled();
+      await expect(refresh).toHaveAttribute('aria-busy', 'true');
+      await expect(page.locator('#updated')).toHaveText(previousUpdate);
+      expect(await statusbar.boundingBox()).toEqual(status);
+    } finally { release(); }
+    await expect(refresh).toBeEnabled();
+    await expect(refresh).toHaveAttribute('aria-busy', 'false');
+    expect(fixture.requests.length).toBeGreaterThan(previousRequests);
+    expect(fixture.writes).toEqual([]);
+    await signOut(page);
+    await expect(refresh).not.toBeVisible();
+    await expect(statusbar).not.toBeVisible();
+    await expect(page.locator('#updated')).toBeEmpty();
+  });
+}
+
 test('appearance overrides the OS, persists, and returns to live system mode', async ({ page }) => {
   await setup(page);
   await page.emulateMedia({ colorScheme: 'dark' });
   await page.goto('/');
-  const appearance = page.getByLabel('Appearance', { exact: true });
-  await expect(appearance).toHaveValue('system');
-  await appearance.selectOption('light');
+  const appearance = page.getByRole('button', { name: /^Appearance:/ });
+  const bounds = await appearance.boundingBox();
+  await expect(appearance).toHaveAttribute('data-theme', 'system');
+  await expect(appearance).toHaveAccessibleName('Appearance: System. Switch to Light');
+  await expect(appearance.locator('[data-theme-icon]:not([hidden])')).toHaveAttribute('data-theme-icon', 'system');
+  await expect(appearance.locator('select')).toHaveCount(0);
+  await appearance.focus(); await page.keyboard.press('Space');
+  await expect(appearance).toHaveAccessibleName('Appearance: Light. Switch to Dark');
+  await expect(appearance.locator('[data-theme-icon]:not([hidden])')).toHaveAttribute('data-theme-icon', 'light');
+  expect(await appearance.boundingBox()).toEqual(bounds);
   await expect(page.locator('html')).toHaveCSS('color-scheme', 'light');
   await page.reload();
-  await expect(appearance).toHaveValue('light');
+  await expect(appearance).toHaveAttribute('data-theme', 'light');
   await expect(page.locator('html')).toHaveCSS('color-scheme', 'light');
-  await appearance.selectOption('dark');
+  await appearance.click();
+  await expect(appearance).toHaveAccessibleName('Appearance: Dark. Switch to System');
+  await expect(appearance.locator('[data-theme-icon]:not([hidden])')).toHaveAttribute('data-theme-icon', 'dark');
+  expect(await appearance.boundingBox()).toEqual(bounds);
+  await page.reload();
+  await expect(appearance).toHaveAttribute('data-theme', 'dark');
   await page.emulateMedia({ colorScheme: 'light' });
   await expect(page.locator('html')).toHaveCSS('color-scheme', 'dark');
-  await appearance.selectOption('system');
+  await appearance.focus(); await page.keyboard.press('Enter');
+  await expect(appearance).toHaveAccessibleName('Appearance: System. Switch to Light');
+  await expect(appearance.locator('[data-theme-icon]:not([hidden])')).toHaveAttribute('data-theme-icon', 'system');
+  expect(await appearance.boundingBox()).toEqual(bounds);
   await expect(page.locator('html')).toHaveCSS('color-scheme', 'light');
   await page.emulateMedia({ colorScheme: 'dark' });
   await expect(page.locator('html')).toHaveCSS('color-scheme', 'dark');
@@ -394,14 +514,61 @@ test('appearance works without storage and ignores invalid stored preferences', 
     Storage.prototype.removeItem = () => { throw new Error('Storage unavailable'); };
   });
   await page.goto('/');
-  await expect(page.getByLabel('Appearance', { exact: true })).toHaveValue('system');
-  await page.getByLabel('Appearance', { exact: true }).selectOption('dark');
+  await expect(page.getByRole('button', { name: /^Appearance:/ })).toHaveAttribute('data-theme', 'system');
+  await setAppearance(page, 'dark');
   await expect(page.locator('html')).toHaveCSS('color-scheme', 'dark');
-  await page.getByLabel('Appearance', { exact: true }).selectOption('light');
+  await setAppearance(page, 'light');
   await expect(page.locator('html')).toHaveCSS('color-scheme', 'light');
 });
 
 for (const mode of ['light', 'dark']) {
+  test(`Redmine logo is served locally and stays compact in ${mode} mode`, async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 650 });
+    await page.emulateMedia({ colorScheme: mode });
+    await setup(page); await login(page);
+    const logo = page.getByRole('banner').getByRole('img', { name: 'Redmine', exact: true });
+    await expect(logo).toBeInViewport();
+    await expect(logo).toHaveAttribute('src', '/branding/redmine-logo.png');
+    await expect.poll(() => logo.evaluate(node => node.complete && node.naturalWidth > 0)).toBe(true);
+    await expect(logo).toHaveCSS('width', '32px');
+    await expect(logo).toHaveCSS('height', '32px');
+    await expect(page.locator('.brand-mark')).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+    expect(await page.evaluate(() => document.scrollingElement.scrollWidth)).toBe(390);
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await expect(logo).toBeInViewport();
+    await expect(logo).toHaveCSS('width', '32px');
+  });
+}
+
+test('dropdowns retain the native arrow in forced-colors mode', async ({ page }) => {
+  await page.emulateMedia({ forcedColors: 'active' });
+  await setup(page); await login(page);
+  await expect(page.locator('#project')).toHaveCSS('appearance', 'auto');
+  await expect(page.locator('#project')).toHaveCSS('background-image', 'none');
+});
+
+for (const mode of ['light', 'dark']) {
+  test(`dropdown chevrons have consistent inset spacing in ${mode} mode`, async ({ page }) => {
+    await page.emulateMedia({ colorScheme: mode });
+    await setup(page); await login(page);
+    await page.getByRole('button', { name: 'Plan #1', exact: true }).click();
+    for (const id of ['project', 'sprint', 'tracker', 'assignee', 'edit-assignee', 'edit-status', 'edit-destination']) {
+      const style = await page.locator(`#${id}`).evaluate(node => {
+        const css = getComputedStyle(node);
+        return { appearance: css.appearance, padding: css.paddingRight, left: css.paddingLeft,
+          image: css.backgroundImage, position: css.backgroundPositionX, size: css.backgroundSize };
+      });
+      expect(style.appearance).toBe('none');
+      expect(style.padding).toBe('32px'); expect(style.left).toBe('8px');
+      expect(style.position).toContain('10px'); expect(style.size).toBe('12px 12px');
+      expect(style.image).toContain(mode === 'dark' ? '9da0a8' : '6c707e');
+    }
+    await expect(page.locator('#editor')).toBeVisible();
+    await page.locator('#edit-status').selectOption('2');
+    await expect(page.locator('#edit-status')).toHaveValue('2');
+    await page.getByRole('button', { name: 'Close editor' }).click();
+  });
+
   test(`Alta is red, Media yellow and Bassa green in ${mode} mode`, async ({ page }) => {
     await page.emulateMedia({ colorScheme: mode });
     const fixture = await setup(page);
@@ -424,7 +591,7 @@ for (const mode of ['light', 'dark']) {
       subject: `Issue with ${name.toLowerCase()} priority`, priority: { id: 100 + index, name },
       assigned_to: { id: 9, name: 'Alexandra Example With A Very Long Name' } }));
     await login(page);
-    await page.getByLabel('Appearance', { exact: true }).selectOption(mode);
+    await setAppearance(page, mode);
     const colors = [];
     for (let index = 0; index < names.length; index++) {
       const card = page.locator(`[data-eid="${100 + index}"]`);
@@ -498,7 +665,7 @@ for (const viewport of [{ width: 1280, height: 720 }, { width: 1440, height: 100
     await page.getByRole('button', { name: 'Help', exact: true }).click();
     expect(await page.evaluate(() => document.scrollingElement.scrollHeight)).toBe(viewport.height);
     await page.getByRole('button', { name: 'Close help', exact: true }).click();
-    await page.getByRole('button', { name: 'Forget key / Sign out' }).click();
+    await signOut(page);
     await expect(page.locator('body')).not.toHaveClass(/board-active/);
   });
 }
@@ -537,7 +704,7 @@ test('compact board exposes filters and allows board-only horizontal scrolling',
 test('phone layout keeps appearance, planning controls and board inside the viewport', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await setup(page); await login(page);
-  await expect(page.getByLabel('Appearance', { exact: true })).toBeInViewport();
+  await expect(page.getByRole('button', { name: /^Appearance:/ })).toBeInViewport();
   await expect(page.getByLabel('Project', { exact: true })).toBeInViewport();
   await expect(page.getByLabel('Sprint', { exact: true })).toBeInViewport();
   const geometry = await page.evaluate(() => ({
@@ -699,7 +866,7 @@ test('project versions 403 explains the denied resource and keeps project select
   await page.goto('/');
   await page.getByLabel('Personal API key').fill('test-personal-key');
   await page.getByRole('button', { name: 'Connect to Redmine' }).click();
-  await expect(page.locator('#identity')).toContainText('Team Member');
+  await expect(page.getByRole('button', { name: 'Account: Team Member', exact: true })).toBeVisible();
   await expect(page.locator('#notice')).toContainText('Cannot load sprints for project');
   await expect(page.locator('#notice')).toContainText('Issue tracking');
   expect(fixture.requests.some(request => new URL(request.url()).pathname === '/redmine/projects/1/versions.json')).toBe(true);
@@ -795,7 +962,7 @@ test('remembers only with consent and forgets the key on signout', async ({ page
   await setup(page); await login(page, true);
   expect(await page.evaluate(() => localStorage.getItem('redmine-sprint-board.api-key'))).toBe('test-personal-key');
   await page.reload(); await expect(page.locator('#updated')).toContainText('Updated');
-  await page.getByRole('button', { name: 'Forget key / Sign out' }).click();
+  await signOut(page);
   await expect(page.getByLabel('Personal API key')).toBeVisible();
   expect(await page.evaluate(() => localStorage.getItem('redmine-sprint-board.api-key'))).toBeNull();
   await page.reload(); await expect(page.getByLabel('Personal API key')).toBeVisible();

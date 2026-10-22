@@ -31,6 +31,24 @@ function categoryToggle() {
   return buildMode() ? `<button type="button" class="scope-toggle" data-category-scope aria-label="Filter backlog by category" aria-pressed="${categoryOnly}" title="Show backlog issues only in the selected category.">C</button>` : '';
 }
 
+function renderIdentity(user) {
+  const parts = [user.firstname?.trim(), user.lastname?.trim()].filter(Boolean);
+  const name = parts.join(' ') || user.login?.trim() || 'User';
+  const words = parts.length > 1 ? parts : name.trim().split(/[\s._-]+/u).filter(Boolean);
+  const initials = (words.length > 1 ? [words[0], words.at(-1)] : words)
+    .map(word => Array.from(word)[0]).join('').toLocaleUpperCase();
+  $('user-avatar').textContent = initials;
+  $('user-avatar').setAttribute('aria-label', `Account: ${name}`);
+  $('user-avatar').title = name;
+  $('user-name').textContent = name;
+  $('identity').hidden = false;
+}
+function positionUserPopover() {
+  const bounds = $('user-avatar').getBoundingClientRect();
+  $('user-popover').style.top = `${bounds.bottom + 8}px`;
+  $('user-popover').style.right = `${Math.max(8, window.innerWidth - bounds.right)}px`;
+}
+
 function notify(message, error = false) {
   const compactMessage = document.body.classList.contains('board-active') && message.length > 180;
   const text = document.createElement('span'); text.textContent = message;
@@ -56,6 +74,8 @@ function options(select, rows, selected = '') {
   select.value = String(selected);
 }
 function lock() {
+  $('refresh').disabled = busy || loading || !api;
+  $('refresh').setAttribute('aria-busy', String(loading));
   document.querySelectorAll('#workspace select, #workspace input, #workspace button, #edit-form input, #edit-form select, #edit-form button[type="submit"]').forEach(el => { el.disabled = busy || loading; });
   document.querySelectorAll('.plan, .scope-toggle').forEach(el => { el.disabled = busy || loading || queryLoading || feed?.loadingMore; });
   if ($('backlog-more')) $('backlog-more').disabled = busy || loading || queryLoading || feed?.loadingMore;
@@ -109,7 +129,10 @@ function forget() {
   issues = []; versions = []; memberships = []; projects = []; categories = []; sprint = null; projectId = ''; blockedProjectId = ''; buildTrackerId = undefined;
   document.body.classList.remove('board-active');
   $('notice-dialog').close(); $('help-dialog').close(); $('build-help').hidden = true;
-  $('workspace').hidden = true; $('login').hidden = false; $('identity').replaceChildren(); notify('API key forgotten on this browser.');
+  $('user-popover').hidePopover(); $('identity').hidden = true;
+  $('refresh').hidden = true; $('refresh').disabled = true; $('statusbar').hidden = true; $('updated').textContent = '';
+  $('user-avatar').textContent = ''; $('user-avatar').setAttribute('aria-label', 'Account'); $('user-avatar').removeAttribute('title'); $('user-name').textContent = '';
+  $('workspace').hidden = true; $('login').hidden = false; $('api-key').focus(); notify('API key forgotten on this browser.');
 }
 function linkToIssue(id) { return `${config.redminePublicUrl}/issues/${Number(id)}`; }
 function members() {
@@ -506,8 +529,8 @@ async function connect(key, remember) {
     } catch { notify('Connected, but browser storage is unavailable. The API key will not be remembered.', true); }
     $('api-key').value = ''; $('login').hidden = true; $('workspace').hidden = false;
     document.body.classList.add('board-active');
-    $('identity').textContent = `${userData.user.firstname || ''} ${userData.user.lastname || userData.user.login}`.trim();
-    const button = document.createElement('button'); button.textContent = 'Forget key / Sign out'; button.onclick = forget; $('identity').append(button);
+    $('refresh').hidden = false; $('statusbar').hidden = false;
+    renderIdentity(userData.user);
     projectId = String(projects[0].id); options($('project'), projects.map(project => [project.id, project.name]), projectId);
     notify('Connected.'); loading = false; await refresh(true);
     if (stamp !== epoch) return;
@@ -522,6 +545,16 @@ function syncCompactControls() { $('filter-controls').open = !compactViewport.ma
 compactViewport.addEventListener('change', syncCompactControls);
 syncCompactControls();
 
+$('user-popover').addEventListener('beforetoggle', event => {
+  if (event.newState === 'open') positionUserPopover();
+});
+$('user-popover').addEventListener('toggle', event => {
+  $('user-avatar').setAttribute('aria-expanded', String(event.newState === 'open'));
+});
+window.addEventListener('resize', () => {
+  if ($('user-popover').matches(':popover-open')) positionUserPopover();
+});
+$('sign-out').addEventListener('click', forget);
 $('open-help').addEventListener('click', () => $('help-dialog').showModal());
 $('close-help').addEventListener('click', () => $('help-dialog').close());
 $('forget-saved').addEventListener('click', forget);

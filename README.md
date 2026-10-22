@@ -98,13 +98,13 @@ Redmine's per-issue `allowed_statuses` restricts status changes. Field edits and
 
 ## Board layout
 
-Appearance defaults to **System**, following your OS light/dark theme, including changes while the page is open. Use the **Appearance** selector in the header to choose **Light** or **Dark** explicitly; that preference is remembered on this browser. Login, board, notices and dialogs share the selected appearance.
+Appearance defaults to **System**, following your OS light/dark theme, including changes while the page is open. The icon-only **Appearance** button in the header cycles **System** (monitor) → **Light** (sun) → **Dark** (moon). Its tooltip and accessible label identify the current mode and the next action; your preference is remembered on this browser. Login, board, notices and dialogs share the selected appearance.
 
 The interface reproduces the visual language of JetBrains YouTrack's agile board: neutral chrome with colour reserved for data, hairline-separated columns, and compact cards carrying a priority stripe and a clearly coloured priority label. Low / Bassa is green, Medium / Media (also Normal / Normale) yellow, High / Alta red, Urgent orange, and Immediate red/rose, with readable label colours in both themes. English and Italian stock names are recognized (for example High / Alta); unrecognized custom names stay neutral rather than guessing severity from IDs. See [docs/adr/0001-jetbrains-ring-ui-visual-language.md](docs/adr/0001-jetbrains-ring-ui-visual-language.md).
 
 At **1280 × 720 CSS pixels** and above, the authenticated board fills the viewport without page or horizontal board scrolling. Backlog and all status columns share the available width; their card lists scroll independently, while column headers and backlog loading controls stay visible. Card summaries are clamped to three lines; the full subject stays available as a tooltip and to assistive technology. Columns can be focused for keyboard scrolling.
 
-Project/sprint controls, totals, filters, identity and operational notices remain visible. The **?** button in the top bar opens a compact guide to planning, search, Backlog scope and permissions, with Category and Build Sprint guidance in Build mode. Close it with **×** or **Esc**; it does not take space away from the board. Long notices use the available row width and offer **Full message** without pushing the board off-screen.
+Project/sprint controls, totals, filters, identity and operational notices remain visible. Refresh is an icon-only topbar button; the last successful update time sits in a thin bottom status bar, separate from the planning controls. The **?** button in the top bar opens a compact guide to planning, search, Backlog scope and permissions, with Category and Build Sprint guidance in Build mode. Close it with **×** or **Esc**; it does not take space away from the board. Long notices use the available row width and offer **Full message** without pushing the board off-screen.
 
 Below either minimum dimension (including after browser zoom), the compact layout is best-effort: **Filters** becomes an expandable panel and the board may scroll horizontally to preserve readable columns. Opening filters reduces the space available for cards; the guide opens above the board without resizing it. The page itself does not scroll. Login and planning-dialog layout are unchanged.
 
@@ -121,7 +121,7 @@ This is **not transactional conflict detection**: another editor can race a read
 ## Credential and browser security
 
 - API keys stay in memory unless the user explicitly selects **Remember API key on this browser**. Remembered keys use origin-scoped `localStorage`; they are not encrypted. An XSS vulnerability on that origin, a malicious browser extension, or someone with browser-profile access can steal them.
-- **Forget key / Sign out** clears this app's stored key and aborts outstanding requests. It does not revoke the key at Redmine; revoke it there if compromised. A saved key can also be forgotten from the login screen if it stops working.
+- Click your initials avatar in the top bar, then **Sign out** in the account popover to clear this app's stored key and abort outstanding requests. It does not revoke the key at Redmine; revoke it there if compromised. A saved key can also be forgotten from the login screen if it stops working.
 - Serve the board on a **dedicated trusted origin**. Do not host unrelated/untrusted scripts on it. Don't share one board origin between different Redmine deployments: its remembered key would be reused.
 - Dependencies are bundled locally; there are no CDN scripts, remote fonts, analytics, or raw Redmine HTML rendering. All issue/status/member strings passed to jKanban's HTML interface are escaped.
 - Production nginx supplies a restrictive CSP (inline **style attributes** are allowed for jKanban/Dragula layout; inline scripts are not), no-store responses, no-referrer, frame restrictions and nosniff.

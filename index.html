@@ -12,8 +12,18 @@
 </head>
 <body>
   <header class="masthead">
-    <div class="brand"><span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9.5 4v16M14.5 4v16M4 9h16"/></svg></span><div><span class="eyebrow">Redmine / Team planning</span><h1>Sprint board</h1></div></div>
-    <div class="masthead-actions"><label class="theme-control" for="theme">Appearance<select id="theme" aria-label="Appearance"><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></label><button id="open-help" class="help-button" type="button" aria-label="Help" aria-haspopup="dialog" aria-controls="help-dialog" title="Quick guide">?</button><div id="identity"></div></div>
+    <div class="brand"><span class="brand-mark"><img src="/branding/redmine-logo.png" width="32" height="32" alt="Redmine"></span><div><span class="eyebrow">Redmine / Team planning</span><h1>Sprint board</h1></div></div>
+    <div class="masthead-actions"><button id="refresh" class="refresh-button" type="button" aria-label="Refresh" title="Refresh board" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6.1 6.1A8 8 0 0 1 20 12M4 12a8 8 0 0 0 13.9 5.9"/></svg></button><button id="theme" class="theme-button" type="button" data-theme="system" aria-label="Appearance: System. Switch to Light" title="Appearance: System. Switch to Light">
+      <svg data-theme-icon="system" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8m-4-4v4"/></svg>
+      <svg data-theme-icon="light" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true" focusable="false" hidden><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.4 1.4m11.2 11.2L19 19M5 19l1.4-1.4M17.6 6.4 19 5"/></svg>
+      <svg data-theme-icon="dark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false" hidden><path d="M20.5 14.5A9 9 0 0 1 9.5 3.5a9 9 0 1 0 11 11Z"/></svg>
+    </button><button id="open-help" class="help-button" type="button" aria-label="Help" aria-haspopup="dialog" aria-controls="help-dialog" title="Quick guide">?</button><div id="identity" hidden>
+      <button id="user-avatar" class="user-avatar" type="button" popovertarget="user-popover" aria-label="Account" aria-haspopup="dialog" aria-controls="user-popover" aria-expanded="false"></button>
+      <div id="user-popover" popover="auto" role="dialog" aria-label="Account">
+        <p id="user-name"></p>
+        <button id="sign-out" type="button" title="Sign out and forget saved API key" autofocus><svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3H4v14h4m4-11 4 4-4 4m-4-4h8"/></svg>Sign out</button>
+      </div>
+    </div></div>
   </header>
   <main>
     <div id="notice" role="status" aria-live="polite" hidden></div>
@@ -35,7 +45,6 @@
         <label id="category-control" hidden>Category<select id="category" aria-label="Category"></select></label>
         <label>Sprint<select id="sprint" aria-label="Sprint"></select></label>
         <label class="checkbox"><input id="closed" type="checkbox"> Include closed sprints</label>
-        <button id="refresh" type="button">Refresh</button><span id="updated" class="muted"></span>
       </div>
       <section class="summary panel" aria-label="Sprint commitment"><div><span class="eyebrow">SPRINT COMMITMENT</span><h2 id="sprint-name">Select a sprint</h2><p id="sprint-state" class="muted"></p></div><div id="totals" class="totals"></div></section>
       </div>
@@ -51,6 +60,7 @@
       <p id="empty" class="muted" hidden>No matching issues.</p>
     </section>
   </main>
+  <footer id="statusbar" class="statusbar" aria-label="Board status" hidden><span id="updated" class="muted" role="status" aria-live="polite"></span></footer>
   <dialog id="help-dialog" aria-labelledby="help-title">
     <div class="dialog-heading"><h2 id="help-title">Sprint board · Quick guide</h2><button id="close-help" type="button" aria-label="Close help" autofocus>×</button></div>
     <dl class="quick-guide">
