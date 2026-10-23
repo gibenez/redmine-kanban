@@ -664,7 +664,7 @@ async function connect(key, remember) {
   $('login-form').querySelector('button').disabled = true;
   api = new RedmineClient(key); feed = new PlanningFeed(api);
   try {
-    const response = await fetch('/config.json', { cache: 'no-store' });
+    const response = await fetch(`${import.meta.env.BASE_URL}config.json`, { cache: 'no-store' });
     if (!response.ok) throw new Error('Cannot load deployment configuration.');
     const raw = await response.json();
     const [userData, statusData, projectData] = await Promise.all([

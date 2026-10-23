@@ -1,4 +1,7 @@
 FROM node:24-alpine AS source
+# Optional deployment prefix (e.g. /redmine-kanban); defaults to site root.
+ARG BASE_PATH=/
+ENV BASE_PATH=$BASE_PATH
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci

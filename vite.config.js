@@ -4,6 +4,8 @@ import { defineConfig, loadEnv } from 'vite';
 export default defineConfig(({ mode }) => {
   const env = { ...loadEnv(mode, process.cwd(), ''), ...process.env };
   const redmineUrl = env.REDMINE_URL || 'http://localhost:3000';
+  // Optional deployment prefix (e.g. "/redmine-kanban"); defaults to site root.
+  const basePath = env.BASE_PATH ? `/${String(env.BASE_PATH).replace(/^\/+|\/+$/g, '')}/` : '/';
   const defaults = JSON.parse(readFileSync(new URL('./public/config.json', import.meta.url), 'utf8'));
   const config = {
     ...defaults,
@@ -15,10 +17,11 @@ export default defineConfig(({ mode }) => {
     buildTrackerId: env.BUILD_TRACKER_ID ? Number(env.BUILD_TRACKER_ID) : defaults.buildTrackerId,
   };
   return {
+    base: basePath,
     plugins: [{
       name: 'board-development-config',
       configureServer(server) {
-        server.middlewares.use('/config.json', (request, response, next) => {
+        server.middlewares.use(`${basePath}config.json`, (request, response, next) => {
           if (request.method !== 'GET') return next();
           response.setHeader('Content-Type', 'application/json');
           response.setHeader('Cache-Control', 'no-store');

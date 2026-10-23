@@ -33,6 +33,16 @@ Open `http://localhost:8080` locally. For production, route your HTTPS ingress t
 | `BOARD_PORT` | Published local port; default 8080. |
 | `BOARD_BUILD_CONTEXT` | Production Docker build context; defaults to `https://github.com/gibenez/redmine-kanban.git#main`. Set `.` for local source, or pin a Git tag/commit. |
 
+### Serving under a URL prefix
+
+The image supports an optional `BASE_PATH` **build arg** (default `/`) for deployments that serve the board under a path prefix instead of a domain root:
+
+```sh
+docker build --build-arg BASE_PATH=/redmine-kanban -t redmine-kanban .
+```
+
+With `BASE_PATH=/redmine-kanban`, all asset, `config.json`, and API URLs are emitted under that prefix (API calls go to `/redmine-kanban/redmine/...`). The ingress must strip the prefix before forwarding to port 8080 so the container keeps serving from its own root; for example, nginx-proxy `VIRTUAL_HOST_MULTIPORTS` route `{"/redmine-kanban": {"port": 8080, "dest": "/"}}`. The Vite dev server reads the same `BASE_PATH` from the environment.
+
 Discover status IDs from **your** Redmine installation:
 
 ```sh
