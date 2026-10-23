@@ -18,6 +18,8 @@ cp .env.example .env
 docker compose up --build -d
 ```
 
+Compose builds the production image directly from the GitHub repository's `main` branch; no container registry or local source checkout is needed (only `compose.yaml` and `.env`). Docker needs network access to GitHub. Set `BOARD_BUILD_CONTEXT=.` to build your local checkout instead, or use a Git URL ending in `#<tag-or-commit>` to pin the source. To deploy upstream changes, rerun `docker compose up --build -d`. The `dev` service always builds local source.
+
 Open `http://localhost:8080` locally. For production, route your HTTPS ingress to port 8080 and avoid exposing the plain HTTP port publicly (bind `ports` to loopback or use only the ingress network).
 
 | Variable | Meaning |
@@ -29,6 +31,7 @@ Open `http://localhost:8080` locally. For production, route your HTTPS ingress t
 | `SPRINT_SOURCE` | `version` (default) or `build` for Category-scoped Build-issue sprints. |
 | `BUILD_TRACKER_ID` | Optional enabled Build tracker ID. When blank, Build mode resolves the exact tracker name `Build` for the selected project; missing trackers produce an error. |
 | `BOARD_PORT` | Published local port; default 8080. |
+| `BOARD_BUILD_CONTEXT` | Production Docker build context; defaults to `https://github.com/gibenez/redmine-kanban.git#main`. Set `.` for local source, or pin a Git tag/commit. |
 
 Discover status IDs from **your** Redmine installation:
 
