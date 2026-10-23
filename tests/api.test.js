@@ -41,6 +41,14 @@ describe('Redmine REST boundary', () => {
     await new RedmineClient('key').update(8, { fixed_version_id: null });
     expect(fetch.mock.calls[0][1]).toMatchObject({ method: 'PUT', body: '{"issue":{"fixed_version_id":null}}' });
   });
+  it('creates an issue with one JSON POST and returns its identity without retrying', async () => {
+    const fetch = vi.fn().mockResolvedValue(json({ issue: { id: 101, subject: 'Release' } }, 201)); vi.stubGlobal('fetch', fetch);
+    const fields = { project_id: 1, tracker_id: 9, category_id: 4, subject: 'Release' };
+    expect(await new RedmineClient('key').createIssue(fields)).toEqual({ id: 101, subject: 'Release' });
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(fetch.mock.calls[0][0].pathname).toBe('/redmine/issues.json');
+    expect(fetch.mock.calls[0][1]).toMatchObject({ method: 'POST', body: JSON.stringify({ issue: fields }) });
+  });
   it('reads categories through contributor-accessible project metadata, without pagination', async () => {
     const fetch = vi.fn().mockResolvedValue(json({ project: { id: 1, issue_categories: [{ id: 4, name: 'Web' }] } }));
     vi.stubGlobal('fetch', fetch);

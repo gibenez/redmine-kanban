@@ -39,7 +39,7 @@ curl -fsS -D "$tmp/proxy-headers" -H 'X-Redmine-API-Key: smoke-key' -H 'Cookie: 
 ! grep -qi 'Set-Cookie:' "$tmp/proxy-headers"
 grep -qi 'Content-Security-Policy: sandbox' "$tmp/proxy-headers"
 [[ "$(curl -s -o /dev/null -w '%{http_code}' "$base/redmine/users.json")" == 404 ]]
-[[ "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$base/redmine/issues.json")" == 404 ]]
+curl -fsS -X POST -H 'Content-Type: application/json' -d '{"issue":{"project_id":1,"tracker_id":9,"subject":"Sprint"}}' "$base/redmine/issues.json" | jq -e '.method == "POST" and .path == "/redmine/issues.json"' >/dev/null
 curl -fsS -X PUT -H 'Content-Type: application/json' -d '{"issue":{"estimated_hours":1}}' "$base/redmine/issues/1.json" | jq -e '.method == "PUT"' >/dev/null
 curl -fsS "$base/redmine/projects/1.json?include=issue_categories" | jq -e '.method == "GET" and .path == "/redmine/projects/1.json?include=issue_categories"' >/dev/null
 curl -fsS "$base/redmine/issues/1/relations.json" | jq -e '.method == "GET"' >/dev/null

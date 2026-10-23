@@ -33,6 +33,15 @@ async function setup(page, { failFields = false, denyCategories = false } = {}) 
     if (path === '/projects/1.json') return send({ project: { id: 1, name: 'Team', issue_categories: [category(4), category(5)] } });
     if (path.endsWith('/issue_categories.json')) return denyCategories ? route.fulfill({ status: 403, json: {} }) : send({ issue_categories: [category(4), category(5)] });
     if (path.endsWith('/memberships.json')) return send({ memberships: [] });
+    if (path === '/issues.json' && method === 'POST') {
+      const patch = request.postDataJSON().issue; writes.push({ method, patch });
+      if (failFields) return route.fulfill({ status: 422, json: { errors: ['Release code cannot be blank'] } });
+      const created = { ...base, id: Math.max(...builds.map(b => b.id)) + 1, subject: patch.subject,
+        tracker: { id: patch.tracker_id, name: 'Build' }, category: patch.category_id ? category(patch.category_id) : undefined,
+        due_date: patch.due_date };
+      builds.push(created);
+      return route.fulfill({ status: 201, json: { issue: created } });
+    }
     if (path === '/issues.json') {
       let rows = [...issues, ...builds];
       const p = url.searchParams, tracker = p.get('tracker_id'), status = p.get('status_id'), cat = p.get('category_id'), ids = p.get('issue_id');
@@ -174,6 +183,27 @@ test('Build selectors, backlog category scope, closed sprints and remembered sel
   expect(fixture.requests.some(r => /versions/.test(r.path) || 'fixed_version_id' in r.params)).toBe(false);
 });
 
+test('Build Backlog collapse hides scope controls, preserves planning and restores drag targets when expanded', async ({ page }) => {
+  const fixture = await setup(page); await login(page);
+  await page.getByRole('button', { name: 'Collapse Backlog', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Filter backlog by category', exact: true })).toBeHidden();
+  await page.getByRole('button', { name: 'Plan #2', exact: true }).click();
+  await page.getByLabel('Planning destination').selectOption('backlog');
+  await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+  await expect(page.locator('#editor')).toBeHidden();
+  await expect(page.getByRole('button', { name: 'Expand Backlog', exact: true })).toBeVisible();
+  await expect(page.getByLabel('Backlog issues', { exact: true })).toBeHidden();
+  expect(fixture.relations.some(r => r.id === 1)).toBe(false);
+  expect(fixture.relations.some(r => r.id === 2)).toBe(true);
+  await page.getByRole('button', { name: 'Expand Backlog', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Filter backlog by category', exact: true })).toBeVisible();
+  await column(page, 'backlog').locator('[data-eid="1"] h3').dragTo(column(page, 'status-1').locator('.kanban-drag'));
+  await expect(column(page, 'status-1').locator('[data-eid="1"]')).toBeVisible();
+  await column(page, 'status-1').locator('[data-eid="1"] h3').dragTo(column(page, 'backlog').locator('.kanban-drag'));
+  await expect(column(page, 'backlog').locator('[data-eid="1"]')).toBeVisible();
+  expect(fixture.issues[0].fixed_version.id).toBe(88);
+});
+
 test('Build controls fit the minimum viewport and paged backlog can show closed-sprint history', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 720 });
   const fixture = await setup(page);
@@ -245,4 +275,137 @@ test('cross-category planning preserves category and refreshes partial-save stat
   await expect(column(page, 'status-1').locator('[data-eid="3"]')).toBeVisible();
   expect(fixture.issues.find(i => i.id === 3).category.id).toBe(5);
   expect(fixture.relations.some(r => r.issue_id === 101 && r.issue_to_id === 3)).toBe(true);
+});
+
+
+for (const width of [1280, 390]) {
+  test(`Show closed sits in the Sprint label row at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 720 });
+    await setup(page); await login(page);
+    const heading = page.locator('.sprint-control-heading');
+    await expect(heading).toHaveText('Sprint Show closed');
+    await expect(heading.locator('.checkbox')).toHaveAttribute('title', 'Include closed sprints in the Sprint list.');
+    const bounds = await page.evaluate(() => {
+      const rect = selector => { const r = document.querySelector(selector).getBoundingClientRect(); return { x: r.x, right: r.right, y: r.y, bottom: r.bottom }; };
+      return { heading: rect('.sprint-control-heading'), label: rect('.sprint-control-heading .checkbox'), select: rect('#sprint'), actions: rect('#sprint-actions'), width: document.scrollingElement.scrollWidth };
+    });
+    expect(bounds.heading.x).toBe(bounds.select.x);
+    expect(bounds.label.right).toBeLessThanOrEqual(bounds.select.right);
+    expect(bounds.label.y).toBe(bounds.heading.y);
+    expect(bounds.heading.bottom).toBeLessThan(bounds.select.y);
+    expect(bounds.actions.x).toBeGreaterThan(bounds.select.right);
+    expect(bounds.width).toBe(width);
+    await heading.getByText('Show closed', { exact: true }).click();
+    await expect(page.getByLabel('Include closed sprints')).toBeChecked();
+    await expect(page.locator('#sprint option')).toHaveText(['7.2 (#101)', '7.1 (#100)', '7.2 (#99) (closed)']);
+  });
+}
+
+test('icon-only actions create and select a Build Sprint with inherited scope', async ({ page }) => {
+  const fixture = await setup(page); await login(page);
+  const button = page.getByRole('button', { name: 'New sprint', exact: true });
+  await expect(button).toHaveAttribute('title', 'New sprint');
+  await expect(button).toHaveText('');
+  await button.click();
+  await expect(page.locator('#sprint-context')).toHaveText('Team · Web');
+  await page.getByLabel('Sprint name', { exact: true }).fill('8.0');
+  await page.getByLabel('Due date (optional)').fill('2027-01-30');
+  await page.getByRole('button', { name: 'Create sprint', exact: true }).click();
+  await expect(page.locator('#sprint-name')).toHaveText('8.0 (#103)');
+  await expect(page.locator('#notice')).toContainText('created in Redmine');
+  expect(fixture.writes).toEqual([{ method: 'POST', patch: { project_id: 1, tracker_id: 9, subject: '8.0', category_id: 4, due_date: '2027-01-30' } }]);
+});
+
+test('Uncategorized creation warns before writing and can be cancelled', async ({ page }) => {
+  const fixture = await setup(page); await login(page);
+  await page.getByLabel('Category', { exact: true }).selectOption('none');
+  await page.getByRole('button', { name: 'New sprint', exact: true }).click();
+  await expect(page.locator('#sprint-warning')).toContainText('no Category (Uncategorized)');
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+  expect(fixture.writes).toEqual([]);
+  await page.getByRole('button', { name: 'New sprint', exact: true }).click();
+  await page.getByLabel('Sprint name', { exact: true }).fill('Uncategorized release');
+  await page.getByRole('button', { name: 'Create sprint', exact: true }).click();
+  await expect(page.locator('#sprint-name')).toHaveText('Uncategorized release (#103)');
+  expect(fixture.writes[0].patch).toEqual({ project_id: 1, tracker_id: 9, subject: 'Uncategorized release' });
+});
+
+test('close warns, retains memberships and member statuses; reopen offers permitted statuses', async ({ page }) => {
+  const fixture = await setup(page); await login(page);
+  const relations = structuredClone(fixture.relations), issues = structuredClone(fixture.issues);
+  await page.getByRole('button', { name: 'Close sprint', exact: true }).click();
+  await expect(page.locator('#sprint-warning')).toContainText('Open issues with no other open Sprint may return to the Backlog');
+  await expect(page.locator('#sprint-status-field')).toBeHidden();
+  await expect(page.locator('#sprint-create-fields')).toBeHidden();
+  expect(fixture.writes).toEqual([]);
+  await page.locator('#submit-sprint').click();
+  await expect(page.locator('#sprint-state')).toContainText('Closed sprint');
+  await expect(page.getByRole('button', { name: 'Close sprint', exact: true })).toBeHidden();
+  await expect(page.getByLabel('Include closed sprints')).toBeChecked();
+  expect(fixture.relations).toEqual(relations); expect(fixture.issues).toEqual(issues);
+  await page.getByRole('button', { name: 'Reopen sprint', exact: true }).click();
+  await expect(page.getByLabel('Sprint status', { exact: true })).toBeVisible();
+  await expect(page.locator('#sprint-target-status option')).toHaveText(['New', 'Open']);
+  await page.getByLabel('Sprint status', { exact: true }).selectOption('2');
+  await page.locator('#submit-sprint').click();
+  await expect(page.locator('#sprint-state')).toContainText('Open sprint');
+  expect(fixture.writes).toEqual([{ method: 'PUT', patch: { status_id: 5 } }, { method: 'PUT', patch: { status_id: 2 } }]);
+  expect(fixture.relations).toEqual(relations); expect(fixture.issues).toEqual(issues);
+});
+
+test('workflow without a permitted transition cannot close a Sprint', async ({ page }) => {
+  const fixture = await setup(page); await login(page);
+  fixture.builds.find(b => b.id === 101).allowed_statuses = [{ id: 1, name: 'New' }];
+  await page.getByRole('button', { name: 'Close sprint', exact: true }).click();
+  await expect(page.locator('#notice')).toContainText('no permitted closed status');
+  await expect(page.locator('#sprint-dialog')).toBeHidden();
+  expect(fixture.writes).toEqual([]);
+});
+
+test('one permitted reopening transition runs without another confirmation', async ({ page }) => {
+  const fixture = await setup(page); await login(page);
+  fixture.builds.find(b => b.id === 99).allowed_statuses = [{ id: 2, name: 'Open' }];
+  await page.getByLabel('Include closed sprints').check();
+  await page.getByLabel('Sprint', { exact: true }).selectOption('99');
+  await expect(page.locator('#sprint-state')).toContainText('Closed sprint');
+  await page.getByRole('button', { name: 'Reopen sprint', exact: true }).click();
+  await expect(page.locator('#notice')).toContainText('reopened in Redmine');
+  await expect(page.locator('#sprint-dialog')).toBeHidden();
+  expect(fixture.writes).toEqual([{ method: 'PUT', patch: { status_id: 2 } }]);
+});
+
+test('workflow is rechecked after the closing confirmation opens', async ({ page }) => {
+  const fixture = await setup(page); await login(page);
+  await page.getByRole('button', { name: 'Close sprint', exact: true }).click();
+  fixture.builds.find(b => b.id === 101).allowed_statuses = [{ id: 1, name: 'New' }];
+  await page.locator('#submit-sprint').click();
+  await expect(page.locator('#notice')).toContainText('does not allow this status transition');
+  expect(fixture.writes).toEqual([]);
+});
+
+test('lost creation response is not retried and the board reloads for inspection', async ({ page }) => {
+  const fixture = await setup(page); await login(page);
+  let attempts = 0;
+  await page.route('**/redmine/issues.json', async route => {
+    if (route.request().method() !== 'POST') return route.fallback();
+    attempts++;
+    fixture.builds.push({ ...fixture.builds.find(b => b.id === 101), id: 103, subject: '8.0' });
+    return route.abort('failed');
+  });
+  await page.getByRole('button', { name: 'New sprint', exact: true }).click();
+  await page.getByLabel('Sprint name', { exact: true }).fill('8.0');
+  await page.getByRole('button', { name: 'Create sprint', exact: true }).click();
+  await expect(page.locator('#notice')).toContainText('Refresh and inspect Redmine before retrying');
+  await expect(page.locator('#sprint-dialog')).toBeHidden();
+  await expect(page.locator('#sprint option')).toContainText(['8.0 (#103)', '7.2 (#101)', '7.1 (#100)']);
+  expect(attempts).toBe(1);
+});
+
+test('creation reports required Redmine fields and keeps the dialog editable', async ({ page }) => {
+  await setup(page, { failFields: true }); await login(page);
+  await page.getByRole('button', { name: 'New sprint', exact: true }).click();
+  await page.getByLabel('Sprint name', { exact: true }).fill('8.0');
+  await page.getByRole('button', { name: 'Create sprint', exact: true }).click();
+  await expect(page.locator('#sprint-dialog-notice')).toHaveText('Release code cannot be blank');
+  await expect(page.getByLabel('Sprint name', { exact: true })).toBeEnabled();
 });

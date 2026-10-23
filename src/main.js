@@ -5,12 +5,14 @@ import { RedmineClient, RedmineError } from './api.js';
 import { validateConfig, isBacklog, effort, movePatch, parseEstimate, assertTransition, matchesPatch, escapeHtml as e } from './domain.js';
 import { PlanningFeed } from './planning-feed.js';
 import { BuildPlanningFeed } from './build-planning-feed.js';
-import { buildTracker, asBuildSprint, saveBuildIssue, sprintRelations } from './build-sprints.js';
+import { buildTracker, asBuildSprint, saveBuildIssue, sprintRelations, sprintTransitions, changeBuildSprintState } from './build-sprints.js';
 
 const $ = id => document.getElementById(id);
 const storageKey = 'redmine-sprint-board.api-key';
 // Backlog Scope is a personal view preference, not a Filter and not deployment config.
 const scopeStorageKey = 'redmine-sprint-board.all-unplanned';
+const collapsedBacklogStorageKey = 'redmine-sprint-board.backlog-collapsed';
+let backlogCollapsed = false;
 let api, config, statuses = [], projects = [], versions = [], memberships = [], issues = [], board;
 let sprint = null, projectId = '', blockedProjectId = '', busy = false, dragging = false, loading = false, epoch = 0, timer, editing;
 let feed, queryLoading = false, queryTimer, queryRevision = 0, backlogFailed = false, searchFailed = false;
@@ -20,6 +22,7 @@ const observedLists = new WeakSet();
 let allUnplannedScope = false;
 const filters = { query: '', tracker: '', assignee: '' };
 let categories = [], categoryId = 'none', categoryOnly = true, buildTrackerId;
+let sprintAction = null;
 const buildMode = () => config?.sprintSource === 'build';
 const newFeed = () => buildMode() ? new BuildPlanningFeed(api) : new PlanningFeed(api);
 const closedStatusIds = () => statuses.filter(status => status.is_closed).map(status => status.id);
@@ -79,6 +82,11 @@ function lock() {
   document.querySelectorAll('#workspace select, #workspace input, #workspace button, #edit-form input, #edit-form select, #edit-form button[type="submit"]').forEach(el => { el.disabled = busy || loading; });
   document.querySelectorAll('.plan, .scope-toggle').forEach(el => { el.disabled = busy || loading || queryLoading || feed?.loadingMore; });
   if ($('backlog-more')) $('backlog-more').disabled = busy || loading || queryLoading || feed?.loadingMore;
+  $('sprint-actions').hidden = !buildMode() || !api || !projectId;
+  $('close-sprint').hidden = sprint?.status !== 'open';
+  $('reopen-sprint').hidden = sprint?.status !== 'closed';
+  for (const id of ['new-sprint', 'close-sprint', 'reopen-sprint']) $(id).disabled = busy || loading || queryLoading || feed?.loadingMore || dragging || !buildTrackerId || blockedProjectId === projectId;
+  $('sprint-form').querySelectorAll('input, select, button').forEach(el => { el.disabled = busy; });
   $('workspace').setAttribute('aria-busy', String(busy || loading || queryLoading));
   $('board').setAttribute('aria-busy', String(loading || queryLoading));
 }
@@ -105,6 +113,29 @@ function scopeToggle() {
   const label = allUnplannedScope ? 'Showing every open issue without a sprint. Click to show only the New status.' : 'Showing only the New status without a sprint. Click to show every open unplanned issue.';
   return `<button type="button" class="scope-toggle" data-backlog-scope aria-label="Show all unplanned" aria-pressed="${allUnplannedScope}" title="${e(label)}">${eyeIcon(allUnplannedScope)}</button>`;
 }
+function backlogToggle() {
+  const label = backlogCollapsed ? 'Expand Backlog' : 'Collapse Backlog';
+  return `<button type="button" class="scope-toggle backlog-toggle" data-backlog-collapse aria-label="${label}" title="${label}" aria-expanded="${!backlogCollapsed}" aria-controls="backlog-issues"><svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="${backlogCollapsed ? 'm6 3 5 5-5 5' : 'm10 3-5 5 5 5'}"/></svg></button>`;
+}
+function syncBacklogVisibility() {
+  const column = board.findBoard('backlog'), list = column.querySelector('.kanban-drag');
+  column.classList.toggle('backlog-collapsed', backlogCollapsed);
+  list.id = 'backlog-issues'; list.hidden = backlogCollapsed; list.tabIndex = backlogCollapsed ? -1 : 0;
+  column.querySelector('footer').hidden = backlogCollapsed;
+  // Hidden Cards must not remain Dragula drop targets.
+  if (backlogCollapsed) {
+    const index = board.boardContainer.indexOf(list);
+    if (index !== -1) board.boardContainer.splice(index, 1);
+  }
+}
+function toggleBacklog() {
+  if (busy || loading || queryLoading || feed?.loadingMore || dragging) return;
+  backlogCollapsed = !backlogCollapsed;
+  try { localStorage.setItem(collapsedBacklogStorageKey, backlogCollapsed ? '1' : '0'); } catch { /* Optional view preference. */ }
+  renderBoard();
+  $('board').querySelector('[data-backlog-collapse]')?.focus({ preventScroll: true });
+  if (!backlogCollapsed) void fillBacklogColumn();
+}
 function toggleScope() {
   allUnplannedScope = !allUnplannedScope;
   try { localStorage.setItem(scopeStorageKey, allUnplannedScope ? '1' : '0'); } catch { /* Storage may be disabled. */ }
@@ -125,7 +156,7 @@ function forget() {
   $('api-key').value = ''; $('remember').checked = false;
   $('login-form').querySelector('button').disabled = false;
   $('forget-saved').hidden = true;
-  $('editor').close(); editing = null; destroyBoard();
+  $('editor').close(); editing = null; $('sprint-dialog').close(); sprintAction = null; destroyBoard();
   issues = []; versions = []; memberships = []; projects = []; categories = []; sprint = null; projectId = ''; blockedProjectId = ''; buildTrackerId = undefined;
   document.body.classList.remove('board-active');
   $('notice-dialog').close(); $('help-dialog').close(); $('build-help').hidden = true;
@@ -216,7 +247,7 @@ function renderBoard() {
   const visible = issues;
   const total = effort(feed?.snapshot.sprintAll || []), filtered = effort(feed?.snapshot.sprintVisible || []);
   renderSprintHeading();
-  $('sprint-state').textContent = sprint ? `${sprint.status === 'open' ? 'Open sprint' : 'Closed sprint · read only'}${sprint.due_date ? ` · Due ${sprint.due_date}` : ''}` : buildMode() ? 'Create an open Build issue in this category in Redmine to start planning.' : 'Create an open target version in Redmine to start planning.';
+  $('sprint-state').textContent = sprint ? `${sprint.status === 'open' ? 'Open sprint' : 'Closed sprint · read only'}${sprint.due_date ? ` · Due ${sprint.due_date}` : ''}` : buildMode() ? 'Use New sprint to create a Build Sprint in this category.' : 'Create an open target version in Redmine to start planning.';
   const totalsMarkup = `<div><strong>${e(Number(total.hours.toFixed(2)))}</strong><span>estimated hours</span></div><div><strong>${total.count}</strong><span>issues</span></div><div><strong>${total.unestimated}</strong><span>unestimated</span></div>`;
   if ($('totals').innerHTML !== totalsMarkup) $('totals').innerHTML = totalsMarkup;
   const filtering = Object.values(filters).some(value => String(value).trim());
@@ -225,7 +256,7 @@ function renderBoard() {
     : '';
   const backlogIds = new Set(feed?.snapshot.backlog.map(issue => issue.id));
   const backlog = visible.filter(issue => backlogIds.has(issue.id));
-  const boards = [{ id: 'backlog', title: `Backlog <span class="count">${backlog.length} / ${feed?.snapshot.total ?? '?'}</span>${scopeToggle()}${categoryToggle()}`, class: 'backlog-board', item: backlog.map(card) }];
+  const boards = [{ id: 'backlog', title: `${backlogToggle()}<span class="backlog-label">Backlog</span> <span class="count">${backlog.length} / ${feed?.snapshot.total ?? '?'}</span>${scopeToggle()}${categoryToggle()}`, class: 'backlog-board', item: backlog.map(card) }];
   for (const statusId of config.columnStatusIds) {
     const items = visible.filter(issue => selectedMember(issue) && issue.status.id === statusId);
     boards.push({ id: `status-${statusId}`, title: `${e(statuses.find(status => status.id === statusId).name)} <span class="count">${items.length}</span>`, item: items.map(card) });
@@ -242,7 +273,10 @@ function renderBoard() {
       // Revert the DOM move immediately; only render a confirmed server state.
       queueMicrotask(() => {
         dragging = false;
-        try { const patch = movePatch(issue, target.parentElement.dataset.id, sprint); void mutate(issue.id, patch); }
+        try {
+          if (backlogCollapsed && target.parentElement.dataset.id === 'backlog') throw new Error('Expand Backlog before moving issues into it.');
+          const patch = movePatch(issue, target.parentElement.dataset.id, sprint); void mutate(issue.id, patch);
+        }
         catch (error) { notify(error.message, true); renderBoard(); }
       });
       return false;
@@ -262,7 +296,7 @@ function renderBoard() {
       if (container.scrollTop > 0 && container.scrollTop + container.clientHeight >= container.scrollHeight - 64) void loadMoreBacklog();
     }, { passive: true });
   }
-  renderBacklogFooter(); lock();
+  renderBacklogFooter(); syncBacklogVisibility(); lock();
   $('empty').hidden = visible.length > 0;
 }
 
@@ -308,9 +342,9 @@ function backlogPageSize() {
 const autoFillPages = 4;
 async function fillBacklogColumn() {
   const container = board?.findBoard('backlog')?.querySelector('.kanban-drag');
-  if (!container) return;
+  if (!container || backlogCollapsed) return;
   for (let page = 0; page < autoFillPages; page++) {
-    if (!feed?.snapshot.hasMore || container.scrollHeight > container.clientHeight) return;
+    if (backlogCollapsed || !feed?.snapshot.hasMore || container.scrollHeight > container.clientHeight) return;
     const before = feed.snapshot.backlog.length;
     await loadMoreBacklog({ silent: true });
     if (!container.isConnected) return;
@@ -318,7 +352,7 @@ async function fillBacklogColumn() {
   }
 }
 async function loadMoreBacklog({ silent = false } = {}) {
-  if (!api || !board || busy || loading || queryLoading || searchFailed || dragging || $('editor').open || feed?.loadingMore || !feed?.snapshot.hasMore) return;
+  if (backlogCollapsed || !api || !board || busy || loading || queryLoading || searchFailed || dragging || $('editor').open || feed?.loadingMore || !feed?.snapshot.hasMore) return;
   // Automatic fetches must not clear a notice the user has not read yet.
   if (!silent) notify('');
   feed.pageSize = backlogPageSize();
@@ -377,8 +411,8 @@ function chooseSprint(previousId) {
   options($('sprint'), available.length ? available.map(version => [version.id, version.name + (version.status === 'closed' ? ' (closed)' : '')]) : [['', 'No open sprints']], sprint?.id || '');
 }
 async function refresh(projectChanged = false, retryDenied = false) {
-  if (!api || busy || loading || dragging || $('editor').open || (blockedProjectId === projectId && !projectChanged && !retryDenied)) return;
-  if (!projectChanged && !retryDenied && (queryLoading || feed?.loadingMore || board?.findBoard('backlog').querySelector('.kanban-drag').scrollTop > 0)) return;
+  if (!api || busy || loading || dragging || $('editor').open || $('sprint-dialog').open || (blockedProjectId === projectId && !projectChanged && !retryDenied)) return;
+  if (!projectChanged && !retryDenied && (queryLoading || feed?.loadingMore || (!backlogCollapsed && board?.findBoard('backlog').querySelector('.kanban-drag').scrollTop > 0))) return;
   cancelQuery();
   if (projectChanged || retryDenied) notify('');
   loading = true; lock();
@@ -414,6 +448,7 @@ async function refresh(projectChanged = false, retryDenied = false) {
     searchFailed = false; syncFeed(next); blockedProjectId = '';
     renderFilters(); renderBoard();
     $('updated').textContent = `Updated ${new Date().toLocaleTimeString()}`;
+    return true;
   } catch (error) {
     if (stamp === epoch) {
       if (error.status === 403) blockedProjectId = projectId;
@@ -496,6 +531,101 @@ async function mutateBuild(id, patch) {
         busy = false; notify(message, failed); lock(); renderFilters(); renderBoard(); void fillBacklogColumn();
       }
     }
+  }
+}
+
+async function openSprintAction(action) {
+  if (!buildMode() || !api || busy || loading || queryLoading || feed?.loadingMore || dragging || !buildTrackerId || blockedProjectId === projectId) return;
+  if (action !== 'new' && !sprint) return;
+  loading = true; lock();
+  const stamp = epoch;
+  const context = { action, projectId, categoryId, trackerId: buildTrackerId, sprint };
+  try {
+    let transitions = [];
+    if (action !== 'new') {
+      const fresh = await api.issue(context.sprint.id);
+      if (stamp !== epoch) return;
+      const closed = closedStatusIds().includes(fresh.status.id);
+      if (closed !== (action === 'reopen')) throw new Error('The sprint state has changed. Refresh before retrying.');
+      transitions = sprintTransitions(fresh, statuses, action === 'close');
+      if (!transitions.length) throw new Error(`Redmine provides no permitted ${action === 'close' ? 'closed' : 'open'} status for this Sprint. Check your workflow and permissions.`);
+    }
+    sprintAction = context;
+    $('sprint-dialog-title').textContent = action === 'new' ? 'New sprint' : action === 'close' ? 'Close sprint' : 'Reopen sprint';
+    $('sprint-context').textContent = `${projects.find(p => String(p.id) === projectId)?.name} · ${categories.find(c => String(c.id) === categoryId)?.name || 'Uncategorized'}${action === 'new' ? '' : ` · ${context.sprint.name}`}`;
+    $('sprint-warning').textContent = action === 'new'
+      ? (categoryId === 'none' ? 'This Sprint will have no Category (Uncategorized). Continue only if that is intentional.' : 'Create a Build Sprint in the selected Project and Category. Redmine supplies defaults for other fields.')
+      : action === 'close' ? 'Close this Sprint? Member issue statuses will not change. Open issues with no other open Sprint may return to the Backlog.'
+        : 'Reopen this Sprint? Member issue statuses will not change.';
+    $('sprint-create-fields').hidden = action !== 'new';
+    $('new-sprint-name').required = action === 'new';
+    $('new-sprint-name').value = ''; $('new-sprint-name').setCustomValidity(''); $('new-sprint-due').value = '';
+    $('sprint-status-field').hidden = transitions.length < 2;
+    options($('sprint-target-status'), transitions.map(s => [s.id, s.name]), transitions[0]?.id || '');
+    $('submit-sprint').textContent = action === 'new' ? 'Create sprint' : action === 'close' ? 'Close sprint' : 'Reopen sprint';
+    $('sprint-dialog-notice').hidden = true;
+    if (action !== 'reopen' || transitions.length > 1) {
+      $('sprint-dialog').showModal();
+      (action === 'new' ? $('new-sprint-name') : transitions.length > 1 ? $('sprint-target-status') : $('submit-sprint')).focus();
+    }
+  } catch (error) { if (stamp === epoch) notify(error.message, true); }
+  finally { if (stamp === epoch) { loading = false; lock(); } }
+  if (stamp === epoch && sprintAction === context && action === 'reopen' && $('sprint-target-status').options.length === 1) await submitSprintAction();
+}
+
+async function submitSprintAction() {
+  if (!sprintAction || busy || loading || !api) return;
+  const context = sprintAction, currentApi = api, stamp = epoch;
+  const name = $('new-sprint-name').value.trim();
+  if (context.action === 'new' && !name) {
+    $('new-sprint-name').setCustomValidity('Enter a Sprint name.'); $('new-sprint-name').reportValidity(); return;
+  }
+  cancelQuery(); busy = true; lock();
+  let message, failed = false, createdId;
+  try {
+    if (context.action === 'new') {
+      const fields = { project_id: Number(context.projectId), tracker_id: context.trackerId, subject: name,
+        ...(context.categoryId === 'none' ? {} : { category_id: Number(context.categoryId) }),
+        ...($('new-sprint-due').value ? { due_date: $('new-sprint-due').value } : {}) };
+      const created = await currentApi.createIssue(fields);
+      if (stamp !== epoch) return;
+      if (!created?.id) throw new Error('Redmine did not return the created issue ID. It may already exist; inspect the Sprint list before creating another.');
+      createdId = created.id;
+      const confirmed = await currentApi.issue(created.id);
+      if (stamp !== epoch) return;
+      if (confirmed.project.id !== Number(context.projectId) || confirmed.tracker.id !== context.trackerId ||
+          String(confirmed.category?.id || 'none') !== context.categoryId || confirmed.subject !== name ||
+          (fields.due_date && confirmed.due_date !== fields.due_date) || closedStatusIds().includes(confirmed.status.id)) {
+        throw new Error(`Build #${created.id} was created, but its requested fields or open status were not retained. Check it in Redmine; do not create a duplicate.`);
+      }
+      sprint = asBuildSprint(confirmed, closedStatusIds());
+      message = `Sprint #${created.id} created in Redmine.`;
+    } else {
+      const confirmed = await changeBuildSprintState(currentApi, context.sprint, Number($('sprint-target-status').value), statuses, context.trackerId);
+      if (stamp !== epoch) return;
+      sprint = asBuildSprint(confirmed, closedStatusIds());
+      message = `Sprint #${confirmed.id} ${context.action === 'close' ? 'closed' : 'reopened'} in Redmine.`;
+    }
+  } catch (error) {
+    if (stamp !== epoch) return;
+    // Validation/permission rejections are safe to correct; never invite an automatic
+    // retry of an ambiguous POST, which could create a duplicate Sprint.
+    if (context.action === 'new' && [403, 422].includes(error.status)) {
+      $('sprint-dialog-notice').textContent = error.message; $('sprint-dialog-notice').hidden = false;
+      busy = false; lock(); return;
+    }
+    failed = true;
+    message = `${createdId ? `Build #${createdId} was created, but verification failed` : 'Sprint change not confirmed'}: ${error.message} Refresh and inspect Redmine before retrying; no automatic retry was attempted.`;
+  }
+  if (stamp !== epoch) return;
+  $('sprint-dialog').close(); sprintAction = null;
+  if (context.action === 'close') $('closed').checked = true;
+  busy = false;
+  const refreshed = await refresh(false, true);
+  if (stamp === epoch) {
+    const reloadFailed = !refreshed;
+    notify(`${message}${reloadFailed ? ' Board reload may have failed; use Refresh before continuing.' : ''}`, failed || reloadFailed);
+    lock();
   }
 }
 
@@ -605,12 +735,22 @@ $('board').addEventListener('click', event => {
   if (event.target.closest('.card-head a[href]')) event.stopPropagation();
 }, { capture: true });
 $('board').addEventListener('click', event => {
+  if (event.target.closest('[data-backlog-collapse]')) { toggleBacklog(); return; }
   if (event.target.closest('[data-backlog-scope]')) { toggleScope(); return; }
   if (event.target.closest('[data-category-scope]')) {
     categoryOnly = !categoryOnly; remember('category-only', categoryOnly ? '1' : '0'); scheduleSearch(0); return;
   }
   const button = event.target.closest('[data-edit]'); if (button) void openEditor(Number(button.dataset.edit));
 });
+for (const [id, action] of [['new-sprint', 'new'], ['close-sprint', 'close'], ['reopen-sprint', 'reopen']]) {
+  $(id).addEventListener('click', () => void openSprintAction(action));
+}
+for (const id of ['cancel-sprint', 'dismiss-sprint']) $(id).addEventListener('click', () => {
+  if (!busy) { $('sprint-dialog').close(); sprintAction = null; }
+});
+$('sprint-dialog').addEventListener('cancel', event => { if (busy) event.preventDefault(); else sprintAction = null; });
+$('new-sprint-name').addEventListener('input', () => $('new-sprint-name').setCustomValidity(''));
+$('sprint-form').addEventListener('submit', event => { event.preventDefault(); void submitSprintAction(); });
 $('close-editor').addEventListener('click', () => { if (!busy) { $('editor').close(); editing = null; } });
 $('editor').addEventListener('cancel', event => { if (busy) event.preventDefault(); });
 $('edit-form').addEventListener('submit', event => {
@@ -624,6 +764,7 @@ $('edit-form').addEventListener('submit', event => {
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') void refresh(); });
 try {
   allUnplannedScope = localStorage.getItem(scopeStorageKey) === '1';
+  backlogCollapsed = localStorage.getItem(collapsedBacklogStorageKey) === '1';
 } catch { /* Default to the narrow backlog without local storage. */ }
 try {
   const remembered = localStorage.getItem(storageKey);

@@ -16,6 +16,35 @@ export function relatedId(relation, buildId) {
   if (relation.issue_to_id === buildId) return relation.issue_id;
   return null;
 }
+// Only advertise transitions explicitly allowed by Redmine, classified using its status metadata.
+export function sprintTransitions(issue, statuses, close) {
+  return (issue.allowed_statuses || []).filter(allowed => allowed.id !== issue.status.id &&
+    statuses.some(status => status.id === allowed.id && Boolean(status.is_closed) === close));
+}
+
+export async function changeBuildSprintState(api, sprint, statusId, statuses, trackerId) {
+  const fresh = await api.issue(sprint.id);
+  const close = sprint.status === 'open';
+  const closed = statuses.some(status => status.id === fresh.status.id && status.is_closed);
+  if (fresh.project.id !== sprint.project.id || fresh.tracker.id !== trackerId ||
+      fresh.category?.id !== sprint.category?.id || closed === close) {
+    throw new Error('The sprint has changed. Refresh before retrying.');
+  }
+  if (!sprintTransitions(fresh, statuses, close).some(status => status.id === statusId)) {
+    throw new Error('Your Redmine workflow does not allow this status transition.');
+  }
+  let failure;
+  try { await api.update(sprint.id, { status_id: statusId }); }
+  catch (error) { failure = error; }
+  let confirmed;
+  try { confirmed = await api.issue(sprint.id); }
+  catch (error) { throw new Error(`Current sprint state could not be verified: ${error.message} Refresh before retrying; the change may already have succeeded.`); }
+  if (failure || confirmed.status.id !== statusId) {
+    throw new Error(`${failure?.message || 'Redmine did not retain the requested status.'} Observed sprint status: ${confirmed.status.name}. No retry or rollback was attempted.`);
+  }
+  return confirmed;
+}
+
 export function sprintRelations(relations, issueId, sprintId) {
   return relations.filter(relation => relatedId(relation, sprintId) === issueId);
 }

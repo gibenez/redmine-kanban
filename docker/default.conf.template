@@ -4,6 +4,7 @@ map "$request_method:$uri" $board_api_allowed {
     ~^GET:/redmine/(users/current|issue_statuses|enumerations/issue_priorities|projects|projects/[0-9]+|projects/[0-9]+/(versions|memberships)|issues|issues/[0-9]+|issues/[0-9]+/relations|versions/[0-9]+)\.json$ 1;
     ~^PUT:/redmine/issues/[0-9]+\.json$ 1;
     ~^POST:/redmine/issues/[0-9]+/relations\.json$ 1;
+    ~^POST:/redmine/issues\.json$ 1;
     ~^DELETE:/redmine/relations/[0-9]+\.json$ 1;
 }
 

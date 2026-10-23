@@ -138,7 +138,16 @@ input::placeholder { color: var(--secondary); opacity: 1; }
 #notice.error { border-color: var(--error-border); background: var(--error-bg); color: var(--error); }
 .toolbar { display: flex; align-items: end; flex-wrap: wrap; padding: 8px; gap: 16px; }
 .toolbar label:not(.checkbox) { min-width: 180px; }
-.toolbar .checkbox { padding-bottom: 6px; }
+.sprint-control { display: flex; flex-direction: column; gap: 4px; }
+.sprint-control-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+#workspace .sprint-control-heading label { flex: none; min-width: 0; }
+.sprint-control-heading .checkbox { gap: 4px; white-space: nowrap; }
+.sprint-control-heading input { margin: 0; }
+.sprint-actions { display: flex; gap: 4px; flex: none; }
+.sprint-action { display: inline-grid; place-items: center; width: 32px; height: 32px; padding: 0; }
+.sprint-action svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+#sprint-dialog { max-height: calc(100dvh - 32px); overflow-y: auto; }
+#sprint-dialog-notice { color: var(--error); }
 .statusbar { display: flex; align-items: center; justify-content: flex-end; flex: none; height: 24px; padding: 3px 16px; border-top: 1px solid var(--line); background: var(--sidebar); }
 #updated { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .summary { display: flex; justify-content: space-between; align-items: center; padding: 16px 0; gap: 24px; }
@@ -197,6 +206,12 @@ input::placeholder { color: var(--secondary); opacity: 1; }
 .scope-toggle + .scope-toggle { margin-left: 0; }
 .scope-toggle:hover:not(:disabled) { background: var(--tag); border-color: transparent; color: var(--text); }
 .scope-toggle[aria-pressed="true"] { color: var(--text); background: var(--tag); }
+.backlog-toggle { margin-left: 0; }
+.kanban-board[data-id="backlog"].backlog-collapsed { flex: 0 0 40px; min-width: 40px; }
+.kanban-board.backlog-collapsed header { flex: 1; height: auto; padding: 8px 0; align-items: flex-start; border-bottom: 0; }
+.kanban-board.backlog-collapsed header.backlog-board .kanban-title-board { flex-direction: column; gap: 12px; }
+.backlog-collapsed .backlog-label { writing-mode: vertical-rl; }
+.backlog-collapsed .count, .backlog-collapsed [data-backlog-scope], .backlog-collapsed [data-category-scope] { display: none; }
 .kanban-board .kanban-drag {
   flex: 1 1 0; padding: 8px; min-height: 0; overflow-y: auto; overflow-x: hidden;
   overscroll-behavior: contain; display: flex; flex-direction: column; gap: 8px;
@@ -284,7 +299,8 @@ body.board-active { height: 100dvh; overflow: hidden; display: flex; flex-direct
 #workspace { position: relative; flex: 1; min-height: 0; min-width: 0; display: flex; flex-direction: column; }
 #workspace > :not(#board) { flex: none; min-width: 0; }
 #workspace .toolbar { gap: 8px; padding: 8px; }
-#workspace .toolbar label:not(.checkbox) { flex: 1 1 140px; min-width: 0; max-width: 224px; }
+#workspace .toolbar > label:not(.checkbox), #workspace .sprint-control { flex: 1 1 140px; min-width: 0; max-width: 224px; }
+#workspace .sprint-control { flex-basis: 180px; }
 #workspace select { max-width: 100%; }
 .planning-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
 .planning-row > .toolbar { flex: 1 1 650px; min-width: 0; }
@@ -323,7 +339,7 @@ summary { cursor: pointer; }
   .kanban-board { flex: 1 0 220px; }
   .kanban-container { min-width: 100%; width: max-content !important; }
   #workspace .toolbar { gap: 8px; padding: 8px; }
-  #workspace .toolbar label:not(.checkbox) { flex: 1 1 140px; }
+  #workspace .toolbar > label:not(.checkbox) { flex: 1 1 140px; }
   #workspace .filters { flex-wrap: wrap; }
   #workspace .filters .search { flex: 1 1 180px; }
   #workspace .summary { padding: 8px; }

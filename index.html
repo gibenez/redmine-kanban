@@ -43,8 +43,15 @@
       <div class="toolbar panel">
         <label>Project<select id="project" aria-label="Project"></select></label>
         <label id="category-control" hidden>Category<select id="category" aria-label="Category"></select></label>
-        <label>Sprint<select id="sprint" aria-label="Sprint"></select></label>
-        <label class="checkbox"><input id="closed" type="checkbox"> Include closed sprints</label>
+        <div class="sprint-control">
+          <div class="sprint-control-heading"><label for="sprint">Sprint</label><label class="checkbox" title="Include closed sprints in the Sprint list."><input id="closed" type="checkbox" aria-label="Include closed sprints"> Show closed</label></div>
+          <select id="sprint" aria-label="Sprint"></select>
+        </div>
+        <div id="sprint-actions" class="sprint-actions" hidden>
+          <button id="new-sprint" class="sprint-action" type="button" aria-label="New sprint" title="New sprint" aria-haspopup="dialog"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M8 2v12M2 8h12"/></svg></button>
+          <button id="close-sprint" class="sprint-action" type="button" aria-label="Close sprint" title="Close sprint" aria-haspopup="dialog" hidden><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="m3 8 3 3 7-7"/></svg></button>
+          <button id="reopen-sprint" class="sprint-action" type="button" aria-label="Reopen sprint" title="Reopen sprint" aria-haspopup="dialog" hidden><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2 2v5h5M2 7a6 6 0 1 1 1 5"/></svg></button>
+        </div>
       </div>
       <section class="summary panel" aria-label="Sprint commitment"><div><span class="eyebrow">SPRINT COMMITMENT</span><h2 id="sprint-name">Select a sprint</h2><p id="sprint-state" class="muted"></p></div><div id="totals" class="totals"></div></section>
       </div>
@@ -67,8 +74,8 @@
       <div><dt>Choose your Sprint</dt><dd>Select a Project and Sprint. Commitment totals always include the whole Sprint, even when you filter.</dd></div>
       <div><dt>Plan and update work</dt><dd>Drag a Card into a Sprint Column to plan it and set its status. Move it to Backlog to remove it from the selected Sprint, without resetting its status. Use the pencil button for keyboard-accessible planning, assignment and estimates.</dd></div>
       <div><dt>Find an issue</dt><dd>Search by subject or exact issue ID, such as #123. Combine Tracker and Assignee filters to narrow the results. Scroll each Column independently; Backlog loads more as you scroll.</dd></div>
-      <div><dt>Widen the Backlog</dt><dd>The eye button switches between Unplanned issues in the New status and all open Unplanned issues.</dd></div>
-      <div id="build-help" hidden><dt>Planning with Build Sprints</dt><dd>Choose a Category for its Build Sprints. The C button limits Backlog to that Category. Removing an issue from the selected Build Sprint preserves its other Build Sprint Memberships.</dd></div>
+      <div><dt>Widen the Backlog</dt><dd>The eye button switches between Unplanned issues in the New status and all open Unplanned issues. Use the chevron in the Backlog header to collapse it into a narrow rail and expand it again. This browser remembers your choice; expand Backlog before dragging Cards into it.</dd></div>
+      <div id="build-help" hidden><dt>Planning with Build Sprints</dt><dd>Choose a Category for its Build Sprints. The C button limits Backlog to that Category. Removing an issue from the selected Build Sprint preserves its other Build Sprint Memberships. Use the icons beside Sprint to create, close or reopen a Build Sprint. Closing never changes member issue statuses; open issues with no other open Sprint may return to Backlog.</dd></div>
       <div><dt>Permissions stay yours</dt><dd>Closed Sprints are read only. Redmine checks your permissions and workflow; changes appear only after they are confirmed. Open an issue ID to view its details in Redmine.</dd></div>
     </dl>
     <p class="muted guide-hint">Press Esc or use × to close this guide.</p>
@@ -76,6 +83,20 @@
   <dialog id="notice-dialog" aria-labelledby="notice-title">
     <h2 id="notice-title">Full message</h2><p id="notice-message"></p>
     <form method="dialog"><button>Close message</button></form>
+  </dialog>
+  <dialog id="sprint-dialog" aria-labelledby="sprint-dialog-title">
+    <form id="sprint-form">
+      <div class="dialog-heading"><h2 id="sprint-dialog-title">New sprint</h2><button type="button" id="cancel-sprint" aria-label="Cancel sprint action">×</button></div>
+      <p id="sprint-context" class="muted"></p>
+      <p id="sprint-warning"></p>
+      <div id="sprint-create-fields">
+        <label for="new-sprint-name">Sprint name</label><input id="new-sprint-name" required maxlength="255">
+        <label for="new-sprint-due">Due date (optional)</label><input id="new-sprint-due" type="date">
+      </div>
+      <div id="sprint-status-field" hidden><label for="sprint-target-status">Sprint status</label><select id="sprint-target-status"></select></div>
+      <p id="sprint-dialog-notice" role="status" aria-live="polite" hidden></p>
+      <div class="dialog-actions"><button type="button" id="dismiss-sprint">Cancel</button><button id="submit-sprint" type="submit" class="primary">Create sprint</button></div>
+    </form>
   </dialog>
   <dialog id="editor" aria-labelledby="editor-title">
     <form id="edit-form">

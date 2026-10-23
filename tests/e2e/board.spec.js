@@ -290,7 +290,7 @@ test('column heading text, counts and scope controls share the same vertical cen
     const range = document.createRange(); range.selectNodeContents(title.firstChild);
     const text = range.getBoundingClientRect(), bounds = header.getBoundingClientRect();
     const count = header.querySelector('.count')?.getBoundingClientRect();
-    const toggle = header.querySelector('.scope-toggle')?.getBoundingClientRect();
+    const toggle = header.querySelector('[data-backlog-scope]')?.getBoundingClientRect();
     return { top: bounds.top, height: bounds.height, center: bounds.top + bounds.height / 2,
       textCenter: text.top + text.height / 2,
       countCenter: count ? count.top + count.height / 2 : null,
@@ -716,6 +716,62 @@ test('phone layout keeps appearance, planning controls and board inside the view
   expect(geometry.boardHeight).toBeGreaterThan(200);
 });
 
+for (const width of [1280, 390]) {
+  test(`Backlog collapses to a keyboard-accessible rail at ${width}px without writes or reloading`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 });
+    const fixture = await setup(page); await login(page);
+    const column = page.locator('[data-id="backlog"]');
+    const card = await column.locator('[data-eid="1"]').elementHandle();
+    const beforeWidth = (await page.locator('[data-id="status-2"]').boundingBox()).width;
+    const requests = fixture.requests.length;
+    const collapse = page.getByRole('button', { name: 'Collapse Backlog', exact: true });
+    await expect(collapse).toHaveAttribute('aria-expanded', 'true');
+    await collapse.focus(); await page.keyboard.press('Enter');
+    const expand = page.getByRole('button', { name: 'Expand Backlog', exact: true });
+    await expect(expand).toBeFocused();
+    await expect(expand).toHaveAttribute('aria-expanded', 'false');
+    await expect(expand).toHaveAttribute('title', 'Expand Backlog');
+    await expect(page.getByLabel('Backlog issues', { exact: true })).toBeHidden();
+    await expect(column.locator('footer')).toBeHidden();
+    await expect(column.locator('[data-backlog-scope]')).toBeHidden();
+    expect((await column.boundingBox()).width).toBe(40);
+    if (width === 1280) expect((await page.locator('[data-id="status-2"]').boundingBox()).width).toBeGreaterThan(beforeWidth);
+    expect(await card.evaluate(node => node.isConnected)).toBe(true);
+    expect(await page.evaluate(() => document.scrollingElement.scrollWidth)).toBe(width);
+    expect(fixture.requests.length).toBe(requests);
+    await page.keyboard.press('Enter');
+    await expect(page.getByRole('button', { name: 'Collapse Backlog', exact: true })).toBeFocused();
+    await expect(page.getByLabel('Backlog issues', { exact: true })).toBeVisible();
+    expect(await card.evaluate(node => node === document.querySelector('[data-id="backlog"] [data-eid="1"]'))).toBe(true);
+    expect(fixture.writes).toEqual([]);
+  });
+}
+
+test('collapsed Backlog survives refresh, filters and reconnecting without draining hidden pages', async ({ page }) => {
+  const fixture = await setup(page);
+  for (let id = 100; id < 150; id++) fixture.issues.push({ ...fixture.issues[0], id, subject: `Backlog ${id}` });
+  await login(page);
+  await page.getByRole('button', { name: 'Collapse Backlog', exact: true }).click();
+  const backlogRequests = () => fixture.requests.filter(request => new URL(request.url()).searchParams.get('fixed_version_id') === '!*').length;
+  const before = backlogRequests();
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click();
+  await expect(page.locator('#workspace')).toHaveAttribute('aria-busy', 'false');
+  expect(backlogRequests()).toBe(before + 1);
+  await expect(page.getByRole('button', { name: 'Expand Backlog', exact: true })).toBeVisible();
+  await page.getByLabel('Find an issue').fill('Build backlog');
+  await expect(page.locator('#workspace')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.getByLabel('Backlog issues', { exact: true })).toBeHidden();
+  await page.reload();
+  await page.getByLabel('Personal API key').fill('test-personal-key');
+  await page.getByRole('button', { name: 'Connect to Redmine' }).click();
+  await expect(page.locator('#updated')).toContainText('Updated');
+  await expect(page.getByRole('button', { name: 'Expand Backlog', exact: true })).toBeVisible();
+  await expect(page.getByLabel('Backlog issues', { exact: true })).toBeHidden();
+  await page.getByRole('button', { name: 'Expand Backlog', exact: true }).click();
+  await expect(page.getByLabel('Backlog issues', { exact: true })).toBeVisible();
+  expect(fixture.writes).toEqual([]);
+});
+
 test('backlog requests one column-sized page, not every page', async ({ page }) => {
   const fixture = await setup(page);
   for (let id = 100; id < 130; id++) fixture.issues.push({ ...fixture.issues[0], id, subject: `Backlog ${id}` });
@@ -1000,7 +1056,7 @@ test('widening the backlog scope opts in to open unplanned issues, and is rememb
   await login(page, true);
   await expect(page.locator('[data-id="backlog"] .kanban-item')).toHaveCount(2);
   // The control lives in the Backlog column header, not the toolbar.
-  const toggle = page.locator('[data-id="backlog"] .scope-toggle');
+  const toggle = page.locator('[data-id="backlog"] [data-backlog-scope]');
   await expect(toggle).toHaveAttribute('aria-pressed', 'false');
   await expect(toggle).toHaveAttribute('title', /only the New status/);
   await toggle.click();
@@ -1010,7 +1066,7 @@ test('widening the backlog scope opts in to open unplanned issues, and is rememb
   await expect(page.locator('[data-id="backlog"] .kanban-item')).toHaveCount(3);
   await page.reload();
   await expect(page.locator('#updated')).toContainText('Updated');
-  await expect(page.locator('[data-id="backlog"] .scope-toggle')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('[data-id="backlog"] [data-backlog-scope]')).toHaveAttribute('aria-pressed', 'true');
   await expect(page.locator('[data-id="backlog"] [data-eid="5"]')).toBeVisible();
 });
 
