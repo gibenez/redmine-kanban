@@ -3,7 +3,7 @@ export class RedmineError extends Error {
 }
 
 export class RedmineClient {
-  constructor(key, base = `${import.meta.env.BASE_URL}redmine`) {
+  constructor(key, base = '/redmine') {
     this.key = key;
     this.base = base.replace(/\/$/, '');
     this.controller = new AbortController();
