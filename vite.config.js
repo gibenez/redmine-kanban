@@ -5,7 +5,8 @@ export default defineConfig(({ mode }) => {
   const env = { ...loadEnv(mode, process.cwd(), ''), ...process.env };
   const redmineUrl = env.REDMINE_URL || 'http://localhost:3000';
   // Optional deployment prefix (e.g. "/redmine-kanban"); defaults to site root.
-  const basePath = env.BASE_PATH ? `/${String(env.BASE_PATH).replace(/^\/+|\/+$/g, '')}/` : '/';
+  const basePrefix = String(env.BASE_PATH || '').replace(/^\/+|\/+$/g, '');
+  const basePath = basePrefix ? `/${basePrefix}/` : '/';
   const defaults = JSON.parse(readFileSync(new URL('./public/config.json', import.meta.url), 'utf8'));
   const config = {
     ...defaults,
