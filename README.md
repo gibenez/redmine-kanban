@@ -30,6 +30,7 @@ Open `http://localhost:8080` locally. For production, route your HTTPS ingress t
 | `REFRESH_SECONDS` | Active-tab refresh interval; default 60, minimum 15. |
 | `SPRINT_SOURCE` | `version` (default) or `build` for Category-scoped Build-issue sprints. |
 | `BUILD_TRACKER_ID` | Optional enabled Build tracker ID. When blank, Build mode resolves the exact tracker name `Build` for the selected project; missing trackers produce an error. |
+| `SWIMLANE_TRACKERS` | Comma-separated exact tracker names; default `Feature,Bug,Improvement`. Trimmed, case-sensitive; unknown names have no effect. Set empty to disable Swimlanes. |
 | `BOARD_PORT` | Published local port; default 8080. |
 | `BOARD_BUILD_CONTEXT` | Production Docker build context; defaults to `https://github.com/gibenez/redmine-kanban.git#main`. Set `.` for local source, or pin a Git tag/commit. |
 
@@ -94,12 +95,24 @@ Recreate the container or restart the development server after changing `.env`. 
 
 See [ADR 0002](docs/adr/0002-build-issue-sprint-membership.md). The following version-specific membership rules apply only to the default `version` mode; status columns, filters, estimates and workflow rules also apply in Build mode.
 
+## Swimlane planning
+
+In either Sprint mode, issues with a tracker named in `SWIMLANE_TRACKERS` become horizontal **Swimlanes** when planned. The equivalent browser configuration is `swimlaneTrackers: ["Feature", "Bug", "Improvement"]` (or `[]` to disable).
+
+- Drop a qualifying Backlog issue into any Sprint Column, or use its Card planner: the parent and all visible same-project descendants join the Sprint, including completed descendants. **Statuses stay unchanged**; the drop Column does not change the group's status. Planning confirms before replacing another target-version Sprint; Build planning preserves other memberships and target versions.
+- The parent is a linked `#ID — subject` title, not a duplicate Card. Descendants appear once in their existing status Columns. Nested qualifying descendants remain Cards in the topmost qualifying member's Swimlane. Empty Swimlanes remain visible. Rows alternate between subtle neutral background shades in both light and dark mode; other Sprint Cards appear under **Ungrouped**.
+- No status Columns are added. Issues outside configured statuses appear as an expandable list of issue links and status names in the Swimlane header (or Ungrouped). Filters affect descendant Cards and this notice, but retain parent context.
+- Cards can be moved between status Columns or independently removed without changing their parent or siblings. Dropping a Card over a different Swimlane does not reparent it; its hierarchy determines its Swimlane.
+- Refresh never writes membership. New or individually removed descendants join only through **Add missing descendants**. Hierarchy changes made in Redmine are reflected on refresh.
+- **Remove** requests confirmation, then removes the parent and all current same-project descendants that belong to the selected Sprint. It does not delete issues, reset statuses, clear another target version, or remove other Build memberships.
+- Cross-project descendants are excluded with a warning. A hierarchy read failure stops group planning before writes. As with individual saves, permissions and concurrent changes may cause partial results: successes and failures are reported and the board reloads without automatic retries or rollback. Only issues visible to your account can be read or changed.
+
 ## How version-based planning works
 
 - Select a project and a sprint (Redmine target version). The board excludes subprojects.
 - **Backlog = no target version.** By default it is narrowed to the configured New status; use the **Show all unplanned** eye toggle at the right of the Backlog column header (crossed out while narrowed) to widen it to every open status with no target version. Closed issues never appear in the backlog, and issues assigned to any version are never backlog. The setting is a personal view preference: it is remembered per browser, is not a filter, and **Show all unplanned** survives clearing the search and filters.
 - The backlog requests **one page sized to its visible column**, measured from the rendered card height plus two spare rows, so a tall screen fills in a single request and a short one stays small. Scrolling near the bottom requests another page of the same size. Its header shows loaded / total matching issues; it never downloads the whole backlog just to filter or count it. Each page is re-measured, so a page may differ in size from the one before it when the layout changes.
-- Sprint columns represent configured Redmine statuses. Completed issues remain visible. Issues with unconfigured statuses appear in an **Other statuses** column rather than silently disappearing; it is not a drop target.
+- Sprint columns represent configured Redmine statuses. Completed issues remain visible. Issues with unconfigured statuses appear in an expandable header notice rather than another Column.
 - Drag from backlog to a sprint column to set the target version and, if different, status. Drag between sprint columns to change status.
 - Moving to backlog **only clears the target version**. It does not reset status. The issue consequently leaves this board when its status is outside the current backlog scope, with an explicit explanation; with **Show all unplanned** on, only closed issues leave.
 - The Backlog header's chevron collapses it into a narrow rail, freeing space for Sprint Columns. Expand it with the rail's chevron. This is a browser-local preference shared across projects; it does not change issues, membership or filters. Hidden Backlog Cards and controls are inaccessible, extra backlog pages are not automatically loaded while collapsed, and dragging into Backlog requires expanding it first. The Card planner can still remove Sprint membership.

@@ -61,6 +61,7 @@ export class RedmineClient {
     return results;
   }
   issue(id) { return this.request(`/issues/${Number(id)}.json`, { params: { include: 'allowed_statuses' } }).then(data => data.issue); }
+  hierarchyIssue(id) { return this.request(`/issues/${Number(id)}.json`, { params: { include: 'children,allowed_statuses' } }).then(data => data.issue); }
   createIssue(fields) { return this.request('/issues.json', { method: 'POST', body: { issue: fields } }).then(data => data?.issue); }
   update(id, patch) { return this.request(`/issues/${Number(id)}.json`, { method: 'PUT', body: { issue: patch } }); }
   async projectCategories(id, options = {}) {

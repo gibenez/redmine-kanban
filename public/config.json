@@ -4,5 +4,6 @@
   "columnStatusIds": [1, 2, 3, 5],
   "refreshSeconds": 60,
   "sprintSource": "version",
-  "buildTrackerId": null
+  "buildTrackerId": null,
+  "swimlaneTrackers": ["Feature", "Bug", "Improvement"]
 }

@@ -20,6 +20,13 @@ _Avoid_: Lane, swimlane, bucket
 A single issue as it appears inside a Column.
 _Avoid_: Ticket, task, tile
 
+**Swimlane**:
+A horizontal grouping across a Sprint's status Columns, representing an issue of a configured tracker type and its planned descendants. The parent issue identifies the Swimlane; its planned descendants appear as Cards in their respective status Columns.
+_Avoid_: Column, bucket
+
+**Ungrouped**:
+The section of a Sprint containing Cards that do not belong to a Swimlane.
+
 **Unplanned**:
 An issue with no Sprint in version-based planning, or no open Build Sprint membership in Build-based planning.
 _Avoid_: Unassigned, loose, orphan

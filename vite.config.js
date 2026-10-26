@@ -16,6 +16,7 @@ export default defineConfig(({ mode }) => {
     refreshSeconds: env.REFRESH_SECONDS ? Number(env.REFRESH_SECONDS) : defaults.refreshSeconds,
     sprintSource: env.SPRINT_SOURCE || defaults.sprintSource,
     buildTrackerId: env.BUILD_TRACKER_ID ? Number(env.BUILD_TRACKER_ID) : defaults.buildTrackerId,
+    swimlaneTrackers: env.SWIMLANE_TRACKERS === undefined ? defaults.swimlaneTrackers : env.SWIMLANE_TRACKERS.split(',').map(name => name.trim()).filter(Boolean),
   };
   return {
     base: basePath,

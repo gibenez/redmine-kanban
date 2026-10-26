@@ -18,8 +18,11 @@ docker build -t redmine-sprint-board:test .
 # Build-mode runtime configuration is generated without rebuilding the image.
 docker run --rm --entrypoint /bin/sh -e REDMINE_URL=https://redmine.example.test \
   -e BACKLOG_STATUS_ID=1 -e COLUMN_STATUS_IDS=1,2,3,5 \
-  -e SPRINT_SOURCE=build -e BUILD_TRACKER_ID=9 redmine-sprint-board:test \
-  -c '/docker-entrypoint.d/40-board-config.sh && jq -e '\''.sprintSource == "build" and .buildTrackerId == 9'\'' /usr/share/nginx/html/config.json' >/dev/null
+  -e SPRINT_SOURCE=build -e BUILD_TRACKER_ID=9 -e 'SWIMLANE_TRACKERS= Story , Bug ' redmine-sprint-board:test \
+  -c '/docker-entrypoint.d/40-board-config.sh && jq -e '\''.sprintSource == "build" and .buildTrackerId == 9 and .swimlaneTrackers == ["Bug", "Story"]'\'' /usr/share/nginx/html/config.json' >/dev/null
+docker run --rm --entrypoint /bin/sh -e REDMINE_URL=https://redmine.example.test \
+  -e BACKLOG_STATUS_ID=1 -e COLUMN_STATUS_IDS=1,2,3,5 -e SWIMLANE_TRACKERS= redmine-sprint-board:test \
+  -c '/docker-entrypoint.d/40-board-config.sh && jq -e '\''.swimlaneTrackers == []'\'' /usr/share/nginx/html/config.json' >/dev/null
 docker network create "$network" >/dev/null
 docker run -d --name "$name-upstream" --network "$network" --network-alias mock \
   -v "$PWD/tests/fixtures/mock-redmine.mjs:/mock.mjs:ro" node:24-alpine node /mock.mjs >/dev/null
@@ -32,7 +35,7 @@ for attempt in $(seq 1 30); do
   if curl -fsS "$base/health" >/dev/null 2>&1; then break; fi
   sleep 1
 done
-curl -fsS -D "$tmp/headers" "$base/config.json" | jq -e '.backlogStatusId == 1 and .columnStatusIds == [1,2,3,5] and .redminePublicUrl == "http://mock:3000/redmine"' >/dev/null
+curl -fsS -D "$tmp/headers" "$base/config.json" | jq -e '.backlogStatusId == 1 and .columnStatusIds == [1,2,3,5] and .redminePublicUrl == "http://mock:3000/redmine" and (.swimlaneTrackers | sort) == ["Bug","Feature","Improvement"]' >/dev/null
 grep -qi 'Content-Security-Policy:.*script-src' "$tmp/headers"
 grep -qi 'Cache-Control: no-store' "$tmp/headers"
 curl -fsS -D "$tmp/proxy-headers" -H 'X-Redmine-API-Key: smoke-key' -H 'Cookie: session=bad' -H 'Authorization: Basic bad' -H 'X-Redmine-Switch-User: admin' "$base/redmine/issues.json?status_id=*" | jq -e '.keyForwarded and (.cookieForwarded|not) and (.authForwarded|not) and (.switchUserForwarded|not) and .path == "/redmine/issues.json?status_id=*"' >/dev/null

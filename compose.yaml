@@ -11,6 +11,7 @@ services:
       REFRESH_SECONDS: ${REFRESH_SECONDS:-60}
       SPRINT_SOURCE: ${SPRINT_SOURCE:-version}
       BUILD_TRACKER_ID: ${BUILD_TRACKER_ID:-}
+      SWIMLANE_TRACKERS: ${SWIMLANE_TRACKERS-Feature,Bug,Improvement}
     restart: unless-stopped
 
   # Local development only: Vite with live reload. Started by ./dev.sh.

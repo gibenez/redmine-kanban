@@ -6,12 +6,12 @@ set -eu
 # Reject nginx directives, credentials, variables, query strings and malformed ports.
 # A path prefix is supported for Redmine deployments under a subdirectory.
 printf '%s' "$REDMINE_URL" | grep -Eq '^https?://[a-zA-Z0-9._-]+(:[0-9]+)?(/[a-zA-Z0-9._~-]+)*$' || { echo 'Invalid REDMINE_URL (no trailing slash).' >&2; exit 1; }
-jq -en --arg public "$REDMINE_URL" --arg backlog "$BACKLOG_STATUS_ID" --arg columns "$COLUMN_STATUS_IDS" --arg refresh "${REFRESH_SECONDS:-60}" --arg source "${SPRINT_SOURCE:-version}" --arg tracker "${BUILD_TRACKER_ID:-}" '
+jq -en --arg public "$REDMINE_URL" --arg backlog "$BACKLOG_STATUS_ID" --arg columns "$COLUMN_STATUS_IDS" --arg refresh "${REFRESH_SECONDS:-60}" --arg source "${SPRINT_SOURCE:-version}" --arg tracker "${BUILD_TRACKER_ID:-}" --arg lanes "${SWIMLANE_TRACKERS-Feature,Bug,Improvement}" '
   ($backlog | tonumber) as $b |
   ($columns | split(",") | map(tonumber)) as $c |
   ($refresh | tonumber) as $r |
   (if $tracker == "" then null else ($tracker | tonumber) end) as $t |
   if (($source == "version" or $source == "build") and ($t == null or ($t > 0 and $t == ($t|floor))) and $b > 0 and $b == ($b|floor) and ($c|length) > 0 and all($c[]; . > 0 and . == floor) and ($c|unique|length) == ($c|length) and $r >= 15)
-  then {redminePublicUrl: $public, backlogStatusId: $b, columnStatusIds: $c, refreshSeconds: $r, sprintSource: $source, buildTrackerId: $t}
+  then {redminePublicUrl: $public, backlogStatusId: $b, columnStatusIds: $c, refreshSeconds: $r, sprintSource: $source, buildTrackerId: $t, swimlaneTrackers: ($lanes | split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0)) | unique)}
   else error("Invalid sprint source, tracker ID, status IDs or refresh interval (minimum 15 seconds)") end
 ' > /usr/share/nginx/html/config.json

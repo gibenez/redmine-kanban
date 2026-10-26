@@ -22,7 +22,7 @@ async function setup(page, { failFields = false, denyCategories = false } = {}) 
   const relation = (id, from, to, type = 'relates') => ({ id, issue_id: from, issue_to_id: to, relation_type: type });
   const relations = [relation(1, 101, 2), relation(2, 2, 100), relation(3, 100, 6), relation(4, 99, 4), relation(5, 101, 1, 'blocks')];
   const requests = [], writes = [];
-  await page.route('**/config.json', route => route.fulfill({ json: { redminePublicUrl: 'https://redmine.example.test', backlogStatusId: 1, columnStatusIds: [1, 2, 5], sprintSource: 'build', buildTrackerId: 9, refreshSeconds: 60 } }));
+  await page.route('**/config.json', route => route.fulfill({ json: { redminePublicUrl: 'https://redmine.example.test', backlogStatusId: 1, columnStatusIds: [1, 2, 5], sprintSource: 'build', buildTrackerId: 9, refreshSeconds: 60, swimlaneTrackers: [] } }));
   await page.route('**/redmine/**', async route => {
     const request = route.request(), url = new URL(request.url()), path = url.pathname.replace('/redmine', '');
     const method = request.method(); requests.push({ path, method, params: Object.fromEntries(url.searchParams) });

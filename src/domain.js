@@ -12,9 +12,11 @@ export function validateConfig(raw, statuses) {
   if (!['version', 'build'].includes(sprintSource)) throw new Error('sprintSource must be version or build.');
   const buildTrackerId = raw.buildTrackerId == null || raw.buildTrackerId === '' ? null : Number(raw.buildTrackerId);
   if (buildTrackerId !== null && (!Number.isInteger(buildTrackerId) || buildTrackerId <= 0)) throw new Error('buildTrackerId must be a positive tracker ID.');
+  const swimlaneTrackers = raw.swimlaneTrackers ?? ['Feature', 'Bug', 'Improvement'];
+  if (!Array.isArray(swimlaneTrackers) || swimlaneTrackers.some(name => typeof name !== 'string' || !name.trim())) throw new Error('swimlaneTrackers must be a list of nonempty tracker names.');
   const publicUrl = new URL(raw.redminePublicUrl, window.location.origin);
   if (!['http:', 'https:'].includes(publicUrl.protocol) || publicUrl.username || publicUrl.password || publicUrl.search || publicUrl.hash) throw new Error('redminePublicUrl must be an HTTP(S) URL without credentials, a query, or a fragment.');
-  return { ...raw, sprintSource, buildTrackerId, backlogStatusId, columnStatusIds, redminePublicUrl: publicUrl.href.replace(/\/$/, ''), refreshSeconds: Math.max(15, Number(raw.refreshSeconds) || 60) };
+  return { ...raw, sprintSource, buildTrackerId, swimlaneTrackers: [...new Set(swimlaneTrackers.map(name => name.trim()))], backlogStatusId, columnStatusIds, redminePublicUrl: publicUrl.href.replace(/\/$/, ''), refreshSeconds: Math.max(15, Number(raw.refreshSeconds) || 60) };
 }
 
 // The Backlog is every OPEN unplanned issue, narrowed to the configured New status unless

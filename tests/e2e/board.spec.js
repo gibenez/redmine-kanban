@@ -1,5 +1,13 @@
 import { test, expect } from '@playwright/test';
 
+// These fixtures exercise individual Card planning; hierarchy behavior has its own suite.
+test.beforeEach(async ({ page }) => {
+  await page.route('**/config.json', async route => {
+    const response = await route.fetch();
+    await route.fulfill({ json: { ...await response.json(), swimlaneTrackers: [] } });
+  });
+});
+
 async function setup(page, { deny = false, ignored = false, denyVersions = false, user = { id: 7, firstname: 'Team', lastname: 'Member' } } = {}) {
   const statuses = [{ id: 1, name: 'New' }, { id: 2, name: 'Open' }, { id: 3, name: 'Review' }, { id: 5, name: 'Done', is_closed: true }];
   const versions = [{ id: 10, name: 'Sprint 10', status: 'open' }, { id: 11, name: 'Sprint 9', status: 'closed' }];
@@ -79,7 +87,7 @@ for (const activation of ['click', 'keyboard']) {
   test(`issue ID opens Redmine in a new tab via ${activation}`, async ({ page }) => {
     const fixture = await setup(page);
     await page.route('**/config.json', route => route.fulfill({ json: {
-      redminePublicUrl: 'https://redmine.example.test', backlogStatusId: 1,
+      redminePublicUrl: 'https://redmine.example.test', backlogStatusId: 1, swimlaneTrackers: [],
       columnStatusIds: [1, 2, 3, 5], refreshSeconds: 60,
     } }));
     let navigationHeaders;
@@ -573,6 +581,7 @@ for (const mode of ['light', 'dark']) {
     await page.emulateMedia({ colorScheme: mode });
     const fixture = await setup(page);
     ['Alta', 'Media', 'Bassa', 'Normale'].forEach((name, index) => { fixture.issues[index].priority = { id: index + 40, name }; });
+    fixture.issues[3].status = fixture.issues[0].status; // Keep every priority sample in a configured Column.
     await login(page);
     const colors = mode === 'light'
       ? ['rgb(220, 71, 71)', 'rgb(224, 181, 27)', 'rgb(60, 155, 85)']
@@ -958,7 +967,10 @@ test('loads backlog, all sprint statuses and totals without executing issue HTML
   await expect(page.locator('#sprint-name a')).toHaveCount(0);
   await expect(page.locator('[data-id="backlog"] .kanban-item')).toHaveCount(2);
   await expect(page.locator('[data-id="status-2"]')).toContainText('Already underway');
-  await expect(page.locator('[data-id="other"]')).toContainText('Unmapped status still visible');
+  await expect(page.locator('.unmapped-notice summary')).toContainText('1 issues outside displayed statuses');
+  await page.locator('.unmapped-notice summary').click();
+  await expect(page.locator('.unmapped-notice')).toContainText('Unmapped status still visible');
+  await expect(page.locator('.kanban-board[data-id="other"]')).toHaveCount(0);
   await expect(page.locator('#totals')).toContainText('3estimated hours');
   await page.getByLabel('Find an issue').fill('#2');
   await expect(page.locator('#filtered')).toContainText('1 issues · 3 h · 0 unestimated');

@@ -1,10 +1,11 @@
 const jKanban = window.jKanban;
 import './style.css';
-import { reconcileBoard } from './board-view.js';
+import { reconcileBoard, alignSwimlanes } from './board-view.js';
 import { RedmineClient, RedmineError } from './api.js';
 import { validateConfig, isBacklog, effort, movePatch, parseEstimate, assertTransition, matchesPatch, escapeHtml as e } from './domain.js';
 import { PlanningFeed } from './planning-feed.js';
 import { BuildPlanningFeed } from './build-planning-feed.js';
+import { isSwimlane, loadAncestors, groupSwimlanes, groupPlan, executeGroup } from './swimlanes.js';
 import { buildTracker, asBuildSprint, saveBuildIssue, sprintRelations, sprintTransitions, changeBuildSprintState } from './build-sprints.js';
 
 const $ = id => document.getElementById(id);
@@ -17,12 +18,14 @@ let api, config, statuses = [], projects = [], versions = [], memberships = [], 
 let sprint = null, projectId = '', blockedProjectId = '', busy = false, dragging = false, loading = false, epoch = 0, timer, editing;
 let feed, queryLoading = false, queryTimer, queryRevision = 0, backlogFailed = false, searchFailed = false;
 const observedLists = new WeakSet();
+const mirroredStatusScrolls = new WeakMap();
 // Backlog Scope lives on the Backlog column header, so it is rebuilt with the board
 // rather than read from a persistent control.
 let allUnplannedScope = false;
 const filters = { query: '', tracker: '', assignee: '' };
 let categories = [], categoryId = 'none', categoryOnly = true, buildTrackerId;
-let sprintAction = null;
+let sprintAction = null, laneAncestors = [], laneMembers;
+let laneResizeObserver;
 const buildMode = () => config?.sprintSource === 'build';
 const newFeed = () => buildMode() ? new BuildPlanningFeed(api) : new PlanningFeed(api);
 const closedStatusIds = () => statuses.filter(status => status.is_closed).map(status => status.id);
@@ -30,6 +33,9 @@ const preferenceKey = name => `redmine-sprint-board.${name}.${projectId}`;
 function preference(name, fallback = null) { try { return localStorage.getItem(preferenceKey(name)) ?? fallback; } catch { return fallback; } }
 function remember(name, value) { try { localStorage.setItem(preferenceKey(name), String(value)); } catch { /* Optional personal preferences. */ } }
 function selectedMember(issue) { return Boolean(sprint) && (buildMode() ? issue.sprintMember : issue.fixed_version?.id === sprint.id); }
+function isLaneParent(id) {
+  return groupSwimlanes(feed?.snapshot.sprintAll || [], [], config.swimlaneTrackers, laneAncestors).some(lane => lane.parent?.id === id);
+}
 function categoryToggle() {
   return buildMode() ? `<button type="button" class="scope-toggle" data-category-scope aria-label="Filter backlog by category" aria-pressed="${categoryOnly}" title="Show backlog issues only in the selected category.">C</button>` : '';
 }
@@ -80,7 +86,7 @@ function lock() {
   $('refresh').disabled = busy || loading || !api;
   $('refresh').setAttribute('aria-busy', String(loading));
   document.querySelectorAll('#workspace select, #workspace input, #workspace button, #edit-form input, #edit-form select, #edit-form button[type="submit"]').forEach(el => { el.disabled = busy || loading; });
-  document.querySelectorAll('.plan, .scope-toggle').forEach(el => { el.disabled = busy || loading || queryLoading || feed?.loadingMore; });
+  document.querySelectorAll('.plan, .scope-toggle, [data-remove-lane], [data-add-descendants]').forEach(el => { el.disabled = busy || loading || queryLoading || feed?.loadingMore; });
   if ($('backlog-more')) $('backlog-more').disabled = busy || loading || queryLoading || feed?.loadingMore;
   $('sprint-actions').hidden = !buildMode() || !api || !projectId;
   $('close-sprint').hidden = sprint?.status !== 'open';
@@ -91,6 +97,7 @@ function lock() {
   $('board').setAttribute('aria-busy', String(loading || queryLoading));
 }
 function destroyBoard() {
+  laneResizeObserver?.disconnect(); laneResizeObserver = null;
   board?.drake?.destroy(); board?.drakeBoard?.destroy(); board = null; $('board').replaceChildren();
 }
 function clearBoardCards() {
@@ -98,7 +105,7 @@ function clearBoardCards() {
   const emptyColumns = board.options.boards.map(column => {
     const title = document.createElement('div'); title.innerHTML = column.title;
     const count = title.querySelector('.count'); if (count) count.textContent = '0';
-    return { ...column, title: title.innerHTML, item: [] };
+    return { ...column, title: title.innerHTML, item: [], lanes: undefined };
   });
   reconcileBoard(board, emptyColumns);
 }
@@ -146,8 +153,13 @@ function feedScope() { return { projectId, sprintId: sprint?.id, backlogStatusId
 function backlogScope() {
   return { backlogStatusId: config.backlogStatusId, allUnplanned: allUnplanned(), closedStatusIds: closedStatusIds(), sprintSource: config.sprintSource, buildTrackerId };
 }
-function syncFeed(snapshot) {
+async function syncFeed(snapshot) {
+  const activeFeed = feed, stamp = epoch, revision = queryRevision;
+  const ancestors = !config.swimlaneTrackers.length ? [] : laneMembers === snapshot.sprintAll ? laneAncestors : await loadAncestors(api, snapshot.sprintAll);
+  if (activeFeed !== feed || stamp !== epoch || revision !== queryRevision || activeFeed.snapshot !== snapshot) return false;
+  laneAncestors = ancestors; laneMembers = snapshot.sprintAll;
   issues = [...new Map([...snapshot.backlog, ...snapshot.sprintVisible].map(issue => [issue.id, issue])).values()];
+  return true;
 }
 function forget() {
   cancelQuery(); feed = null;
@@ -242,6 +254,18 @@ function renderSprintHeading() {
   link.title = `Open Build Sprint ${id} in Redmine`;
 }
 
+function unmappedNotice(items) {
+  if (!items.length) return '';
+  return `<details class="unmapped-notice"><summary>${items.length} issues outside displayed statuses</summary><ul>${items.map(issue => `<li><a href="${e(linkToIssue(issue.id))}" target="_blank" rel="noopener noreferrer">#${Number(issue.id)} — ${e(issue.subject)}</a> · ${e(issue.status.name)}</li>`).join('')}</ul></details>`;
+}
+function laneHeading(lane) {
+  const id = Number(lane.parent?.id);
+  const title = lane.parent ? `<a href="${e(linkToIssue(id))}" target="_blank" rel="noopener noreferrer">#${id} — ${e(lane.parent.subject)}</a>` : 'Ungrouped';
+  const actions = lane.parent && sprint?.status === 'open' ? `<div class="swimlane-actions"><button type="button" data-add-descendants="${id}" aria-label="Add missing descendants of #${id}" title="Add missing descendants"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M2 3h5M2 7h5M2 11h5M11 6v6M8 9h6"/></svg></button><button type="button" data-remove-lane="${id}" aria-label="Remove Swimlane #${id} from Sprint" title="Remove Swimlane from Sprint"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true" focusable="false"><path d="m4 4 8 8M12 4l-8 8"/></svg></button></div>` : '';
+  const empty = !lane.all.length && lane.parent ? '<p class="muted">No descendants in this Sprint.</p>' : '';
+  return `<div class="swimlane-title-row"><strong>${title}</strong>${actions}</div>${empty}${unmappedNotice(lane.visible.filter(issue => !config.columnStatusIds.includes(issue.status.id)))}`;
+}
+
 function renderBoard() {
   if (dragging) return;
   const visible = issues;
@@ -257,13 +281,18 @@ function renderBoard() {
   const backlogIds = new Set(feed?.snapshot.backlog.map(issue => issue.id));
   const backlog = visible.filter(issue => backlogIds.has(issue.id));
   const boards = [{ id: 'backlog', title: `${backlogToggle()}<span class="backlog-label">Backlog</span> <span class="count">${backlog.length} / ${feed?.snapshot.total ?? '?'}</span>${scopeToggle()}${categoryToggle()}`, class: 'backlog-board', item: backlog.map(card) }];
-  for (const statusId of config.columnStatusIds) {
-    const items = visible.filter(issue => selectedMember(issue) && issue.status.id === statusId);
-    boards.push({ id: `status-${statusId}`, title: `${e(statuses.find(status => status.id === statusId).name)} <span class="count">${items.length}</span>`, item: items.map(card) });
+  const lanes = config.swimlaneTrackers.length ? groupSwimlanes(feed?.snapshot.sprintAll || [], feed?.snapshot.sprintVisible || [], config.swimlaneTrackers, laneAncestors) : null;
+  for (const [index, statusId] of config.columnStatusIds.entries()) {
+    const items = lanes ? lanes.flatMap(lane => lane.visible.filter(issue => issue.status.id === statusId).map(issue => ({ ...card(issue), lane: lane.id })))
+      : visible.filter(issue => selectedMember(issue) && issue.status.id === statusId).map(card);
+    boards.push({ id: `status-${statusId}`, title: `${e(statuses.find(status => status.id === statusId).name)} <span class="count">${items.length}</span>`, item: items,
+      lanes: lanes?.map(lane => ({ id: lane.id, title: index === 0 ? laneHeading(lane) : `<span class="muted" aria-hidden="true">${lane.parent ? `#${Number(lane.parent.id)}` : 'Ungrouped'}</span>` })),
+    });
   }
-  const other = visible.filter(issue => selectedMember(issue) && !config.columnStatusIds.includes(issue.status.id));
-  // Filtered-out unmapped work must not make its Column disappear or resize its neighbors.
-  if ((feed?.snapshot.sprintAll || []).some(issue => !config.columnStatusIds.includes(issue.status.id))) boards.push({ id: 'other', title: `Other statuses (unmapped) <span class="count">${other.length}</span>`, item: other.map(card) });
+  if (!lanes) {
+    const other = visible.filter(issue => selectedMember(issue) && !config.columnStatusIds.includes(issue.status.id));
+    if (other.length) boards[1].title += unmappedNotice(other);
+  }
   if (!board) board = new jKanban({
     element: '#board', gutter: '16px', widthBoard: '290px', responsive: 0, dragBoards: false, boards,
     dragEl: () => { if (busy || loading || queryLoading || feed?.loadingMore || sprint?.status !== 'open') board.drake.cancel(true); else dragging = true; },
@@ -282,7 +311,13 @@ function renderBoard() {
       return false;
     },
   });
+  // Headers and controls are never draggable; Cards remain jKanban/Dragula items.
+  board.__getCanMove = handle => !handle.closest('a, button, input, select, summary') && Boolean(handle.closest('.kanban-item'));
   reconcileBoard(board, boards);
+  if (!laneResizeObserver) {
+    laneResizeObserver = new ResizeObserver(() => { if (board && !dragging) alignSwimlanes(board.container); });
+    laneResizeObserver.observe($('board'));
+  }
   for (const column of $('board').querySelectorAll('.kanban-board')) {
     const list = column.querySelector('.kanban-drag');
     list.tabIndex = 0;
@@ -362,7 +397,8 @@ async function loadMoreBacklog({ silent = false } = {}) {
     const snapshot = await pending;
     if (!snapshot || revision !== queryRevision) return;
     backlogFailed = false;
-    syncFeed(snapshot); renderFilters();
+    if (!await syncFeed(snapshot)) return;
+    renderFilters();
     if (board !== activeBoard) { renderBoard(); return; }
     // An open issue can also be visible in a selected closed sprint as history.
     // Deduplicate within Backlog, not across the entire board.
@@ -382,7 +418,8 @@ async function searchIssues(revision) {
     feed.pageSize = backlogPageSize();
     const snapshot = await feed.load(feedScope(), filters, { refreshSprint: false });
     if (!snapshot || revision !== queryRevision) return;
-    searchFailed = false; syncFeed(snapshot); renderFilters(); renderBoard();
+    if (!await syncFeed(snapshot)) return;
+    searchFailed = false; renderFilters(); renderBoard();
   } catch (error) {
     if (revision === queryRevision) {
       searchFailed = true;
@@ -445,7 +482,8 @@ async function refresh(projectChanged = false, retryDenied = false) {
     feed.pageSize = backlogPageSize(); backlogFailed = false;
     const next = await feed.load(feedScope(), filters);
     if (!next || stamp !== epoch) return;
-    searchFailed = false; syncFeed(next); blockedProjectId = '';
+    if (!await syncFeed(next)) return;
+    searchFailed = false; blockedProjectId = '';
     renderFilters(); renderBoard();
     $('updated').textContent = `Updated ${new Date().toLocaleTimeString()}`;
     return true;
@@ -465,7 +503,64 @@ async function refresh(projectChanged = false, retryDenied = false) {
   } finally { if (stamp === epoch) { loading = false; lock(); renderBacklogFooter(); void fillBacklogColumn(); } }
 }
 
+async function mutateLane(id, add, rootPatch = {}) {
+  if (busy || loading || queryLoading || feed?.loadingMore || !api || !sprint) return;
+  cancelQuery(); busy = true; lock();
+  const stamp = epoch, currentApi = api, selectedSprint = sprint;
+  const options = { trackers: config.swimlaneTrackers, closedStatusIds: closedStatusIds(), trackerId: buildTrackerId, active: () => stamp === epoch };
+  let message = '', failed = false;
+  try {
+    const plan = await groupPlan(currentApi, id, selectedSprint, projectId, add, options);
+    if (stamp !== epoch) return;
+    const warnings = [
+      plan.replacements.length ? `Replace another target-version Sprint for: ${plan.replacements.map(issue => `#${issue.id}`).join(', ')}.` : '',
+      plan.excluded.length ? `Excluded cross-project descendants: ${plan.excluded.map(issue => `#${issue.id}`).join(', ')}.` : '',
+    ].filter(Boolean).join('\n');
+    if ((!add || warnings) && !window.confirm(`${add ? 'Add' : 'Remove'} #${id} and its same-project descendants ${add ? 'to' : 'from'} this Sprint? ${plan.targets.length} issues will change. Statuses stay unchanged.\n${warnings}`)) return;
+    const result = await executeGroup(currentApi, plan, selectedSprint, options);
+    if (stamp !== epoch) return;
+    // The planner may also edit estimates/assignee. Group planning never applies
+    // the drop Column's status to the parent or any descendant.
+    const fields = Object.fromEntries(Object.entries(rootPatch).filter(([key]) => !['status_id', 'fixed_version_id', 'sprint_member'].includes(key)));
+    if (Object.keys(fields).length && !result.failed.length) {
+      try {
+        if (buildMode()) await saveBuildIssue(currentApi, id, selectedSprint, fields, options);
+        else {
+          const fresh = await currentApi.issue(id);
+          const changed = Object.fromEntries(Object.entries(fields).filter(([key, value]) => !matchesPatch(fresh, { [key]: value })));
+          if (Object.keys(changed).length) await currentApi.update(id, changed);
+          if (!matchesPatch(await currentApi.issue(id), fields)) throw new Error('Parent fields were not retained.');
+        }
+      } catch (error) { result.failed.push({ id, message: error.message }); }
+    }
+    failed = result.failed.length > 0;
+    message = `${result.succeeded.length} issues ${add ? 'added to' : 'removed from'} Sprint. Statuses unchanged.${warnings ? ` ${warnings}` : ''}${failed ? ` Succeeded: ${result.succeeded.map(issueId => `#${issueId}`).join(', ') || 'none'}. Failed: ${result.failed.map(item => `#${item.id}: ${item.message}`).join('; ')} No rollback was attempted.` : ''}`;
+    if (!failed) { $('editor').close(); editing = null; }
+  } catch (error) { failed = true; message = `Swimlane operation failed: ${error.message}`; }
+  finally {
+    if (stamp === epoch) {
+      try {
+        feed.pageSize = backlogPageSize(); backlogFailed = false;
+        const snapshot = await feed.load(feedScope(), filters);
+        if (snapshot && stamp === epoch) await syncFeed(snapshot);
+      } catch (error) {
+        failed = true; message += ` Board reload failed: ${error.message} Use Refresh before retrying.`;
+        if (stamp === epoch) { issues = []; feed.snapshot = { ...feed.snapshot, backlog: [], sprintAll: [], sprintVisible: [], total: null, hasMore: false }; }
+      }
+      if (stamp === epoch) {
+        busy = false; if (message) notify(message, failed);
+        lock(); renderFilters(); renderBoard(); void fillBacklogColumn();
+      }
+    }
+  }
+}
+
 async function mutate(id, patch) {
+  const issue = issues.find(item => item.id === id) || feed?.snapshot.sprintAll.find(item => item.id === id);
+  const membership = buildMode() ? patch.sprint_member : patch.fixed_version_id === sprint?.id ? true : patch.fixed_version_id === null ? false : undefined;
+  if (issue && isSwimlane(issue, config.swimlaneTrackers) && membership !== undefined && membership !== selectedMember(issue) && (membership || isLaneParent(id))) {
+    return mutateLane(id, membership, patch);
+  }
   if (buildMode()) return mutateBuild(id, patch);
   if (busy || loading || queryLoading || feed?.loadingMore || !api) return;
   if (!Object.keys(patch).length) { renderBoard(); return; }
@@ -491,7 +586,7 @@ async function mutate(id, patch) {
     feed.pageSize = backlogPageSize(); backlogFailed = false;
     const snapshot = await feed.load(feedScope(), filters);
     if (!snapshot || stamp !== epoch) return;
-    syncFeed(snapshot);
+    if (!await syncFeed(snapshot)) return;
     if (!writeConfirmed) throw new Error('Redmine did not retain all requested changes. Showing its confirmed values; check field permissions and workflow rules.');
     $('editor').close(); editing = null;
     notify(patch.fixed_version_id === null && !isBacklog(confirmed, backlogScope())
@@ -522,7 +617,7 @@ async function mutateBuild(id, patch) {
       try {
         feed.pageSize = backlogPageSize(); backlogFailed = false;
         const snapshot = await feed.load(feedScope(), filters);
-        if (stamp === epoch && snapshot) syncFeed(snapshot);
+        if (stamp === epoch && snapshot) await syncFeed(snapshot);
       } catch (error) {
         failed = true; message += ` Board reload failed: ${error.message} Use Refresh before retrying.`;
         if (stamp === epoch) { issues = []; feed.snapshot = { ...feed.snapshot, backlog: [], sprintAll: [], sprintVisible: [], total: null, hasMore: false }; }
@@ -647,7 +742,9 @@ async function openEditor(id) {
     options($('edit-status'), [...allowed], issue.status.id);
     $('edit-destination').value = selectedMember(issue) ? 'sprint' : 'backlog';
     $('issue-link').href = linkToIssue(issue.id);
-    $('editor-warning').textContent = sprint?.status === 'open' ? 'Redmine enforces workflow and field permissions. Removing from a sprint does not reset status.' : 'Read only. Select an open sprint to plan issues.';
+    $('editor-warning').textContent = sprint?.status !== 'open' ? 'Read only. Select an open sprint to plan issues.'
+      : isSwimlane(issue, config.swimlaneTrackers) && (!selectedMember(issue) || isLaneParent(id)) ? 'Changing Sprint membership plans or removes this issue and its same-project descendants as a Swimlane. All statuses stay unchanged during group planning. Redmine enforces permissions.'
+        : 'Redmine enforces workflow and field permissions. Removing from a sprint does not reset status.';
     $('editor').showModal();
   } catch (error) { if (stamp === epoch) notify(error.message, true); }
   finally {
@@ -729,10 +826,24 @@ $('refresh').addEventListener('click', () => { notify(''); void refresh(false, t
 for (const [id, field, eventName] of [['query', 'query', 'input'], ['tracker', 'tracker', 'change'], ['assignee', 'assignee', 'change']]) {
   $(id).addEventListener(eventName, () => { filters[field] = $(id).value; scheduleSearch(field === 'query' ? 300 : 0); });
 }
+$('board').addEventListener('toggle', () => { if (board) alignSwimlanes(board.container); }, { capture: true });
+$('board').addEventListener('scroll', event => {
+  const list = event.target;
+  if (!list.classList?.contains('has-swimlanes')) return;
+  // Ignore mirrored events so they cannot interrupt the user's native wheel or
+  // keyboard scrolling by echoing an earlier position back to the active list.
+  if (mirroredStatusScrolls.get(list) === list.scrollTop) return;
+  mirroredStatusScrolls.delete(list);
+  for (const other of $('board').querySelectorAll('.has-swimlanes')) {
+    if (other === list || other.scrollTop === list.scrollTop) continue;
+    other.scrollTop = list.scrollTop;
+    mirroredStatusScrolls.set(other, other.scrollTop);
+  }
+}, { capture: true, passive: true });
 // jKanban cancels every Card click with preventDefault(). Stop link clicks before
 // that handler, without cancelling native navigation (new tabs, modifiers, Enter).
 $('board').addEventListener('click', event => {
-  if (event.target.closest('.card-head a[href]')) event.stopPropagation();
+  if (event.target.closest('.card-head a[href], .swimlane-heading a[href]')) event.stopPropagation();
 }, { capture: true });
 $('board').addEventListener('click', event => {
   if (event.target.closest('[data-backlog-collapse]')) { toggleBacklog(); return; }
@@ -740,6 +851,10 @@ $('board').addEventListener('click', event => {
   if (event.target.closest('[data-category-scope]')) {
     categoryOnly = !categoryOnly; remember('category-only', categoryOnly ? '1' : '0'); scheduleSearch(0); return;
   }
+  const removeLane = event.target.closest('[data-remove-lane]');
+  if (removeLane) { void mutateLane(Number(removeLane.dataset.removeLane), false); return; }
+  const addDescendants = event.target.closest('[data-add-descendants]');
+  if (addDescendants) { void mutateLane(Number(addDescendants.dataset.addDescendants), true); return; }
   const button = event.target.closest('[data-edit]'); if (button) void openEditor(Number(button.dataset.edit));
 });
 for (const [id, action] of [['new-sprint', 'new'], ['close-sprint', 'close'], ['reopen-sprint', 'reopen']]) {

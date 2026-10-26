@@ -10,7 +10,13 @@ describe('deployment configuration', () => {
   it('validates IDs against actual statuses and preserves deployment paths', () => {
     expect(validateConfig(config, statuses)).toMatchObject({ backlogStatusId: 1, refreshSeconds: 60, redminePublicUrl: config.redminePublicUrl });
   });
+  it('defaults, normalizes and disables Swimlane tracker names', () => {
+    expect(validateConfig(config, statuses).swimlaneTrackers).toEqual(['Feature', 'Bug', 'Improvement']);
+    expect(validateConfig({ ...config, swimlaneTrackers: [' Story ', 'Bug', 'Story'] }, statuses).swimlaneTrackers).toEqual(['Story', 'Bug']);
+    expect(validateConfig({ ...config, swimlaneTrackers: [] }, statuses).swimlaneTrackers).toEqual([]);
+  });
   it.each([
+    { swimlaneTrackers: 'Feature,Bug' }, { swimlaneTrackers: [''] }, { swimlaneTrackers: [1] },
     { columnStatusIds: [] }, { columnStatusIds: [1, 1] }, { backlogStatusId: 5 }, { columnStatusIds: [999] },
     { backlogStatusId: -1 }, { redminePublicUrl: 'javascript:alert(1)' }, { redminePublicUrl: 'https://secret@redmine.test' },
   ])('rejects unsafe or invalid mappings: %j', overrides => expect(() => validateConfig({ ...config, ...overrides }, statuses)).toThrow());
