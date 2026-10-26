@@ -1,4 +1,6 @@
-// Redmine applies all search/filter predicates BEFORE pagination.
+// Redmine applies server predicates before pagination; tags must be matched locally.
+export const matchesTags = (issue, tags = []) => !tags.length || tags.some(tag => (issue.tags || []).includes(tag));
+export const sprintFiltered = filters => ['query', 'tracker', 'assignee'].some(key => String(filters[key] || '').trim());
 export function issueQuery({ projectId, sprintId, backlogStatusId, allUnplanned = false }, filters = {}, backlog = false) {
   const backlogStatus = allUnplanned ? 'open' : backlogStatusId;
   const params = {
@@ -24,25 +26,40 @@ export class PlanningFeed {
   cancel() {
     this.revision++; this.controller?.abort(); this.loading = false; this.loadingMore = false; this.nextPromise = null;
   }
+  async backlogPage(scope, filters, offset, signal, cursor = {}) {
+    const items = [], pending = [...(cursor.pending || [])];
+    let rawHasMore = cursor.rawHasMore ?? true, total = cursor.total ?? null;
+    while (items.length < this.pageSize && (pending.length || rawHasMore)) {
+      if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
+      if (!pending.length) {
+        const page = await this.api.page('/issues.json', 'issues', { ...issueQuery(scope, filters, true), limit: filters.tags?.length ? 100 : this.pageSize, offset }, { signal });
+        if (page.hasMore && page.nextOffset <= offset) throw new Error('Redmine did not advance the backlog cursor.');
+        offset = page.nextOffset; rawHasMore = page.hasMore; total = filters.tags?.length ? null : page.total;
+        pending.push(...page.items.filter(issue => matchesTags(issue, filters.tags)));
+      }
+      items.push(...pending.splice(0, this.pageSize - items.length));
+    }
+    return { items, nextOffset: offset, pending, rawHasMore, total, hasMore: pending.length > 0 || rawHasMore };
+  }
   async load(scope, filters, { refreshSprint = true } = {}) {
     this.cancel();
     const revision = this.revision;
     const controller = this.controller = new AbortController();
     this.loading = true;
     const key = scopeKey(scope), selectedFilters = { ...filters };
-    const filtered = Object.values(selectedFilters).some(value => String(value).trim());
+    const filtered = sprintFiltered(selectedFilters);
     try {
       const unfilteredSprint = !scope.sprintId ? Promise.resolve([])
         : !refreshSprint && this.key === key ? Promise.resolve(this.snapshot.sprintAll)
           : this.api.list('/issues.json', 'issues', issueQuery(scope), { signal: controller.signal });
       const [backlog, sprintAll, sprintVisible] = await Promise.all([
-        this.api.page('/issues.json', 'issues', { ...issueQuery(scope, selectedFilters, true), limit: this.pageSize, offset: 0 }, { signal: controller.signal }),
+        this.backlogPage(scope, selectedFilters, 0, controller.signal),
         unfilteredSprint,
         scope.sprintId && filtered ? this.api.list('/issues.json', 'issues', issueQuery(scope, selectedFilters), { signal: controller.signal }) : unfilteredSprint,
       ]);
       if (revision !== this.revision) return null;
-      this.key = key; this.scope = { ...scope }; this.filters = selectedFilters;
-      this.snapshot = { backlog: backlog.items, total: backlog.total, nextOffset: backlog.nextOffset, hasMore: backlog.hasMore, sprintAll, sprintVisible };
+      this.key = key; this.scope = { ...scope }; this.filters = selectedFilters; this.cursor = backlog;
+      this.snapshot = { backlog: backlog.items, total: selectedFilters.tags?.length && !backlog.hasMore ? backlog.items.length : backlog.total, nextOffset: backlog.nextOffset, hasMore: backlog.hasMore, sprintAll, sprintVisible };
       return this.snapshot;
     } catch (error) {
       if (revision !== this.revision) return null;
@@ -58,12 +75,13 @@ export class PlanningFeed {
     this.loadingMore = true;
     this.nextPromise = (async () => {
       try {
-        const page = await this.api.page('/issues.json', 'issues', { ...issueQuery(this.scope, this.filters, true), limit: this.pageSize, offset: this.snapshot.nextOffset }, { signal });
+        const page = await this.backlogPage(this.scope, this.filters, this.snapshot.nextOffset, signal, this.cursor);
         if (revision !== this.revision) return null;
+        this.cursor = page;
         this.snapshot = {
           ...this.snapshot,
           backlog: [...new Map([...this.snapshot.backlog, ...page.items].map(issue => [issue.id, issue])).values()],
-          total: page.total, nextOffset: page.nextOffset, hasMore: page.hasMore,
+          total: this.filters.tags?.length && !page.hasMore ? this.snapshot.backlog.length + page.items.length : page.total, nextOffset: page.nextOffset, hasMore: page.hasMore,
         };
         return this.snapshot;
       } catch (error) { if (revision === this.revision) throw error; return null; }

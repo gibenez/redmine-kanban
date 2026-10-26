@@ -202,7 +202,7 @@ test('filtered totals appear only with active filters and do not shift the layou
   const before = await page.locator('#board').boundingBox();
   const searchBefore = await page.locator('#query').boundingBox();
   const filterRow = await page.locator('.filters').boundingBox();
-  const lastFilter = await page.locator('#assignee').boundingBox();
+  const lastFilter = await page.locator('#backlog-tag').boundingBox();
   expect(Math.abs(lastFilter.x + lastFilter.width - filterRow.x - filterRow.width)).toBeLessThanOrEqual(1);
   await page.getByLabel('Find an issue').fill('#2');
   await expect(summary).toContainText('1 issues · 3 h · 0 unestimated');

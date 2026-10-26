@@ -1,4 +1,4 @@
-import { PlanningFeed, issueQuery } from './planning-feed.js';
+import { PlanningFeed, issueQuery, matchesTags, sprintFiltered } from './planning-feed.js';
 import { relatedId } from './build-sprints.js';
 
 export function buildIssueQuery(scope, filters = {}, backlog = false) {
@@ -57,7 +57,7 @@ export class BuildPlanningFeed extends PlanningFeed {
         const page = await this.api.page('/issues.json', 'issues', { ...buildIssueQuery(scope, filters, true), limit: 100, offset: nextOffset }, { signal });
         if (page.hasMore && page.nextOffset <= nextOffset) throw new Error('Redmine did not advance the backlog cursor.');
         nextOffset = page.nextOffset; rawHasMore = page.hasMore;
-        pending.push(...page.items.filter(issue => issue.project.id === Number(scope.projectId) && issue.tracker.id !== scope.buildTrackerId && !index.open.has(issue.id)));
+        pending.push(...page.items.filter(issue => issue.project.id === Number(scope.projectId) && issue.tracker.id !== scope.buildTrackerId && !index.open.has(issue.id) && matchesTags(issue, filters.tags)));
       }
       items.push(...pending.splice(0, this.pageSize - items.length).map(issue => this.annotate(issue, index)));
     }
@@ -72,7 +72,7 @@ export class BuildPlanningFeed extends PlanningFeed {
       const reuse = !refreshSprint && this.key === key;
       const index = reuse ? this.index : await this.membership(scope, signal);
       const unfiltered = reuse ? Promise.resolve(this.snapshot.sprintAll) : this.sprintIssues(scope, {}, index, signal);
-      const filtered = Object.values(filters).some(value => String(value).trim());
+      const filtered = sprintFiltered(filters);
       const [page, sprintAll, sprintVisible] = await Promise.all([
         this.backlogPage(scope, selectedFilters, index, { nextOffset: 0, rawHasMore: true, pending: [] }, signal),
         unfiltered, filtered ? this.sprintIssues(scope, selectedFilters, index, signal) : unfiltered,

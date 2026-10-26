@@ -29,6 +29,7 @@ async function setup(page, mode = 'version', deniedId) {
   await page.route('**/redmine/**', async route => {
     const request = route.request(), url = new URL(request.url()), path = url.pathname.replace('/redmine', ''), method = request.method();
     const send = json => route.fulfill({ json });
+    if (path.startsWith('/issue_tags/auto_complete/')) return send(['(447) Adria', 'foo', 'absent', 'Unused project tag']);
     if (path === '/users/current.json') return send({ user: { id: 1, firstname: 'Team', lastname: 'Member' } });
     if (path === '/issue_statuses.json') return send({ issue_statuses: statuses });
     if (path === '/projects.json') return send({ projects: [{ id: 1, name: 'Team', trackers: [{ id: 1, name: 'Feature' }, { id: 2, name: 'Task' }, { id: 3, name: 'Bug' }, { id: 9, name: 'Build' }] }] });
@@ -82,10 +83,11 @@ async function setup(page, mode = 'version', deniedId) {
 }
 
 const lane = (page, status = 1, id = 1) => page.locator(`.kanban-board[data-id="status-${status}"] .swimlane-section[data-lane="${id}"]`);
+const heading = (page, id = 1) => page.locator(`.swimlane-headers > [data-lane="${id}"]`);
 async function plan(page) {
   page.once('dialog', dialog => dialog.accept());
   await page.locator('.kanban-board[data-id="backlog"] [data-eid="1"] h3').dragTo(page.locator('.kanban-board[data-id="status-2"] .swimlane-cards'));
-  await expect(lane(page).getByRole('link', { name: '#1 — Parent feature', exact: true })).toBeVisible();
+  await expect(heading(page).getByRole('link', { name: '#1 — Parent feature', exact: true })).toBeVisible();
   await expect(page.locator('#workspace')).toHaveAttribute('aria-busy', 'false');
 }
 
@@ -99,10 +101,10 @@ for (const mode of ['version', 'build']) {
     await expect(page.locator('.swimlane-section[data-lane="3"]')).toHaveCount(0);
     await expect(page.locator('.kanban-board')).toHaveCount(4);
     await expect(page.locator('.kanban-board:not([data-id="backlog"]) [data-eid="1"]')).toHaveCount(0);
-    await expect(lane(page).getByRole('link', { name: '#1 — Parent feature', exact: true })).toHaveAttribute('href', 'https://redmine.example.test/issues/1');
-    await expect(lane(page).locator('summary')).toContainText('1 issues outside displayed statuses');
-    await lane(page).locator('summary').click();
-    await expect(lane(page).getByRole('link', { name: '#6 — Waiting child' })).toBeVisible();
+    await expect(heading(page).getByRole('link', { name: '#1 — Parent feature', exact: true })).toHaveAttribute('href', 'https://redmine.example.test/issues/1');
+    await expect(heading(page).locator('summary')).toContainText('1 issues outside displayed statuses');
+    await heading(page).locator('summary').click();
+    await expect(heading(page).getByRole('link', { name: '#6 — Waiting child' })).toBeVisible();
     await expect(page.locator('#notice')).toContainText('Excluded cross-project descendants: #8');
     expect(fixture.writes.some(write => write.patch && 'status_id' in write.patch)).toBe(false);
     await expect.poll(async () => {
@@ -138,7 +140,7 @@ test('refresh is read-only; missing descendants are added explicitly; empty Swim
   await expect(lane(page, 2).locator('[data-eid="9"]')).toBeVisible();
   for (const row of fixture.rows) if ([2, 3, 4, 6, 9].includes(row.id)) row.fixed_version = undefined;
   await page.getByRole('button', { name: 'Refresh', exact: true }).click();
-  await expect(lane(page)).toContainText('No descendants in this Sprint.');
+  await expect(heading(page)).toContainText('No descendants in this Sprint.');
 });
 
 test('individual Cards change status without changing hierarchy or siblings', async ({ page }) => {
@@ -195,13 +197,13 @@ test('filters retain Swimlane context and the title opens Redmine without forwar
   await setup(page); await plan(page);
   await page.getByLabel('Tracker', { exact: true }).selectOption('1');
   await expect(page.locator('#workspace')).toHaveAttribute('aria-busy', 'false');
-  await expect(lane(page).getByRole('link', { name: '#1 — Parent feature', exact: true })).toBeVisible();
+  await expect(heading(page).getByRole('link', { name: '#1 — Parent feature', exact: true })).toBeVisible();
   await expect(page.locator('.kanban-board:not([data-id="backlog"]) .kanban-item')).toHaveCount(0);
   let headers;
   await page.context().route('https://redmine.example.test/issues/1', route => {
     headers = route.request().headers(); return route.fulfill({ contentType: 'text/html', body: '<h1>Parent feature</h1>' });
   });
-  const link = lane(page).getByRole('link', { name: '#1 — Parent feature', exact: true });
+  const link = heading(page).getByRole('link', { name: '#1 — Parent feature', exact: true });
   const [popup] = await Promise.all([page.waitForEvent('popup'), link.focus().then(() => page.keyboard.press('Enter'))]);
   await popup.waitForLoadState();
   expect(popup.url()).toBe('https://redmine.example.test/issues/1');
@@ -240,17 +242,74 @@ test('Swimlane actions are icon-only, labelled, and right-aligned beside a wrapp
   }
   for (const width of [1440, 390]) {
     await page.setViewportSize({ width, height: 1000 });
-    const geometry = await lane(page).locator('.swimlane-title-row').evaluate(row => {
+    const geometry = await heading(page).locator('.swimlane-title-row').evaluate(row => {
       const bounds = row.getBoundingClientRect(), title = row.querySelector('strong').getBoundingClientRect(), actions = row.querySelector('.swimlane-actions').getBoundingClientRect();
-      return { rowRight: bounds.right, actionsRight: actions.right, rowTop: bounds.top, actionsTop: actions.top, titleRight: title.right, actionsLeft: actions.left };
+      return { rowRight: bounds.right, actionsRight: actions.right, rowCenter: (bounds.top + bounds.bottom) / 2, actionsCenter: (actions.top + actions.bottom) / 2, titleRight: title.right, actionsLeft: actions.left };
     });
     expect(Math.abs(geometry.actionsRight - geometry.rowRight)).toBeLessThanOrEqual(1);
-    expect(Math.abs(geometry.actionsTop - geometry.rowTop)).toBeLessThanOrEqual(1);
+    expect(Math.abs(geometry.actionsCenter - geometry.rowCenter)).toBeLessThanOrEqual(1);
     expect(geometry.actionsLeft).toBeGreaterThan(geometry.titleRight);
   }
   await add.focus();
   await page.keyboard.press('Tab');
   await expect(remove).toBeFocused();
+});
+
+for (const mode of ['version', 'build']) {
+  test(`${mode}: tags appear only in Card detail and shared Swimlane headers; tag filtering affects Backlog only`, async ({ page }) => {
+    const fixture = await setup(page, mode);
+    fixture.rows.find(row => row.id === 1).tags = ['(447) Adria', '<tag>'];
+    fixture.rows.find(row => row.id === 2).tags = ['child-tag'];
+    fixture.rows.push({ ...fixture.make(20, 'Tagged backlog issue'), tags: ['(447) Adria'] }, { ...fixture.make(21, 'Other tagged backlog issue'), tags: ['foo'] });
+    await page.getByRole('button', { name: 'Refresh', exact: true }).click();
+    await page.getByRole('button', { name: 'Plan #1', exact: true }).click();
+    await expect(page.locator('#editor-tags')).toHaveText('(447) Adria<tag>');
+    await page.getByRole('button', { name: 'Close editor' }).click();
+    await expect(page.locator('.kanban-item .issue-tag')).toHaveCount(0);
+    await plan(page);
+    const header = heading(page);
+    await expect(header.locator('.lane-tracker')).toHaveText('Feature');
+    await expect(header.locator('.lane-priority')).toHaveText('Normal');
+    await expect(header.locator('.issue-tag')).toHaveText(['(447) Adria', '<tag>']);
+    await expect(page.getByRole('link', { name: '#1 — Parent feature', exact: true })).toHaveCount(1);
+    await expect(page.locator('.swimlane-section > .swimlane-heading')).toHaveText(['', '', '', '', '', '']);
+    const bounds = await header.boundingBox();
+    const columns = await page.locator('.kanban-board:not([data-id="backlog"])').evaluateAll(nodes => ({ left: nodes[0].getBoundingClientRect().left, right: nodes.at(-1).getBoundingClientRect().right }));
+    expect(Math.abs(bounds.x - columns.left)).toBeLessThanOrEqual(1);
+    expect(columns.right - bounds.x - bounds.width).toBeGreaterThanOrEqual(16);
+    await page.getByRole('button', { name: 'Collapse Backlog', exact: true }).click();
+    await expect.poll(async () => {
+      const headerBounds = await header.boundingBox();
+      const columnBounds = await page.locator('.kanban-board[data-id="status-1"]').boundingBox();
+      return Math.abs(headerBounds.x - columnBounds.x);
+    }).toBeLessThanOrEqual(1);
+    await page.getByRole('button', { name: 'Expand Backlog', exact: true }).click();
+    const sprintCards = await page.locator('.kanban-board:not([data-id="backlog"]) .kanban-item').count();
+    const tagRequests = [];
+    page.on('request', request => { if (request.url().includes('/issue_tags/')) tagRequests.push(request.url()); });
+    await page.getByLabel('Backlog tag', { exact: true }).fill('(447) Adria');
+    await expect(page.locator('.kanban-board[data-id="backlog"] .kanban-item')).toHaveCount(1);
+    await expect(page.locator('.kanban-board[data-id="backlog"] [data-eid="20"]')).toBeVisible();
+    await expect(page.locator('.kanban-board:not([data-id="backlog"]) .kanban-item')).toHaveCount(sprintCards);
+    await page.getByLabel('Backlog tag', { exact: true }).fill('Adria');
+    await expect(page.locator('.kanban-board[data-id="backlog"] .kanban-item')).toHaveCount(0);
+    await page.getByLabel('Backlog tag', { exact: true }).fill('foo');
+    await expect(page.locator('.kanban-board[data-id="backlog"] [data-eid="21"]')).toBeVisible();
+    await page.getByLabel('Backlog tag', { exact: true }).fill('absent');
+    await expect(page.locator('.kanban-board[data-id="backlog"] .kanban-item')).toHaveCount(0);
+    await page.getByLabel('Backlog tag', { exact: true }).fill('');
+    await expect(page.locator('.kanban-board[data-id="backlog"] [data-eid="20"]')).toBeVisible();
+    expect(tagRequests).toHaveLength(0);
+  });
+}
+
+test('focusing the exact-tag field never loads a catalogue or scans issues', async ({ page }) => {
+  await setup(page);
+  const requests = [];
+  page.on('request', request => { if (request.url().includes('/redmine/')) requests.push(request.url()); });
+  await page.getByLabel('Backlog tag', { exact: true }).click();
+  await expect(page.getByLabel('Backlog tag', { exact: true })).toBeFocused();
+  expect(requests).toHaveLength(0);
 });
 
 test('only the far-right status scrollbar is visible while every status list stays synchronized', async ({ page }) => {
@@ -268,6 +327,40 @@ test('only the far-right status scrollbar is visible while every status list sta
   await expect(page.locator('.kanban-board[data-id="backlog"] .kanban-drag')).toHaveCSS('scrollbar-width', 'auto');
   for (const list of await lists.all()) await expect(list).toHaveCSS('overflow-y', 'auto');
 
+  // macOS overlay scrollbars reserve no clientWidth space. Headers must still
+  // leave an uninterrupted strip for the thumb, including while it is visible.
+  await expect.poll(async () => {
+    const headerRight = await page.locator('.swimlane-headers').evaluate(node => node.getBoundingClientRect().right);
+    const listRight = await lists.last().evaluate(node => node.getBoundingClientRect().right);
+    return listRight - headerRight;
+  }).toBeGreaterThanOrEqual(16);
+
+  // Reserve a native scrollbar gutter even on hosts using overlay scrollbars.
+  await page.route('**/__test-scrollbar.css', route => route.fulfill({ contentType: 'text/css', body: '.kanban-board:last-child .has-swimlanes::-webkit-scrollbar { width: 24px; }' }));
+  await page.addStyleTag({ url: new URL('/__test-scrollbar.css', page.url()).href });
+  await lists.last().evaluate(node => { node.style.scrollbarGutter = 'stable'; });
+  await page.setViewportSize({ width: 1300, height: 900 });
+  await expect.poll(async () => {
+    const headerRight = await page.locator('.swimlane-headers').evaluate(node => node.getBoundingClientRect().right);
+    const contentRight = await lists.last().evaluate(node => node.getBoundingClientRect().left + node.clientLeft + node.clientWidth);
+    return headerRight - contentRight;
+  }).toBeLessThanOrEqual(1);
+
+  // Shared-header links are outside the scrollports but still route the wheel to them.
+  await page.locator('.swimlane-headers a').first().hover();
+  await page.mouse.wheel(0, 120);
+  await expect.poll(() => lists.evaluateAll(nodes => nodes.every(node => node.scrollTop > 0 && node.scrollTop === nodes[0].scrollTop))).toBe(true);
+  await expect.poll(async () => {
+    const headerTop = await page.locator('.swimlane-headers > [data-lane="219"]').evaluate(node => node.getBoundingClientRect().top);
+    const sectionTop = await lane(page, 1, 219).evaluate(node => node.getBoundingClientRect().top);
+    return Math.abs(headerTop - sectionTop);
+  }).toBeLessThanOrEqual(1);
+  // Verify the gutter stays clear during scrolling, not only at initial layout.
+  const remainingGutter = await page.locator('.swimlane-headers').evaluate(node => {
+    const list = document.querySelector('.kanban-board:last-child .has-swimlanes');
+    return list.getBoundingClientRect().right - node.getBoundingClientRect().right;
+  });
+  expect(remainingGutter).toBeGreaterThanOrEqual(23);
   // Hiding the scrollbar must not disable wheel or keyboard scrolling.
   await lists.first().hover();
   await page.mouse.wheel(0, 260);

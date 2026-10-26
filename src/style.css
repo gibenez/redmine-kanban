@@ -163,7 +163,17 @@ input::placeholder { color: var(--secondary); opacity: 1; }
 .search-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; height: 16px; }
 .search-heading label { flex: none; }
 #filtered { margin: 0; }
-#board { flex: 1; min-height: 0; min-width: 0; }
+#board { position: relative; flex: 1; min-height: 0; min-width: 0; }
+.swimlane-headers { position: absolute; overflow: hidden; pointer-events: none; z-index: 2; }
+.swimlane-headers > .swimlane-heading { position: absolute; left: 0; width: 100%; pointer-events: none; background: var(--content); border-bottom: 1px solid var(--line); }
+.swimlane-headers a, .swimlane-headers button, .swimlane-headers summary { pointer-events: auto; }
+.swimlane-headers > .swimlane-heading:nth-child(odd) { background: var(--sidebar); }
+.swimlane-section > .swimlane-heading { visibility: hidden; }
+.issue-tag { display: inline-block; padding: 0 5px; border-radius: 3px; background: var(--tag); color: var(--text); font-size: 12px; line-height: 20px; overflow-wrap: anywhere; }
+.lane-tags, #editor-tags { display: flex; flex-wrap: wrap; gap: 4px; }
+#editor-tags { margin-bottom: 12px; }
+.lane-tracker { color: var(--secondary); }
+.lane-priority, .lane-tracker { flex: none; }
 
 /* Board: YouTrack separates columns with hairlines over a flat canvas rather than drawing
    each column as a rounded panel. jKanban writes pixel widths and margins inline; the
@@ -229,8 +239,10 @@ input::placeholder { color: var(--secondary); opacity: 1; }
 .swimlane-section { background: var(--content); border-bottom: 1px solid var(--line); }
 .swimlane-section:nth-child(odd) { background: var(--sidebar); }
 .swimlane-heading { padding: 10px 8px; box-sizing: border-box; font-size: 12px; line-height: 18px; }
-.swimlane-title-row { display: flex; align-items: flex-start; gap: 8px; }
-.swimlane-title-row strong { flex: 1; min-width: 0; padding: 3px 0; font-weight: 600; }
+.swimlane-title-row { display: flex; align-items: center; gap: 8px; }
+.swimlane-title-row strong { min-width: 0; padding: 3px 0; font-weight: 600; }
+.swimlane-title-row strong a { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.lane-tags { min-width: 0; }
 .swimlane-heading a { color: var(--link); }
 .swimlane-actions { display: flex; flex: none; gap: 4px; margin-left: auto; }
 .swimlane-actions button { display: inline-grid; place-items: center; width: 24px; height: 24px; min-height: 24px; padding: 0; border-color: transparent; background: transparent; color: var(--secondary); }
@@ -253,12 +265,12 @@ input::placeholder { color: var(--secondary); opacity: 1; }
 }
 .kanban-item:hover { border-color: var(--secondary); border-left-color: var(--stripe, var(--priority-none)); cursor: grab; }
 .kanban-item:active:not(.not-draggable) { cursor: grabbing; }
-.kanban-item.prio-none { --stripe: var(--priority-none); --priority-ink: var(--text); --priority-fill: var(--tag); }
-.kanban-item.prio-low { --stripe: var(--priority-low); --priority-ink: var(--priority-low-ink); --priority-fill: var(--priority-low-fill); }
-.kanban-item.prio-normal { --stripe: var(--priority-normal); --priority-ink: var(--priority-normal-ink); --priority-fill: var(--priority-normal-fill); }
-.kanban-item.prio-high { --stripe: var(--priority-high); --priority-ink: var(--priority-high-ink); --priority-fill: var(--priority-high-fill); }
-.kanban-item.prio-urgent { --stripe: var(--priority-urgent); --priority-ink: var(--priority-urgent-ink); --priority-fill: var(--priority-urgent-fill); }
-.kanban-item.prio-immediate { --stripe: var(--priority-immediate); --priority-ink: var(--priority-immediate-ink); --priority-fill: var(--priority-immediate-fill); }
+.kanban-item.prio-none, .lane-priority.prio-none { --stripe: var(--priority-none); --priority-ink: var(--text); --priority-fill: var(--tag); }
+.kanban-item.prio-low, .lane-priority.prio-low { --stripe: var(--priority-low); --priority-ink: var(--priority-low-ink); --priority-fill: var(--priority-low-fill); }
+.kanban-item.prio-normal, .lane-priority.prio-normal { --stripe: var(--priority-normal); --priority-ink: var(--priority-normal-ink); --priority-fill: var(--priority-normal-fill); }
+.kanban-item.prio-high, .lane-priority.prio-high { --stripe: var(--priority-high); --priority-ink: var(--priority-high-ink); --priority-fill: var(--priority-high-fill); }
+.kanban-item.prio-urgent, .lane-priority.prio-urgent { --stripe: var(--priority-urgent); --priority-ink: var(--priority-urgent-ink); --priority-fill: var(--priority-urgent-fill); }
+.kanban-item.prio-immediate, .lane-priority.prio-immediate { --stripe: var(--priority-immediate); --priority-ink: var(--priority-immediate-ink); --priority-fill: var(--priority-immediate-fill); }
 .kanban-item:focus-within { border-color: var(--accent); }
 .kanban-item.not-draggable, .kanban-item.not-draggable:hover { cursor: default; }
 /* ID and summary share the first line, as on a YouTrack card. */

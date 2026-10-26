@@ -61,6 +61,7 @@
         <div class="search field"><div class="search-heading"><label for="query">Find an issue</label><span id="filtered" class="muted" role="status" aria-live="polite"></span></div><input id="query" type="search" placeholder="Search subject or #ID"></div>
         <div class="field"><label for="tracker">Tracker</label><select id="tracker"><option value="">All trackers</option></select></div>
         <div class="field"><label for="assignee">Assignee</label><select id="assignee"><option value="">Everyone</option></select></div>
+        <div class="field"><label for="backlog-tag">Backlog tag</label><input id="backlog-tag" type="search" placeholder="Exact tag" autocomplete="off"></div>
       </div>
       </details>
       <div id="board" aria-label="Backlog and sprint board"></div>
@@ -102,6 +103,7 @@
     <form id="edit-form">
       <div class="dialog-heading"><h2 id="editor-title">Plan issue</h2><button type="button" id="close-editor" aria-label="Close editor">×</button></div>
       <p id="editor-subject"></p>
+      <div id="editor-tags" aria-label="Tags"></div>
       <p id="editor-notice" role="status" aria-live="polite" hidden></p>
       <p id="editor-warning" class="muted"></p>
       <label for="edit-assignee">Assignment</label><select id="edit-assignee"></select>

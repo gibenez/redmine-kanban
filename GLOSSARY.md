@@ -45,5 +45,8 @@ _Avoid_: Subproject, component
 **Build Sprint Membership**:
 An issue's “relates to” relationship with a Build Sprint. An issue may belong to several Build Sprints; removing one membership preserves the others.
 
+**Tag**:
+A named label attached to a Redmine issue, independent of its Tracker, Priority, Category and Sprint membership. An issue may have several Tags or none.
+
 **Backlog Category Scope**:
 Whether the Backlog is restricted to the selected Category. This is independent of Backlog Scope and does not restrict members shown in the selected Sprint.

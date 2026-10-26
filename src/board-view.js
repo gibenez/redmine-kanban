@@ -59,7 +59,8 @@ export function reconcileBoard(board, definitions) {
         nextSection = section.nextElementSibling;
         // jKanban expects each drop list's parent to identify its status Column.
         section.dataset.id = definition.id;
-        patchMarkup(section.firstElementChild, lane.title, renderedHeadings);
+        // Each Column reserves the row height; one shared heading spans all statuses.
+        section.firstElementChild.setAttribute('aria-hidden', 'true');
         targets.set(lane.id, section.lastElementChild);
       }
       list.classList.add('has-swimlanes');
@@ -92,10 +93,54 @@ export function reconcileBoard(board, definitions) {
     const list = column.querySelector('.kanban-drag');
     return list.classList.contains('has-swimlanes') ? [...list.querySelectorAll('.swimlane-cards')] : [list];
   }));
+  const host = board.container.parentElement;
+  let headers = host.querySelector(':scope > .swimlane-headers');
+  const lanes = definitions.find(column => column.lanes)?.lanes;
+  if (lanes?.length) {
+    if (!headers) {
+      headers = document.createElement('div'); headers.className = 'swimlane-headers'; host.append(headers);
+    }
+    const wanted = new Set(lanes.map(lane => lane.id));
+    for (const heading of [...headers.children]) if (!wanted.has(heading.dataset.lane)) heading.remove();
+    let nextHeading = headers.firstElementChild;
+    for (const lane of lanes) {
+      let heading = [...headers.children].find(node => node.dataset.lane === lane.id);
+      if (!heading) {
+        heading = document.createElement('div'); heading.className = 'swimlane-heading'; heading.dataset.lane = lane.id;
+      }
+      patchMarkup(heading, lane.title, renderedHeadings);
+      if (heading !== nextHeading) headers.insertBefore(heading, nextHeading);
+      nextHeading = heading.nextElementSibling;
+    }
+  } else headers?.remove();
   alignSwimlanes(board.container);
 }
 
+export function positionSwimlaneHeaders(container) {
+  const host = container.parentElement, headers = host.querySelector(':scope > .swimlane-headers');
+  if (!headers) return;
+  const lists = [...container.querySelectorAll('.has-swimlanes')];
+  if (!lists.length) return;
+  const hostRect = host.getBoundingClientRect(), first = lists[0].getBoundingClientRect(), last = lists.at(-1).getBoundingClientRect();
+  headers.style.left = `${first.left - hostRect.left + host.scrollLeft}px`;
+  headers.style.top = `${first.top - hostRect.top + host.scrollTop}px`;
+  // Overlay scrollbars (notably macOS) consume no clientWidth space. Always
+  // leave a 16px clear strip; use the actual gutter when a wider native scrollbar
+  // is present. Measuring only clientWidth lets the overlay paint over the thumb.
+  const lastList = lists.at(-1);
+  const scrollbarGutter = Math.max(16, last.width - lastList.clientLeft - lastList.clientWidth);
+  headers.style.width = `${last.right - first.left - scrollbarGutter}px`;
+  headers.style.height = `${first.height}px`;
+  const sections = [...lists[0].querySelectorAll('.swimlane-section')];
+  for (const heading of headers.children) {
+    const section = sections.find(node => node.dataset.lane === heading.dataset.lane);
+    if (section) heading.style.top = `${section.getBoundingClientRect().top - first.top}px`;
+  }
+}
+
 export function alignSwimlanes(container) {
+  positionSwimlaneHeaders(container);
+  const headers = container.parentElement.querySelector(':scope > .swimlane-headers');
   const rows = new Map();
   for (const section of container.querySelectorAll('.swimlane-section')) {
     section.firstElementChild.style.minHeight = '';
@@ -103,12 +148,14 @@ export function alignSwimlanes(container) {
     const row = rows.get(section.dataset.lane) || [];
     row.push(section); rows.set(section.dataset.lane, row);
   }
-  for (const row of rows.values()) {
-    const headingHeight = Math.max(...row.map(section => section.firstElementChild.getBoundingClientRect().height));
+  for (const [id, row] of rows) {
+    const heading = headers && [...headers.children].find(node => node.dataset.lane === id);
+    const headingHeight = heading ? heading.getBoundingClientRect().height : 0;
     const cardsHeight = Math.max(64, ...row.map(section => section.lastElementChild.getBoundingClientRect().height));
     for (const section of row) {
       section.firstElementChild.style.minHeight = `${headingHeight}px`;
       section.lastElementChild.style.minHeight = `${cardsHeight}px`;
     }
   }
+  positionSwimlaneHeaders(container);
 }

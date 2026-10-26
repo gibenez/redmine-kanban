@@ -30,6 +30,20 @@ const lane = id => ({ id, title: id });
 beforeEach(() => document.body.replaceChildren());
 
 describe('Swimlane reconciliation', () => {
+  it('renders one shared heading, preserves its controls and focus, and removes it when flattening', () => {
+    const board = boardFixture();
+    const lanes = [{ id: '1', title: '<strong>Parent</strong><button>Action</button>' }];
+    const definitions = [definition([], lanes), { ...definition([], [{ id: '1', title: '' }]), id: 'status-2' }];
+    reconcileBoard(board, definitions);
+    expect(document.querySelectorAll('.swimlane-headers > .swimlane-heading')).toHaveLength(1);
+    expect([...board.container.querySelectorAll('.swimlane-section > .swimlane-heading')].every(node => node.textContent === '')).toBe(true);
+    const button = document.querySelector('.swimlane-headers button'); button.focus();
+    reconcileBoard(board, definitions);
+    expect(document.activeElement).toBe(button);
+    expect(document.querySelector('.swimlane-headers button')).toBe(button);
+    reconcileBoard(board, [definition()]);
+    expect(document.querySelector('.swimlane-headers')).toBeNull();
+  });
   it('removes filtered Cards instead of reattaching them when flattening', () => {
     const board = boardFixture();
     reconcileBoard(board, [definition([item(1), item(2)])]);

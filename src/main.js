@@ -1,6 +1,6 @@
 const jKanban = window.jKanban;
 import './style.css';
-import { reconcileBoard, alignSwimlanes } from './board-view.js';
+import { reconcileBoard, alignSwimlanes, positionSwimlaneHeaders } from './board-view.js';
 import { RedmineClient, RedmineError } from './api.js';
 import { validateConfig, isBacklog, effort, movePatch, parseEstimate, assertTransition, matchesPatch, escapeHtml as e } from './domain.js';
 import { PlanningFeed } from './planning-feed.js';
@@ -22,7 +22,8 @@ const mirroredStatusScrolls = new WeakMap();
 // Backlog Scope lives on the Backlog column header, so it is rebuilt with the board
 // rather than read from a persistent control.
 let allUnplannedScope = false;
-const filters = { query: '', tracker: '', assignee: '' };
+const filters = { query: '', tracker: '', assignee: '', tags: [] };
+const tagsMarkup = issue => (issue.tags || []).map(tag => `<span class="issue-tag">${e(tag)}</span>`).join('');
 let categories = [], categoryId = 'none', categoryOnly = true, buildTrackerId;
 let sprintAction = null, laneAncestors = [], laneMembers;
 let laneResizeObserver;
@@ -164,6 +165,7 @@ async function syncFeed(snapshot) {
 function forget() {
   cancelQuery(); feed = null;
   epoch++; clearInterval(timer); api?.dispose(); api = null; busy = loading = dragging = false;
+  filters.tags = []; $('backlog-tag').value = '';
   try { localStorage.removeItem(storageKey); } catch { /* Storage may be disabled. */ }
   $('api-key').value = ''; $('remember').checked = false;
   $('login-form').querySelector('button').disabled = false;
@@ -263,7 +265,8 @@ function laneHeading(lane) {
   const title = lane.parent ? `<a href="${e(linkToIssue(id))}" target="_blank" rel="noopener noreferrer">#${id} — ${e(lane.parent.subject)}</a>` : 'Ungrouped';
   const actions = lane.parent && sprint?.status === 'open' ? `<div class="swimlane-actions"><button type="button" data-add-descendants="${id}" aria-label="Add missing descendants of #${id}" title="Add missing descendants"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M2 3h5M2 7h5M2 11h5M11 6v6M8 9h6"/></svg></button><button type="button" data-remove-lane="${id}" aria-label="Remove Swimlane #${id} from Sprint" title="Remove Swimlane from Sprint"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true" focusable="false"><path d="m4 4 8 8M12 4l-8 8"/></svg></button></div>` : '';
   const empty = !lane.all.length && lane.parent ? '<p class="muted">No descendants in this Sprint.</p>' : '';
-  return `<div class="swimlane-title-row"><strong>${title}</strong>${actions}</div>${empty}${unmappedNotice(lane.visible.filter(issue => !config.columnStatusIds.includes(issue.status.id)))}`;
+  const metadata = lane.parent ? `<span class="lane-tracker">${e(lane.parent.tracker?.name || '')}</span><span class="lane-priority ${priorityClass(lane.parent.priority?.name || '')}"><span class="card-field">${e(lane.parent.priority?.name || '')}</span></span><span class="lane-tags">${tagsMarkup(lane.parent)}</span>` : '';
+  return `<div class="swimlane-title-row"><strong>${title}</strong>${metadata}${actions}</div>${empty}${unmappedNotice(lane.visible.filter(issue => !config.columnStatusIds.includes(issue.status.id)))}`;
 }
 
 function renderBoard() {
@@ -274,7 +277,7 @@ function renderBoard() {
   $('sprint-state').textContent = sprint ? `${sprint.status === 'open' ? 'Open sprint' : 'Closed sprint · read only'}${sprint.due_date ? ` · Due ${sprint.due_date}` : ''}` : buildMode() ? 'Use New sprint to create a Build Sprint in this category.' : 'Create an open target version in Redmine to start planning.';
   const totalsMarkup = `<div><strong>${e(Number(total.hours.toFixed(2)))}</strong><span>estimated hours</span></div><div><strong>${total.count}</strong><span>issues</span></div><div><strong>${total.unestimated}</strong><span>unestimated</span></div>`;
   if ($('totals').innerHTML !== totalsMarkup) $('totals').innerHTML = totalsMarkup;
-  const filtering = Object.values(filters).some(value => String(value).trim());
+  const filtering = ['query', 'tracker', 'assignee'].some(key => String(filters[key]).trim());
   $('filtered').textContent = filtering
     ? `Visible sprint: ${filtered.count} issues · ${Number(filtered.hours.toFixed(2))} h · ${filtered.unestimated} unestimated`
     : '';
@@ -286,7 +289,7 @@ function renderBoard() {
     const items = lanes ? lanes.flatMap(lane => lane.visible.filter(issue => issue.status.id === statusId).map(issue => ({ ...card(issue), lane: lane.id })))
       : visible.filter(issue => selectedMember(issue) && issue.status.id === statusId).map(card);
     boards.push({ id: `status-${statusId}`, title: `${e(statuses.find(status => status.id === statusId).name)} <span class="count">${items.length}</span>`, item: items,
-      lanes: lanes?.map(lane => ({ id: lane.id, title: index === 0 ? laneHeading(lane) : `<span class="muted" aria-hidden="true">${lane.parent ? `#${Number(lane.parent.id)}` : 'Ungrouped'}</span>` })),
+      lanes: lanes?.map(lane => ({ id: lane.id, title: index === 0 ? laneHeading(lane) : '' })),
     });
   }
   if (!lanes) {
@@ -331,7 +334,7 @@ function renderBoard() {
       if (container.scrollTop > 0 && container.scrollTop + container.clientHeight >= container.scrollHeight - 64) void loadMoreBacklog();
     }, { passive: true });
   }
-  renderBacklogFooter(); syncBacklogVisibility(); lock();
+  renderBacklogFooter(); syncBacklogVisibility(); alignSwimlanes(board.container); lock();
   $('empty').hidden = visible.length > 0;
 }
 
@@ -735,6 +738,7 @@ async function openEditor(id) {
     editing = issue;
     $('editor-notice').hidden = true;
     $('editor-title').textContent = `Plan #${issue.id}`; $('editor-subject').textContent = issue.subject;
+    $('editor-tags').innerHTML = tagsMarkup(issue) || '<span class="muted">No tags</span>';
     const people = new Map(members()); if (issue.assigned_to) people.set(issue.assigned_to.id, issue.assigned_to.name);
     options($('edit-assignee'), [['', 'Unassigned'], ...people], issue.assigned_to?.id || '');
     $('edit-estimate').value = issue.estimated_hours ?? '';
@@ -810,7 +814,8 @@ $('login-form').addEventListener('submit', event => { event.preventDefault(); vo
 $('project').addEventListener('change', () => {
   cancelQuery(); feed = newFeed();
   projectId = $('project').value; issues = []; sprint = null; versions = []; memberships = [];
-  Object.assign(filters, { query: '', tracker: '', assignee: '' }); $('query').value = '';
+  Object.assign(filters, { query: '', tracker: '', assignee: '', tags: [] }); $('query').value = '';
+  $('backlog-tag').value = '';
   clearBoardCards(); void refresh(true);
 });
 $('category').addEventListener('change', () => {
@@ -826,7 +831,20 @@ $('refresh').addEventListener('click', () => { notify(''); void refresh(false, t
 for (const [id, field, eventName] of [['query', 'query', 'input'], ['tracker', 'tracker', 'change'], ['assignee', 'assignee', 'change']]) {
   $(id).addEventListener(eventName, () => { filters[field] = $(id).value; scheduleSearch(field === 'query' ? 300 : 0); });
 }
+$('backlog-tag').addEventListener('input', () => {
+  const tag = $('backlog-tag').value.trim();
+  filters.tags = tag ? [tag] : []; scheduleSearch(300);
+});
 $('board').addEventListener('toggle', () => { if (board) alignSwimlanes(board.container); }, { capture: true });
+// Shared headers live outside the status scrollports; wheel over their links and
+// controls must still scroll the synchronized Sprint rows, not strand the pointer.
+$('board').addEventListener('wheel', event => {
+  if (!event.target.closest('.swimlane-headers') || !event.deltaY || event.ctrlKey) return;
+  const list = $('board').querySelector('.has-swimlanes');
+  if (!list) return;
+  event.preventDefault();
+  list.scrollTop += event.deltaY * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? list.clientHeight : 1);
+}, { passive: false });
 $('board').addEventListener('scroll', event => {
   const list = event.target;
   if (!list.classList?.contains('has-swimlanes')) return;
@@ -839,6 +857,7 @@ $('board').addEventListener('scroll', event => {
     other.scrollTop = list.scrollTop;
     mirroredStatusScrolls.set(other, other.scrollTop);
   }
+  if (board) positionSwimlaneHeaders(board.container);
 }, { capture: true, passive: true });
 // jKanban cancels every Card click with preventDefault(). Stop link clicks before
 // that handler, without cancelling native navigation (new tabs, modifiers, Enter).
