@@ -3,7 +3,7 @@ import { groupSwimlanes, loadAncestors, collectHierarchy, groupPlan, executeGrou
 
 const project = { id: 1 };
 const issue = (id, parent, tracker = 'Task', version) => ({ id, project, subject: `Issue ${id}`, tracker: { id: tracker === 'Build' ? 9 : 1, name: tracker }, status: { id: 1 }, ...(parent ? { parent: { id: parent } } : {}), ...(version ? { fixed_version: { id: version } } : {}) });
-const options = { trackers: ['Feature', 'Bug', 'Improvement'], closedStatusIds: [5], trackerId: 9 };
+const options = { trackers: ['Feature', 'Bug', 'Improvement'] };
 const sprint = { id: 10, status: 'open', project };
 
 function fixture() {
@@ -105,24 +105,5 @@ describe('hierarchy planning', () => {
     const { api } = fixture();
     await expect(groupPlan(api, 1, { ...sprint, status: 'closed' }, 1, true, options)).rejects.toThrow('read only');
     expect(api.hierarchyIssue).not.toHaveBeenCalled();
-  });
-  it('preserves unrelated and other Build memberships during removal', async () => {
-    const { api, rows } = fixture();
-    const build = { ...issue(10, null, 'Build'), category: { id: 2 } }; rows.push(build);
-    let relations = [
-      { id: 101, issue_id: 10, issue_to_id: 1, relation_type: 'relates' },
-      { id: 102, issue_id: 2, issue_to_id: 10, relation_type: 'relates' },
-      { id: 103, issue_id: 10, issue_to_id: 3, relation_type: 'blocks' },
-      { id: 104, issue_id: 20, issue_to_id: 1, relation_type: 'relates' },
-    ];
-    api.relations = vi.fn(async () => relations);
-    api.unrelate = vi.fn(async id => { relations = relations.filter(row => row.id !== id); });
-    const selected = { ...sprint, source: 'build', category: { id: 2 } };
-    const plan = await groupPlan(api, 1, selected, 1, false, options);
-    const result = await executeGroup(api, plan, selected, options);
-    expect(result.failed).toEqual([]);
-    expect(api.unrelate.mock.calls).toEqual([[101], [102]]);
-    expect(relations.map(row => row.id)).toEqual([103, 104]);
-    expect(api.update).not.toHaveBeenCalled();
   });
 });

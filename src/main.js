@@ -4,9 +4,7 @@ import { reconcileBoard, alignSwimlanes, positionSwimlaneHeaders } from './board
 import { RedmineClient, RedmineError } from './api.js';
 import { validateConfig, isBacklog, effort, movePatch, parseEstimate, assertTransition, matchesPatch, escapeHtml as e } from './domain.js';
 import { PlanningFeed } from './planning-feed.js';
-import { BuildPlanningFeed } from './build-planning-feed.js';
 import { isSwimlane, loadAncestors, groupSwimlanes, groupPlan, executeGroup } from './swimlanes.js';
-import { buildTracker, asBuildSprint, saveBuildIssue, sprintRelations, sprintTransitions, changeBuildSprintState } from './build-sprints.js';
 
 const $ = id => document.getElementById(id);
 const storageKey = 'redmine-sprint-board.api-key';
@@ -24,21 +22,13 @@ const mirroredStatusScrolls = new WeakMap();
 let allUnplannedScope = false;
 const filters = { query: '', tracker: '', assignee: '', tags: [] };
 const tagsMarkup = issue => (issue.tags || []).map(tag => `<span class="issue-tag">${e(tag)}</span>`).join('');
-let categories = [], categoryId = 'none', categoryOnly = true, buildTrackerId;
-let sprintAction = null, laneAncestors = [], laneMembers;
+let laneAncestors = [], laneMembers;
 let laneResizeObserver;
-const buildMode = () => config?.sprintSource === 'build';
-const newFeed = () => buildMode() ? new BuildPlanningFeed(api) : new PlanningFeed(api);
+const newFeed = () => new PlanningFeed(api);
 const closedStatusIds = () => statuses.filter(status => status.is_closed).map(status => status.id);
-const preferenceKey = name => `redmine-sprint-board.${name}.${projectId}`;
-function preference(name, fallback = null) { try { return localStorage.getItem(preferenceKey(name)) ?? fallback; } catch { return fallback; } }
-function remember(name, value) { try { localStorage.setItem(preferenceKey(name), String(value)); } catch { /* Optional personal preferences. */ } }
-function selectedMember(issue) { return Boolean(sprint) && (buildMode() ? issue.sprintMember : issue.fixed_version?.id === sprint.id); }
+function selectedMember(issue) { return Boolean(sprint) && issue.fixed_version?.id === sprint.id; }
 function isLaneParent(id) {
   return groupSwimlanes(feed?.snapshot.sprintAll || [], [], config.swimlaneTrackers, laneAncestors).some(lane => lane.parent?.id === id);
-}
-function categoryToggle() {
-  return buildMode() ? `<button type="button" class="scope-toggle" data-category-scope aria-label="Filter backlog by category" aria-pressed="${categoryOnly}" title="Show backlog issues only in the selected category.">C</button>` : '';
 }
 
 function renderIdentity(user) {
@@ -89,11 +79,6 @@ function lock() {
   document.querySelectorAll('#workspace select, #workspace input, #workspace button, #edit-form input, #edit-form select, #edit-form button[type="submit"]').forEach(el => { el.disabled = busy || loading; });
   document.querySelectorAll('.plan, .scope-toggle, [data-remove-lane], [data-add-descendants]').forEach(el => { el.disabled = busy || loading || queryLoading || feed?.loadingMore; });
   if ($('backlog-more')) $('backlog-more').disabled = busy || loading || queryLoading || feed?.loadingMore;
-  $('sprint-actions').hidden = !buildMode() || !api || !projectId;
-  $('close-sprint').hidden = sprint?.status !== 'open';
-  $('reopen-sprint').hidden = sprint?.status !== 'closed';
-  for (const id of ['new-sprint', 'close-sprint', 'reopen-sprint']) $(id).disabled = busy || loading || queryLoading || feed?.loadingMore || dragging || !buildTrackerId || blockedProjectId === projectId;
-  $('sprint-form').querySelectorAll('input, select, button').forEach(el => { el.disabled = busy; });
   $('workspace').setAttribute('aria-busy', String(busy || loading || queryLoading));
   $('board').setAttribute('aria-busy', String(loading || queryLoading));
 }
@@ -150,9 +135,9 @@ function toggleScope() {
   // Only the backlog query changes: sprints and memberships stay as they are.
   if (api && feed && projectId) scheduleSearch(0);
 }
-function feedScope() { return { projectId, sprintId: sprint?.id, backlogStatusId: config.backlogStatusId, allUnplanned: allUnplanned(), buildTrackerId, categoryId, categoryOnly, builds: versions }; }
+function feedScope() { return { projectId, sprintId: sprint?.id, backlogStatusId: config.backlogStatusId, allUnplanned: allUnplanned() }; }
 function backlogScope() {
-  return { backlogStatusId: config.backlogStatusId, allUnplanned: allUnplanned(), closedStatusIds: closedStatusIds(), sprintSource: config.sprintSource, buildTrackerId };
+  return { backlogStatusId: config.backlogStatusId, allUnplanned: allUnplanned(), closedStatusIds: closedStatusIds() };
 }
 async function syncFeed(snapshot) {
   const activeFeed = feed, stamp = epoch, revision = queryRevision;
@@ -170,10 +155,10 @@ function forget() {
   $('api-key').value = ''; $('remember').checked = false;
   $('login-form').querySelector('button').disabled = false;
   $('forget-saved').hidden = true;
-  $('editor').close(); editing = null; $('sprint-dialog').close(); sprintAction = null; destroyBoard();
-  issues = []; versions = []; memberships = []; projects = []; categories = []; sprint = null; projectId = ''; blockedProjectId = ''; buildTrackerId = undefined;
+  $('editor').close(); editing = null; destroyBoard();
+  issues = []; versions = []; memberships = []; projects = []; sprint = null; projectId = ''; blockedProjectId = '';
   document.body.classList.remove('board-active');
-  $('notice-dialog').close(); $('help-dialog').close(); $('build-help').hidden = true;
+  $('notice-dialog').close(); $('help-dialog').close();
   $('user-popover').hidePopover(); $('identity').hidden = true;
   $('refresh').hidden = true; $('refresh').disabled = true; $('statusbar').hidden = true; $('updated').textContent = '';
   $('user-avatar').textContent = ''; $('user-avatar').setAttribute('aria-label', 'Account'); $('user-avatar').removeAttribute('title'); $('user-name').textContent = '';
@@ -236,24 +221,8 @@ function card(issue) {
   };
 }
 function renderSprintHeading() {
-  const heading = $('sprint-name');
-  if (!sprint || !buildMode()) {
-    const name = sprint?.name || 'No sprint selected';
-    if (heading.textContent !== name || heading.querySelector('a')) heading.textContent = name;
-    return;
-  }
-  let link = heading.querySelector('a');
-  if (!link) {
-    link = document.createElement('a');
-    link.target = '_blank'; link.rel = 'noopener noreferrer';
-    heading.replaceChildren(document.createTextNode(''), link, document.createTextNode(')'));
-  }
-  const prefix = `${sprint.subject} (`;
-  if (heading.firstChild.textContent !== prefix) heading.firstChild.textContent = prefix;
-  const id = `#${sprint.id}`;
-  if (link.textContent !== id) link.textContent = id;
-  link.href = linkToIssue(sprint.id);
-  link.title = `Open Build Sprint ${id} in Redmine`;
+  const heading = $('sprint-name'), name = sprint?.name || 'No sprint selected';
+  if (heading.textContent !== name) heading.textContent = name;
 }
 
 function unmappedNotice(items) {
@@ -274,7 +243,7 @@ function renderBoard() {
   const visible = issues;
   const total = effort(feed?.snapshot.sprintAll || []), filtered = effort(feed?.snapshot.sprintVisible || []);
   renderSprintHeading();
-  $('sprint-state').textContent = sprint ? `${sprint.status === 'open' ? 'Open sprint' : 'Closed sprint · read only'}${sprint.due_date ? ` · Due ${sprint.due_date}` : ''}` : buildMode() ? 'Use New sprint to create a Build Sprint in this category.' : 'Create an open target version in Redmine to start planning.';
+  $('sprint-state').textContent = sprint ? `${sprint.status === 'open' ? 'Open sprint' : 'Closed sprint · read only'}${sprint.due_date ? ` · Due ${sprint.due_date}` : ''}` : 'Create an open target version in Redmine to start planning.';
   const totalsMarkup = `<div><strong>${e(Number(total.hours.toFixed(2)))}</strong><span>estimated hours</span></div><div><strong>${total.count}</strong><span>issues</span></div><div><strong>${total.unestimated}</strong><span>unestimated</span></div>`;
   if ($('totals').innerHTML !== totalsMarkup) $('totals').innerHTML = totalsMarkup;
   const filtering = ['query', 'tracker', 'assignee'].some(key => String(filters[key]).trim());
@@ -283,7 +252,7 @@ function renderBoard() {
     : '';
   const backlogIds = new Set(feed?.snapshot.backlog.map(issue => issue.id));
   const backlog = visible.filter(issue => backlogIds.has(issue.id));
-  const boards = [{ id: 'backlog', title: `${backlogToggle()}<span class="backlog-label">Backlog</span> <span class="count">${backlog.length} / ${feed?.snapshot.total ?? '?'}</span>${scopeToggle()}${categoryToggle()}`, class: 'backlog-board', item: backlog.map(card) }];
+  const boards = [{ id: 'backlog', title: `${backlogToggle()}<span class="backlog-label">Backlog</span> <span class="count">${backlog.length} / ${feed?.snapshot.total ?? '?'}</span>${scopeToggle()}`, class: 'backlog-board', item: backlog.map(card) }];
   const lanes = config.swimlaneTrackers.length ? groupSwimlanes(feed?.snapshot.sprintAll || [], feed?.snapshot.sprintVisible || [], config.swimlaneTrackers, laneAncestors) : null;
   for (const [index, statusId] of config.columnStatusIds.entries()) {
     const items = lanes ? lanes.flatMap(lane => lane.visible.filter(issue => issue.status.id === statusId).map(issue => ({ ...card(issue), lane: lane.id })))
@@ -403,8 +372,7 @@ async function loadMoreBacklog({ silent = false } = {}) {
     if (!await syncFeed(snapshot)) return;
     renderFilters();
     if (board !== activeBoard) { renderBoard(); return; }
-    // An open issue can also be visible in a selected closed sprint as history.
-    // Deduplicate within Backlog, not across the entire board.
+    // Append only newly loaded Backlog Cards, preserving existing DOM and scroll state.
     for (const issue of snapshot.backlog) if (!board.findBoard('backlog').querySelector(`[data-eid="${Number(issue.id)}"]`)) board.addElement('backlog', card(issue));
     $('empty').hidden = issues.length > 0;
   } catch (error) {
@@ -443,15 +411,13 @@ function scheduleSearch(delay) {
   queryTimer = setTimeout(() => void searchIssues(revision), delay);
 }
 function chooseSprint(previousId) {
-  const available = versions.filter(version => (!buildMode() || String(version.category?.id || 'none') === categoryId) && (version.status === 'open' || ($('closed').checked && version.status === 'closed')));
-  available.sort(buildMode() ? (a, b) => b.id - a.id : (a, b) => (a.due_date || '9999').localeCompare(b.due_date || '9999') || a.name.localeCompare(b.name));
-  const preferred = previousId || (buildMode() ? preference(`sprint.${categoryId}`) : null);
-  sprint = available.find(version => version.id === Number(preferred)) || available.find(version => version.status === 'open') || available[0] || null;
-  if (buildMode() && sprint) remember(`sprint.${categoryId}`, sprint.id);
+  const available = versions.filter(version => version.status === 'open' || ($('closed').checked && version.status === 'closed'));
+  available.sort((a, b) => (a.due_date || '9999').localeCompare(b.due_date || '9999') || a.name.localeCompare(b.name));
+  sprint = available.find(version => version.id === Number(previousId)) || available.find(version => version.status === 'open') || available[0] || null;
   options($('sprint'), available.length ? available.map(version => [version.id, version.name + (version.status === 'closed' ? ' (closed)' : '')]) : [['', 'No open sprints']], sprint?.id || '');
 }
 async function refresh(projectChanged = false, retryDenied = false) {
-  if (!api || busy || loading || dragging || $('editor').open || $('sprint-dialog').open || (blockedProjectId === projectId && !projectChanged && !retryDenied)) return;
+  if (!api || busy || loading || dragging || $('editor').open || (blockedProjectId === projectId && !projectChanged && !retryDenied)) return;
   if (!projectChanged && !retryDenied && (queryLoading || feed?.loadingMore || (!backlogCollapsed && board?.findBoard('backlog').querySelector('.kanban-drag').scrollTop > 0))) return;
   cancelQuery();
   if (projectChanged || retryDenied) notify('');
@@ -459,21 +425,8 @@ async function refresh(projectChanged = false, retryDenied = false) {
   const stamp = epoch;
   try {
     const project = projects.find(item => String(item.id) === projectId);
-    if (buildMode()) {
-      buildTrackerId = buildTracker(project, config.buildTrackerId);
-      categories = await api.projectCategories(projectId);
-      if (stamp !== epoch) return;
-      categories.sort((a, b) => a.name.localeCompare(b.name));
-      const preferred = projectChanged ? preference('category') : categoryId;
-      categoryId = preferred === 'none' || categories.some(c => String(c.id) === preferred) ? preferred : String(categories[0]?.id || 'none');
-      if (projectChanged) categoryOnly = preference('category-only', '1') !== '0';
-      options($('category'), [...categories.map(c => [c.id, c.name]), ['none', 'Uncategorized']], categoryId);
-      remember('category', categoryId);
-    }
     const [newVersions, newMemberships] = await Promise.all([
-      (buildMode()
-        ? api.list('/issues.json', 'issues', { project_id: projectId, subproject_id: '!*', tracker_id: buildTrackerId, status_id: $('closed').checked ? '*' : 'open', sort: 'id:desc' }).then(rows => rows.filter(issue => issue.project.id === Number(projectId) && issue.tracker.id === buildTrackerId).map(issue => asBuildSprint(issue, closedStatusIds())))
-        : api.list(`/projects/${projectId}/versions.json`, 'versions')).catch(error => {
+      api.list(`/projects/${projectId}/versions.json`, 'versions').catch(error => {
         if (error.status === 403) throw new RedmineError(`Cannot load sprints for project "${project?.name || projectId}" (#${projectId}): Redmine returned 403 Forbidden. Check that Issue tracking is enabled and your project role has View issues permission. If both are correct, check plugin or gateway restrictions. Select another project, or click Refresh after access is corrected.`, 403);
         throw error;
       }),
@@ -510,7 +463,7 @@ async function mutateLane(id, add, rootPatch = {}) {
   if (busy || loading || queryLoading || feed?.loadingMore || !api || !sprint) return;
   cancelQuery(); busy = true; lock();
   const stamp = epoch, currentApi = api, selectedSprint = sprint;
-  const options = { trackers: config.swimlaneTrackers, closedStatusIds: closedStatusIds(), trackerId: buildTrackerId, active: () => stamp === epoch };
+  const options = { trackers: config.swimlaneTrackers, active: () => stamp === epoch };
   let message = '', failed = false;
   try {
     const plan = await groupPlan(currentApi, id, selectedSprint, projectId, add, options);
@@ -524,16 +477,13 @@ async function mutateLane(id, add, rootPatch = {}) {
     if (stamp !== epoch) return;
     // The planner may also edit estimates/assignee. Group planning never applies
     // the drop Column's status to the parent or any descendant.
-    const fields = Object.fromEntries(Object.entries(rootPatch).filter(([key]) => !['status_id', 'fixed_version_id', 'sprint_member'].includes(key)));
+    const fields = Object.fromEntries(Object.entries(rootPatch).filter(([key]) => !['status_id', 'fixed_version_id'].includes(key)));
     if (Object.keys(fields).length && !result.failed.length) {
       try {
-        if (buildMode()) await saveBuildIssue(currentApi, id, selectedSprint, fields, options);
-        else {
-          const fresh = await currentApi.issue(id);
-          const changed = Object.fromEntries(Object.entries(fields).filter(([key, value]) => !matchesPatch(fresh, { [key]: value })));
-          if (Object.keys(changed).length) await currentApi.update(id, changed);
-          if (!matchesPatch(await currentApi.issue(id), fields)) throw new Error('Parent fields were not retained.');
-        }
+        const fresh = await currentApi.issue(id);
+        const changed = Object.fromEntries(Object.entries(fields).filter(([key, value]) => !matchesPatch(fresh, { [key]: value })));
+        if (Object.keys(changed).length) await currentApi.update(id, changed);
+        if (!matchesPatch(await currentApi.issue(id), fields)) throw new Error('Parent fields were not retained.');
       } catch (error) { result.failed.push({ id, message: error.message }); }
     }
     failed = result.failed.length > 0;
@@ -560,11 +510,10 @@ async function mutateLane(id, add, rootPatch = {}) {
 
 async function mutate(id, patch) {
   const issue = issues.find(item => item.id === id) || feed?.snapshot.sprintAll.find(item => item.id === id);
-  const membership = buildMode() ? patch.sprint_member : patch.fixed_version_id === sprint?.id ? true : patch.fixed_version_id === null ? false : undefined;
+  const membership = patch.fixed_version_id === sprint?.id ? true : patch.fixed_version_id === null ? false : undefined;
   if (issue && isSwimlane(issue, config.swimlaneTrackers) && membership !== undefined && membership !== selectedMember(issue) && (membership || isLaneParent(id))) {
     return mutateLane(id, membership, patch);
   }
-  if (buildMode()) return mutateBuild(id, patch);
   if (busy || loading || queryLoading || feed?.loadingMore || !api) return;
   if (!Object.keys(patch).length) { renderBoard(); return; }
   cancelQuery(); busy = true; lock();
@@ -601,139 +550,12 @@ async function mutate(id, patch) {
   finally { if (stamp === epoch) { busy = false; lock(); renderFilters(); renderBoard(); void fillBacklogColumn(); } }
 }
 
-async function mutateBuild(id, patch) {
-  if (busy || loading || queryLoading || feed?.loadingMore || !api) return;
-  cancelQuery(); busy = true; lock();
-  const stamp = epoch, currentApi = api;
-  let message, failed = false;
-  try {
-    if (sprint?.status !== 'open') throw new Error('Closed sprints are read only.');
-    await saveBuildIssue(currentApi, id, sprint, patch, { closedStatusIds: closedStatusIds(), trackerId: buildTrackerId });
-    if (stamp !== epoch) return;
-    $('editor').close(); editing = null;
-    message = patch.sprint_member === false
-      ? `Issue #${id} removed from this sprint. Other Build relations, Category and target version are unchanged; another open Build or the backlog scope may keep it out of backlog.`
-      : `Issue #${id} saved in Redmine.`;
-  } catch (error) { failed = true; message = `Save not confirmed: ${error.message}`; }
-  finally {
-    if (stamp === epoch) {
-      try {
-        feed.pageSize = backlogPageSize(); backlogFailed = false;
-        const snapshot = await feed.load(feedScope(), filters);
-        if (stamp === epoch && snapshot) await syncFeed(snapshot);
-      } catch (error) {
-        failed = true; message += ` Board reload failed: ${error.message} Use Refresh before retrying.`;
-        if (stamp === epoch) { issues = []; feed.snapshot = { ...feed.snapshot, backlog: [], sprintAll: [], sprintVisible: [], total: null, hasMore: false }; }
-      }
-      if (stamp === epoch) {
-        busy = false; notify(message, failed); lock(); renderFilters(); renderBoard(); void fillBacklogColumn();
-      }
-    }
-  }
-}
-
-async function openSprintAction(action) {
-  if (!buildMode() || !api || busy || loading || queryLoading || feed?.loadingMore || dragging || !buildTrackerId || blockedProjectId === projectId) return;
-  if (action !== 'new' && !sprint) return;
-  loading = true; lock();
-  const stamp = epoch;
-  const context = { action, projectId, categoryId, trackerId: buildTrackerId, sprint };
-  try {
-    let transitions = [];
-    if (action !== 'new') {
-      const fresh = await api.issue(context.sprint.id);
-      if (stamp !== epoch) return;
-      const closed = closedStatusIds().includes(fresh.status.id);
-      if (closed !== (action === 'reopen')) throw new Error('The sprint state has changed. Refresh before retrying.');
-      transitions = sprintTransitions(fresh, statuses, action === 'close');
-      if (!transitions.length) throw new Error(`Redmine provides no permitted ${action === 'close' ? 'closed' : 'open'} status for this Sprint. Check your workflow and permissions.`);
-    }
-    sprintAction = context;
-    $('sprint-dialog-title').textContent = action === 'new' ? 'New sprint' : action === 'close' ? 'Close sprint' : 'Reopen sprint';
-    $('sprint-context').textContent = `${projects.find(p => String(p.id) === projectId)?.name} · ${categories.find(c => String(c.id) === categoryId)?.name || 'Uncategorized'}${action === 'new' ? '' : ` · ${context.sprint.name}`}`;
-    $('sprint-warning').textContent = action === 'new'
-      ? (categoryId === 'none' ? 'This Sprint will have no Category (Uncategorized). Continue only if that is intentional.' : 'Create a Build Sprint in the selected Project and Category. Redmine supplies defaults for other fields.')
-      : action === 'close' ? 'Close this Sprint? Member issue statuses will not change. Open issues with no other open Sprint may return to the Backlog.'
-        : 'Reopen this Sprint? Member issue statuses will not change.';
-    $('sprint-create-fields').hidden = action !== 'new';
-    $('new-sprint-name').required = action === 'new';
-    $('new-sprint-name').value = ''; $('new-sprint-name').setCustomValidity(''); $('new-sprint-due').value = '';
-    $('sprint-status-field').hidden = transitions.length < 2;
-    options($('sprint-target-status'), transitions.map(s => [s.id, s.name]), transitions[0]?.id || '');
-    $('submit-sprint').textContent = action === 'new' ? 'Create sprint' : action === 'close' ? 'Close sprint' : 'Reopen sprint';
-    $('sprint-dialog-notice').hidden = true;
-    if (action !== 'reopen' || transitions.length > 1) {
-      $('sprint-dialog').showModal();
-      (action === 'new' ? $('new-sprint-name') : transitions.length > 1 ? $('sprint-target-status') : $('submit-sprint')).focus();
-    }
-  } catch (error) { if (stamp === epoch) notify(error.message, true); }
-  finally { if (stamp === epoch) { loading = false; lock(); } }
-  if (stamp === epoch && sprintAction === context && action === 'reopen' && $('sprint-target-status').options.length === 1) await submitSprintAction();
-}
-
-async function submitSprintAction() {
-  if (!sprintAction || busy || loading || !api) return;
-  const context = sprintAction, currentApi = api, stamp = epoch;
-  const name = $('new-sprint-name').value.trim();
-  if (context.action === 'new' && !name) {
-    $('new-sprint-name').setCustomValidity('Enter a Sprint name.'); $('new-sprint-name').reportValidity(); return;
-  }
-  cancelQuery(); busy = true; lock();
-  let message, failed = false, createdId;
-  try {
-    if (context.action === 'new') {
-      const fields = { project_id: Number(context.projectId), tracker_id: context.trackerId, subject: name,
-        ...(context.categoryId === 'none' ? {} : { category_id: Number(context.categoryId) }),
-        ...($('new-sprint-due').value ? { due_date: $('new-sprint-due').value } : {}) };
-      const created = await currentApi.createIssue(fields);
-      if (stamp !== epoch) return;
-      if (!created?.id) throw new Error('Redmine did not return the created issue ID. It may already exist; inspect the Sprint list before creating another.');
-      createdId = created.id;
-      const confirmed = await currentApi.issue(created.id);
-      if (stamp !== epoch) return;
-      if (confirmed.project.id !== Number(context.projectId) || confirmed.tracker.id !== context.trackerId ||
-          String(confirmed.category?.id || 'none') !== context.categoryId || confirmed.subject !== name ||
-          (fields.due_date && confirmed.due_date !== fields.due_date) || closedStatusIds().includes(confirmed.status.id)) {
-        throw new Error(`Build #${created.id} was created, but its requested fields or open status were not retained. Check it in Redmine; do not create a duplicate.`);
-      }
-      sprint = asBuildSprint(confirmed, closedStatusIds());
-      message = `Sprint #${created.id} created in Redmine.`;
-    } else {
-      const confirmed = await changeBuildSprintState(currentApi, context.sprint, Number($('sprint-target-status').value), statuses, context.trackerId);
-      if (stamp !== epoch) return;
-      sprint = asBuildSprint(confirmed, closedStatusIds());
-      message = `Sprint #${confirmed.id} ${context.action === 'close' ? 'closed' : 'reopened'} in Redmine.`;
-    }
-  } catch (error) {
-    if (stamp !== epoch) return;
-    // Validation/permission rejections are safe to correct; never invite an automatic
-    // retry of an ambiguous POST, which could create a duplicate Sprint.
-    if (context.action === 'new' && [403, 422].includes(error.status)) {
-      $('sprint-dialog-notice').textContent = error.message; $('sprint-dialog-notice').hidden = false;
-      busy = false; lock(); return;
-    }
-    failed = true;
-    message = `${createdId ? `Build #${createdId} was created, but verification failed` : 'Sprint change not confirmed'}: ${error.message} Refresh and inspect Redmine before retrying; no automatic retry was attempted.`;
-  }
-  if (stamp !== epoch) return;
-  $('sprint-dialog').close(); sprintAction = null;
-  if (context.action === 'close') $('closed').checked = true;
-  busy = false;
-  const refreshed = await refresh(false, true);
-  if (stamp === epoch) {
-    const reloadFailed = !refreshed;
-    notify(`${message}${reloadFailed ? ' Board reload may have failed; use Refresh before continuing.' : ''}`, failed || reloadFailed);
-    lock();
-  }
-}
-
 async function openEditor(id) {
   if (busy || loading || queryLoading || feed?.loadingMore) return;
   loading = true; lock();
   const stamp = epoch;
   try {
     const issue = await api.issue(id);
-    if (buildMode() && sprint) issue.sprintMember = sprintRelations(await api.relations(sprint.id), id, sprint.id).length > 0;
     if (stamp !== epoch) return;
     editing = issue;
     $('editor-notice').hidden = true;
@@ -774,7 +596,7 @@ async function connect(key, remember) {
     ]);
     if (stamp !== epoch) return;
     config = validateConfig(raw, statusData); statuses = statusData; projects = projectData;
-    feed = newFeed(); $('category-control').hidden = !buildMode(); $('build-help').hidden = !buildMode();
+    feed = newFeed();
     if (!projects.length) throw new Error('No projects are visible to your account.');
     try {
       if (remember) localStorage.setItem(storageKey, key); else localStorage.removeItem(storageKey);
@@ -817,10 +639,6 @@ $('project').addEventListener('change', () => {
   Object.assign(filters, { query: '', tracker: '', assignee: '', tags: [] }); $('query').value = '';
   $('backlog-tag').value = '';
   clearBoardCards(); void refresh(true);
-});
-$('category').addEventListener('change', () => {
-  cancelQuery(); feed = newFeed(); categoryId = $('category').value; remember('category', categoryId);
-  issues = []; sprint = null; void refresh(false, true);
 });
 $('sprint').addEventListener('change', () => {
   cancelQuery(); feed = newFeed();
@@ -867,31 +685,19 @@ $('board').addEventListener('click', event => {
 $('board').addEventListener('click', event => {
   if (event.target.closest('[data-backlog-collapse]')) { toggleBacklog(); return; }
   if (event.target.closest('[data-backlog-scope]')) { toggleScope(); return; }
-  if (event.target.closest('[data-category-scope]')) {
-    categoryOnly = !categoryOnly; remember('category-only', categoryOnly ? '1' : '0'); scheduleSearch(0); return;
-  }
   const removeLane = event.target.closest('[data-remove-lane]');
   if (removeLane) { void mutateLane(Number(removeLane.dataset.removeLane), false); return; }
   const addDescendants = event.target.closest('[data-add-descendants]');
   if (addDescendants) { void mutateLane(Number(addDescendants.dataset.addDescendants), true); return; }
   const button = event.target.closest('[data-edit]'); if (button) void openEditor(Number(button.dataset.edit));
 });
-for (const [id, action] of [['new-sprint', 'new'], ['close-sprint', 'close'], ['reopen-sprint', 'reopen']]) {
-  $(id).addEventListener('click', () => void openSprintAction(action));
-}
-for (const id of ['cancel-sprint', 'dismiss-sprint']) $(id).addEventListener('click', () => {
-  if (!busy) { $('sprint-dialog').close(); sprintAction = null; }
-});
-$('sprint-dialog').addEventListener('cancel', event => { if (busy) event.preventDefault(); else sprintAction = null; });
-$('new-sprint-name').addEventListener('input', () => $('new-sprint-name').setCustomValidity(''));
-$('sprint-form').addEventListener('submit', event => { event.preventDefault(); void submitSprintAction(); });
 $('close-editor').addEventListener('click', () => { if (!busy) { $('editor').close(); editing = null; } });
 $('editor').addEventListener('cancel', event => { if (busy) event.preventDefault(); });
 $('edit-form').addEventListener('submit', event => {
   event.preventDefault(); if (!editing || busy) return;
   try {
     if (sprint?.status !== 'open') throw new Error('Select an open sprint before editing issues.');
-    const patch = { assigned_to_id: $('edit-assignee').value ? Number($('edit-assignee').value) : null, estimated_hours: parseEstimate($('edit-estimate').value), status_id: Number($('edit-status').value), ...(buildMode() ? { sprint_member: $('edit-destination').value === 'sprint' } : { fixed_version_id: $('edit-destination').value === 'sprint' ? sprint.id : null }) };
+    const patch = { assigned_to_id: $('edit-assignee').value ? Number($('edit-assignee').value) : null, estimated_hours: parseEstimate($('edit-estimate').value), status_id: Number($('edit-status').value), fixed_version_id: $('edit-destination').value === 'sprint' ? sprint.id : null };
     void mutate(editing.id, patch);
   } catch (error) { notify(error.message, true); }
 });

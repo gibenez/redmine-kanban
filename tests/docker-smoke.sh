@@ -15,11 +15,17 @@ command -v jq >/dev/null
 REDMINE_URL=https://redmine.example.test BACKLOG_STATUS_ID=1 COLUMN_STATUS_IDS=1,2,3,5 \
   docker compose config --format json | jq -e '.services["sprint-board"].environment.REDMINE_URL == "https://redmine.example.test" and ([.networks[] | .external // false] | all(. == false))' >/dev/null
 docker build -t redmine-sprint-board:test .
-# Build-mode runtime configuration is generated without rebuilding the image.
+# Legacy Build deployments must stop before planning semantics change.
+if docker run --rm --entrypoint /bin/sh -e SPRINT_SOURCE=build redmine-sprint-board:test \
+  -c '/docker-entrypoint.d/40-board-config.sh' >"$tmp/legacy-error" 2>&1; then
+  echo 'Legacy Build configuration was unexpectedly accepted' >&2; exit 1
+fi
+grep -q 'Build-based Sprints are no longer supported' "$tmp/legacy-error"
+# Runtime configuration retains independent Swimlane settings, not removed source settings.
 docker run --rm --entrypoint /bin/sh -e REDMINE_URL=https://redmine.example.test \
   -e BACKLOG_STATUS_ID=1 -e COLUMN_STATUS_IDS=1,2,3,5 \
-  -e SPRINT_SOURCE=build -e BUILD_TRACKER_ID=9 -e 'SWIMLANE_TRACKERS= Story , Bug ' redmine-sprint-board:test \
-  -c '/docker-entrypoint.d/40-board-config.sh && jq -e '\''.sprintSource == "build" and .buildTrackerId == 9 and .swimlaneTrackers == ["Bug", "Story"]'\'' /usr/share/nginx/html/config.json' >/dev/null
+  -e 'SWIMLANE_TRACKERS= Story , Bug ' redmine-sprint-board:test \
+  -c '/docker-entrypoint.d/40-board-config.sh && jq -e '\''(has("sprintSource")|not) and (has("buildTrackerId")|not) and .swimlaneTrackers == ["Bug", "Story"]'\'' /usr/share/nginx/html/config.json' >/dev/null
 docker run --rm --entrypoint /bin/sh -e REDMINE_URL=https://redmine.example.test \
   -e BACKLOG_STATUS_ID=1 -e COLUMN_STATUS_IDS=1,2,3,5 -e SWIMLANE_TRACKERS= redmine-sprint-board:test \
   -c '/docker-entrypoint.d/40-board-config.sh && jq -e '\''.swimlaneTrackers == []'\'' /usr/share/nginx/html/config.json' >/dev/null
@@ -42,12 +48,13 @@ curl -fsS -D "$tmp/proxy-headers" -H 'X-Redmine-API-Key: smoke-key' -H 'Cookie: 
 ! grep -qi 'Set-Cookie:' "$tmp/proxy-headers"
 grep -qi 'Content-Security-Policy: sandbox' "$tmp/proxy-headers"
 [[ "$(curl -s -o /dev/null -w '%{http_code}' "$base/redmine/users.json")" == 404 ]]
-curl -fsS -X POST -H 'Content-Type: application/json' -d '{"issue":{"project_id":1,"tracker_id":9,"subject":"Sprint"}}' "$base/redmine/issues.json" | jq -e '.method == "POST" and .path == "/redmine/issues.json"' >/dev/null
+[[ "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$base/redmine/issues.json")" == 404 ]]
 curl -fsS -X PUT -H 'Content-Type: application/json' -d '{"issue":{"estimated_hours":1}}' "$base/redmine/issues/1.json" | jq -e '.method == "PUT"' >/dev/null
-curl -fsS "$base/redmine/projects/1.json?include=issue_categories" | jq -e '.method == "GET" and .path == "/redmine/projects/1.json?include=issue_categories"' >/dev/null
-curl -fsS "$base/redmine/issues/1/relations.json" | jq -e '.method == "GET"' >/dev/null
-curl -fsS -X POST -H 'Content-Type: application/json' -d '{"relation":{"issue_to_id":2,"relation_type":"relates"}}' "$base/redmine/issues/1/relations.json" | jq -e '.method == "POST"' >/dev/null
-curl -fsS -X DELETE "$base/redmine/relations/1.json" | jq -e '.method == "DELETE"' >/dev/null
+[[ "$(curl -s -o /dev/null -w '%{http_code}' "$base/redmine/projects/1.json?include=issue_categories")" == 404 ]]
+[[ "$(curl -s -o /dev/null -w '%{http_code}' "$base/redmine/issues/1/relations.json")" == 404 ]]
+[[ "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$base/redmine/issues/1/relations.json")" == 404 ]]
+[[ "$(curl -s -o /dev/null -w '%{http_code}' -X DELETE "$base/redmine/relations/1.json")" == 404 ]]
+[[ "$(curl -s -o /dev/null -w '%{http_code}' "$base/redmine/enumerations/issue_priorities.json")" == 404 ]]
 [[ "$(curl -s -o /dev/null -w '%{http_code}' -X DELETE "$base/redmine/issues/1.json")" == 404 ]]
 [[ "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$base/redmine/projects/1.json")" == 404 ]]
 [[ "$(curl -s -o /dev/null -w '%{http_code}' "$base/redmine/projects/1/issue_categories.json")" == 404 ]]

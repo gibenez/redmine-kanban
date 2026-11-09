@@ -1,5 +1,7 @@
 # Category-scoped Build issue sprints
 
+Superseded by [version-only Sprints](../version-only-sprints/spec.md) and [ADR 0003](../../docs/adr/0003-version-only-sprints.md). The original requirements below are retained as history, not current product scope.
+
 Confirmed with the user before implementation.
 
 ## Behavior

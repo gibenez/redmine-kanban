@@ -1,5 +1,7 @@
 # Support Build issues as sprint containers without changing target versions
 
+Status: superseded by [ADR 0003](0003-version-only-sprints.md).
+
 Some Redmine projects contain independently released modules identified by Category, with each release represented by a Build issue rather than a project target version. Add an opt-in Build sprint source using symmetric “relates to” relationships instead of repurposing target versions or changing issue hierarchy; version-based planning remains the default.
 
 Membership is intentionally nonexclusive: removing an issue from one sprint removes only that sprint's relates link. Closed Build links are retained as history and do not prevent backlog eligibility. Categories narrow sprint selection and, optionally, backlog visibility, but do not constrain the category of a sprint member. Target versions and unrelated relation types must never be modified in Build mode.

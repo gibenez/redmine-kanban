@@ -4,6 +4,25 @@ import { resolveConfig } from 'vite';
 // Exercise Vite's actual startup validation, including Docker's default BASE_PATH=/.
 afterEach(() => vi.unstubAllEnvs());
 
+describe('legacy Sprint configuration', () => {
+  it('rejects an explicitly configured Build source during startup', async () => {
+    vi.stubEnv('SPRINT_SOURCE', 'build');
+    await expect(resolveConfig({ configFile: 'vite.config.js' }, 'serve')).rejects.toThrow('Build-based Sprints are no longer supported');
+  });
+  it('does not emit obsolete configuration for the version source', async () => {
+    vi.stubEnv('SPRINT_SOURCE', 'version');
+    vi.stubEnv('BUILD_TRACKER_ID', '9');
+    const config = await resolveConfig({ configFile: 'vite.config.js' }, 'serve');
+    const use = vi.fn();
+    config.plugins.find(plugin => plugin.name === 'board-development-config').configureServer({ middlewares: { use } });
+    const response = { setHeader: vi.fn(), end: vi.fn() };
+    use.mock.calls[0][1]({ method: 'GET' }, response, vi.fn());
+    const generated = JSON.parse(response.end.mock.calls[0][0]);
+    expect(generated).not.toHaveProperty('sprintSource');
+    expect(generated).not.toHaveProperty('buildTrackerId');
+  });
+});
+
 describe('Vite Swimlane configuration', () => {
   it.each([
     [' Feature, Bug ,Improvement ', ['Feature', 'Bug', 'Improvement']],

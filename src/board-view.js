@@ -1,5 +1,5 @@
-// Reconcile within each Column: an issue may legitimately appear in both Backlog and
-// a closed Sprint. Never key Cards globally or replace the board to apply a Filter.
+// Reconcile within each Column to preserve Card identity and scroll state.
+// Never replace the board to apply a Filter.
 const renderedCards = new WeakMap();
 const renderedHeadings = new WeakMap();
 

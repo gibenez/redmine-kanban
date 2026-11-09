@@ -8,21 +8,19 @@ export function validateConfig(raw, statuses) {
     if (!statuses.some(status => status.id === id)) throw new Error(`Configured status ${id} is not available in Redmine.`);
   }
   if (statuses.find(s => s.id === backlogStatusId).is_closed) throw new Error('The backlog status must not be a closed status.');
-  const sprintSource = raw.sprintSource || 'version';
-  if (!['version', 'build'].includes(sprintSource)) throw new Error('sprintSource must be version or build.');
-  const buildTrackerId = raw.buildTrackerId == null || raw.buildTrackerId === '' ? null : Number(raw.buildTrackerId);
-  if (buildTrackerId !== null && (!Number.isInteger(buildTrackerId) || buildTrackerId <= 0)) throw new Error('buildTrackerId must be a positive tracker ID.');
+  if (raw.sprintSource && raw.sprintSource !== 'version') throw new Error('Build-based Sprints are no longer supported. Remove sprintSource/SPRINT_SOURCE and buildTrackerId/BUILD_TRACKER_ID from deployment configuration. Sprints now use target versions; existing Redmine data is not migrated.');
+  const { sprintSource, buildTrackerId, ...current } = raw;
   const swimlaneTrackers = raw.swimlaneTrackers ?? ['Feature', 'Bug', 'Improvement'];
   if (!Array.isArray(swimlaneTrackers) || swimlaneTrackers.some(name => typeof name !== 'string' || !name.trim())) throw new Error('swimlaneTrackers must be a list of nonempty tracker names.');
   const publicUrl = new URL(raw.redminePublicUrl, window.location.origin);
   if (!['http:', 'https:'].includes(publicUrl.protocol) || publicUrl.username || publicUrl.password || publicUrl.search || publicUrl.hash) throw new Error('redminePublicUrl must be an HTTP(S) URL without credentials, a query, or a fragment.');
-  return { ...raw, sprintSource, buildTrackerId, swimlaneTrackers: [...new Set(swimlaneTrackers.map(name => name.trim()))], backlogStatusId, columnStatusIds, redminePublicUrl: publicUrl.href.replace(/\/$/, ''), refreshSeconds: Math.max(15, Number(raw.refreshSeconds) || 60) };
+  return { ...current, swimlaneTrackers: [...new Set(swimlaneTrackers.map(name => name.trim()))], backlogStatusId, columnStatusIds, redminePublicUrl: publicUrl.href.replace(/\/$/, ''), refreshSeconds: Math.max(15, Number(raw.refreshSeconds) || 60) };
 }
 
 // The Backlog is every OPEN unplanned issue, narrowed to the configured New status unless
 // the Backlog Scope is widened. Closed unplanned issues are never shown.
-export function isBacklog(issue, { backlogStatusId, allUnplanned = false, closedStatusIds = [], sprintSource = 'version', buildTrackerId }) {
-  if (sprintSource === 'build' ? issue.tracker.id === buildTrackerId || issue.openBuildIds?.length : issue.fixed_version) return false;
+export function isBacklog(issue, { backlogStatusId, allUnplanned = false, closedStatusIds = [] }) {
+  if (issue.fixed_version) return false;
   if (closedStatusIds.includes(issue.status.id)) return false;
   return allUnplanned ? !closedStatusIds.includes(issue.status.id) : issue.status.id === backlogStatusId;
 }
@@ -31,12 +29,11 @@ export function effort(issues) {
 }
 export function movePatch(issue, target, sprint) {
   if (sprint?.status !== 'open') throw new Error('Select an open sprint before changing issues.');
-  if (target === 'backlog') return sprint.source === 'build' ? { sprint_member: false } : issue.fixed_version ? { fixed_version_id: null } : {};
+  if (target === 'backlog') return issue.fixed_version ? { fixed_version_id: null } : {};
   const match = /^status-(\d+)$/.exec(target);
   if (!match) throw new Error('Unknown board column.');
   const patch = {};
-  if (sprint.source === 'build') patch.sprint_member = true;
-  else if (issue.fixed_version?.id !== sprint.id) patch.fixed_version_id = sprint.id;
+  if (issue.fixed_version?.id !== sprint.id) patch.fixed_version_id = sprint.id;
   if (issue.status.id !== Number(match[1])) patch.status_id = Number(match[1]);
   return patch;
 }

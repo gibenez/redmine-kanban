@@ -9,7 +9,7 @@ The planning surface showing one project's Backlog alongside that project's Colu
 _Avoid_: Kanban board, agile board, task board
 
 **Sprint**:
-A planning container represented either by a Redmine target version or by a Build issue. A Build Sprint belongs to a Category and is closed when its issue is closed.
+A planning container represented by a Redmine target version.
 _Avoid_: Iteration, milestone, version
 
 **Column**:
@@ -28,7 +28,7 @@ _Avoid_: Column, bucket
 The section of a Sprint containing Cards that do not belong to a Swimlane.
 
 **Unplanned**:
-An issue with no Sprint in version-based planning, or no open Build Sprint membership in Build-based planning.
+An issue with no Sprint.
 _Avoid_: Unassigned, loose, orphan
 
 **Backlog**:
@@ -38,15 +38,5 @@ _Avoid_: Inbox, icebox
 **Backlog Scope**:
 Whether the Backlog shows only Unplanned issues in the configured New status, or every open Unplanned issue.
 
-**Category**:
-A module within a project, such as Web or Mobile, with its own Build Sprints. Uncategorized denotes issues with no Category.
-_Avoid_: Subproject, component
-
-**Build Sprint Membership**:
-An issue's “relates to” relationship with a Build Sprint. An issue may belong to several Build Sprints; removing one membership preserves the others.
-
 **Tag**:
 A named label attached to a Redmine issue, independent of its Tracker, Priority, Category and Sprint membership. An issue may have several Tags or none.
-
-**Backlog Category Scope**:
-Whether the Backlog is restricted to the selected Category. This is independent of Backlog Scope and does not restrict members shown in the selected Sprint.

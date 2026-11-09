@@ -3,6 +3,7 @@ import { defineConfig, loadEnv } from 'vite';
 
 export default defineConfig(({ mode }) => {
   const env = { ...loadEnv(mode, process.cwd(), ''), ...process.env };
+  if (env.SPRINT_SOURCE && env.SPRINT_SOURCE !== 'version') throw new Error('Build-based Sprints are no longer supported. Remove SPRINT_SOURCE and BUILD_TRACKER_ID; existing Redmine data is not migrated.');
   const redmineUrl = env.REDMINE_URL || 'http://localhost:3000';
   // Optional deployment prefix (e.g. "/redmine-kanban"); defaults to site root.
   const basePrefix = String(env.BASE_PATH || '').replace(/^\/+|\/+$/g, '');
@@ -14,8 +15,6 @@ export default defineConfig(({ mode }) => {
     backlogStatusId: env.BACKLOG_STATUS_ID ? Number(env.BACKLOG_STATUS_ID) : defaults.backlogStatusId,
     columnStatusIds: env.COLUMN_STATUS_IDS ? env.COLUMN_STATUS_IDS.split(',').map(Number) : defaults.columnStatusIds,
     refreshSeconds: env.REFRESH_SECONDS ? Number(env.REFRESH_SECONDS) : defaults.refreshSeconds,
-    sprintSource: env.SPRINT_SOURCE || defaults.sprintSource,
-    buildTrackerId: env.BUILD_TRACKER_ID ? Number(env.BUILD_TRACKER_ID) : defaults.buildTrackerId,
     swimlaneTrackers: env.SWIMLANE_TRACKERS === undefined ? defaults.swimlaneTrackers : env.SWIMLANE_TRACKERS.split(',').map(name => name.trim()).filter(Boolean),
   };
   return {

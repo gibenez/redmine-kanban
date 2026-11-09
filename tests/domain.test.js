@@ -15,6 +15,12 @@ describe('deployment configuration', () => {
     expect(validateConfig({ ...config, swimlaneTrackers: [' Story ', 'Bug', 'Story'] }, statuses).swimlaneTrackers).toEqual(['Story', 'Bug']);
     expect(validateConfig({ ...config, swimlaneTrackers: [] }, statuses).swimlaneTrackers).toEqual([]);
   });
+  it('rejects legacy Build configuration instead of silently reinterpreting planning', () => {
+    expect(() => validateConfig({ ...config, sprintSource: 'build', buildTrackerId: 9 }, statuses)).toThrow('Build-based Sprints are no longer supported');
+    const validated = validateConfig({ ...config, sprintSource: 'version', buildTrackerId: 9 }, statuses);
+    expect(validated).not.toHaveProperty('sprintSource');
+    expect(validated).not.toHaveProperty('buildTrackerId');
+  });
   it.each([
     { swimlaneTrackers: 'Feature,Bug' }, { swimlaneTrackers: [''] }, { swimlaneTrackers: [1] },
     { columnStatusIds: [] }, { columnStatusIds: [1, 1] }, { backlogStatusId: 5 }, { columnStatusIds: [999] },
@@ -23,6 +29,12 @@ describe('deployment configuration', () => {
 });
 
 describe('planning semantics', () => {
+  it('treats former Build containers and related work as ordinary version-planned issues', () => {
+    const formerBuild = { ...issue, tracker: { id: 9, name: 'Build' }, openBuildIds: [42] };
+    expect(isBacklog(formerBuild, { backlogStatusId: 1 })).toBe(true);
+    expect(isBacklog({ ...formerBuild, fixed_version: { id: 10, status: 'closed' } }, { backlogStatusId: 1 })).toBe(false);
+    expect(movePatch(formerBuild, 'status-2', sprint)).toEqual({ fixed_version_id: 10, status_id: 2 });
+  });
   it('backlog means unplanned, narrowed to New unless the scope is widened', () => {
     const narrow = { backlogStatusId: 1, allUnplanned: false, closedStatusIds: [5] };
     const wide = { ...narrow, allUnplanned: true };

@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 
-async function setup(page, mode = 'version', deniedId) {
+async function setup(page, deniedId) {
   const statuses = [{ id: 1, name: 'New' }, { id: 2, name: 'Doing' }, { id: 5, name: 'Done', is_closed: true }, { id: 8, name: 'Waiting' }];
   const versions = [{ id: 100, name: 'Sprint 100', status: 'open', due_date: '2027-01-01' }, { id: 99, name: 'Previous', status: 'open', due_date: '2027-02-01' }];
   const base = { project: { id: 1, name: 'Team' }, tracker: { id: 2, name: 'Task' }, priority: { id: 1, name: 'Normal' }, allowed_statuses: statuses, estimated_hours: null };
@@ -13,18 +13,11 @@ async function setup(page, mode = 'version', deniedId) {
     make(6, 'Waiting child', 8, 1),
     { ...make(7, 'Independent work', 2), fixed_version: versions[0] },
     { ...make(8, 'Foreign child', 1, 1), project: { id: 2, name: 'Other' } },
-    ...versions.map(version => ({ ...make(version.id, version.name), tracker: { id: 9, name: 'Build' } })),
-  ];
-  let nextRelation = 10;
-  let relations = [
-    { id: 1, issue_id: 100, issue_to_id: 7, relation_type: 'relates' },
-    { id: 2, issue_id: 99, issue_to_id: 2, relation_type: 'relates' },
-    { id: 3, issue_id: 100, issue_to_id: 1, relation_type: 'blocks' },
   ];
   const writes = [];
   await page.route('**/config.json', route => route.fulfill({ json: {
     redminePublicUrl: 'https://redmine.example.test', backlogStatusId: 1, columnStatusIds: [1, 2, 5],
-    sprintSource: mode, buildTrackerId: 9, refreshSeconds: 60, swimlaneTrackers: ['Feature', 'Bug', 'Improvement'],
+    refreshSeconds: 60, swimlaneTrackers: ['Feature', 'Bug', 'Improvement'],
   } }));
   await page.route('**/redmine/**', async route => {
     const request = route.request(), url = new URL(request.url()), path = url.pathname.replace('/redmine', ''), method = request.method();
@@ -33,23 +26,9 @@ async function setup(page, mode = 'version', deniedId) {
     if (path === '/users/current.json') return send({ user: { id: 1, firstname: 'Team', lastname: 'Member' } });
     if (path === '/issue_statuses.json') return send({ issue_statuses: statuses });
     if (path === '/projects.json') return send({ projects: [{ id: 1, name: 'Team', trackers: [{ id: 1, name: 'Feature' }, { id: 2, name: 'Task' }, { id: 3, name: 'Bug' }, { id: 9, name: 'Build' }] }] });
-    if (path === '/projects/1.json') return send({ project: { id: 1, issue_categories: [] } });
     if (path.endsWith('/memberships.json')) return send({ memberships: [] });
     if (path.endsWith('/versions.json')) return send({ versions });
     if (path.startsWith('/versions/')) return send({ version: versions.find(version => version.id === Number(path.match(/\d+/)[0])) });
-    if (path === '/enumerations/issue_priorities.json') return send({ issue_priorities: [{ id: 1, name: 'Normal' }] });
-    if (path.startsWith('/relations/')) {
-      const id = Number(path.match(/\d+/)[0]); writes.push({ method, relation: relations.find(row => row.id === id) });
-      relations = relations.filter(row => row.id !== id); return route.fulfill({ status: 204, body: '' });
-    }
-    if (/^\/issues\/\d+\/relations.json$/.test(path)) {
-      const id = Number(path.match(/\d+/)[0]);
-      if (method === 'GET') return send({ relations: relations.filter(row => row.issue_id === id || row.issue_to_id === id) });
-      const relation = { id: nextRelation++, issue_id: id, ...request.postDataJSON().relation };
-      writes.push({ method, relation });
-      if (relation.issue_to_id === deniedId) return route.fulfill({ status: 403, json: {} });
-      relations.push(relation); return send({ relation });
-    }
     if (path === '/issues.json') {
       const params = url.searchParams;
       let selected = rows.filter(row => row.project.id === Number(params.get('project_id')));
@@ -79,7 +58,7 @@ async function setup(page, mode = 'version', deniedId) {
   await page.getByLabel('Personal API key').fill('personal-key');
   await page.getByRole('button', { name: 'Connect to Redmine' }).click();
   await expect(page.locator('#updated')).toContainText('Updated');
-  return { rows, writes, relations: () => relations, make };
+  return { rows, writes, make };
 }
 
 const lane = (page, status = 1, id = 1) => page.locator(`.kanban-board[data-id="status-${status}"] .swimlane-section[data-lane="${id}"]`);
@@ -91,10 +70,9 @@ async function plan(page) {
   await expect(page.locator('#workspace')).toHaveAttribute('aria-busy', 'false');
 }
 
-for (const mode of ['version', 'build']) {
-  test(`${mode}: planning explodes descendants without changing statuses; removal respects other memberships`, async ({ page }) => {
+  test('planning explodes descendants without changing statuses; removal clears version membership', async ({ page }) => {
     const errors = []; page.on('pageerror', error => errors.push(error.message));
-    const fixture = await setup(page, mode); await plan(page);
+    const fixture = await setup(page); await plan(page);
     await expect(lane(page, 2).locator('[data-eid="2"]')).toBeVisible();
     await expect(lane(page, 1).locator('[data-eid="3"]')).toBeVisible();
     await expect(lane(page, 5).locator('[data-eid="4"]')).toBeVisible();
@@ -118,14 +96,8 @@ for (const mode of ['version', 'build']) {
     await expect(page.locator('#notice')).toContainText('5 issues removed from Sprint');
     await expect(page.locator('.swimlane-section[data-lane="1"]')).toHaveCount(0);
     expect(fixture.rows.find(row => row.id === 2).status.id).toBe(2);
-    if (mode === 'build') {
-      expect(fixture.relations().some(row => row.id === 2)).toBe(true);
-      expect(fixture.relations().some(row => row.id === 3)).toBe(true);
-      expect(fixture.writes.some(write => write.patch && 'fixed_version_id' in write.patch)).toBe(false);
-    }
     expect(errors).toEqual([]);
   });
-}
 
 test('refresh is read-only; missing descendants are added explicitly; empty Swimlanes remain', async ({ page }) => {
   const fixture = await setup(page); await plan(page);
@@ -163,7 +135,7 @@ test('individual Cards change status without changing hierarchy or siblings', as
 });
 
 test('partial group failures report the issue and reload observed memberships without rollback', async ({ page }) => {
-  const fixture = await setup(page, 'version', 2); await plan(page);
+  const fixture = await setup(page, 2); await plan(page);
   await expect(page.locator('#notice')).toContainText('Failed: #2');
   await expect(lane(page, 2).locator('[data-eid="2"]')).toHaveCount(0);
   await expect(lane(page, 5).locator('[data-eid="4"]')).toBeVisible();
@@ -255,9 +227,8 @@ test('Swimlane actions are icon-only, labelled, and right-aligned beside a wrapp
   await expect(remove).toBeFocused();
 });
 
-for (const mode of ['version', 'build']) {
-  test(`${mode}: tags appear only in Card detail and shared Swimlane headers; tag filtering affects Backlog only`, async ({ page }) => {
-    const fixture = await setup(page, mode);
+  test('tags appear only in Card detail and shared Swimlane headers; tag filtering affects Backlog only', async ({ page }) => {
+    const fixture = await setup(page);
     fixture.rows.find(row => row.id === 1).tags = ['(447) Adria', '<tag>'];
     fixture.rows.find(row => row.id === 2).tags = ['child-tag'];
     fixture.rows.push({ ...fixture.make(20, 'Tagged backlog issue'), tags: ['(447) Adria'] }, { ...fixture.make(21, 'Other tagged backlog issue'), tags: ['foo'] });
@@ -301,7 +272,6 @@ for (const mode of ['version', 'build']) {
     await expect(page.locator('.kanban-board[data-id="backlog"] [data-eid="20"]')).toBeVisible();
     expect(tagRequests).toHaveLength(0);
   });
-}
 
 test('focusing the exact-tag field never loads a catalogue or scans issues', async ({ page }) => {
   await setup(page);

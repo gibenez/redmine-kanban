@@ -1,5 +1,4 @@
 import { matchesPatch } from './domain.js';
-import { saveBuildIssue, sprintRelations } from './build-sprints.js';
 
 export const isSwimlane = (issue, trackers) => trackers.includes(issue.tracker?.name);
 
@@ -68,22 +67,11 @@ export async function groupPlan(api, rootId, sprint, projectId, add, options) {
   const hierarchy = await collectHierarchy(api, rootId, projectId);
   const root = hierarchy.issues.find(issue => issue.id === rootId);
   if (!root || !isSwimlane(root, options.trackers)) throw new Error('The Swimlane parent has changed. Refresh before retrying.');
-  let selected;
-  if (sprint.source === 'build') {
-    const build = await api.issue(sprint.id);
-    if (options.closedStatusIds.includes(build.status.id) || build.tracker.id !== options.trackerId || build.project.id !== Number(projectId) || build.category?.id !== sprint.category?.id) throw new Error('The Sprint has changed. Refresh before planning.');
-    selected = new Set((await api.relations(sprint.id)).flatMap(relation => {
-      const id = relation.issue_id === sprint.id ? relation.issue_to_id : relation.issue_id;
-      return sprintRelations([relation], id, sprint.id).length ? [id] : [];
-    }));
-  } else {
-    const { version } = await api.request(`/versions/${sprint.id}.json`);
-    if (version.status !== 'open') throw new Error('This Sprint is no longer open. Refresh before planning.');
-    selected = new Set(hierarchy.issues.filter(issue => issue.fixed_version?.id === sprint.id).map(issue => issue.id));
-  }
-  if (sprint.source === 'build' && hierarchy.issues.some(issue => issue.tracker.id === options.trackerId)) throw new Error('A Build Sprint cannot itself be planned as a member.');
+  const { version } = await api.request(`/versions/${sprint.id}.json`);
+  if (version.status !== 'open') throw new Error('This Sprint is no longer open. Refresh before planning.');
+  const selected = new Set(hierarchy.issues.filter(issue => issue.fixed_version?.id === sprint.id).map(issue => issue.id));
   const targets = hierarchy.issues.filter(issue => add ? !selected.has(issue.id) : selected.has(issue.id));
-  const replacements = sprint.source === 'build' || !add ? [] : targets.filter(issue => issue.fixed_version && issue.fixed_version.id !== sprint.id);
+  const replacements = !add ? [] : targets.filter(issue => issue.fixed_version && issue.fixed_version.id !== sprint.id);
   return { ...hierarchy, targets, replacements, root, add };
 }
 
@@ -94,22 +82,18 @@ export async function executeGroup(api, plan, sprint, options) {
   for (const issue of plan.targets) {
     if (options.active && !options.active()) break;
     try {
-      if (sprint.source === 'build') {
-        await saveBuildIssue(api, issue.id, sprint, { sprint_member: plan.add }, options);
-      } else {
-        const fresh = await api.issue(issue.id);
-        if (fresh.project.id !== plan.root.project.id) throw new Error('Issue moved to another project.');
-        // Removal must never clear membership that changed to a different Sprint.
-        if (!plan.add && fresh.fixed_version?.id !== sprint.id) throw new Error('Sprint membership changed; removal skipped.');
-        if (plan.add && fresh.fixed_version?.id !== issue.fixed_version?.id) throw new Error('Sprint membership changed; refresh and confirm again.');
-        const { version } = await api.request(`/versions/${sprint.id}.json`);
-        if (version.status !== 'open') throw new Error('Sprint is no longer open.');
-        const patch = { fixed_version_id: plan.add ? sprint.id : null };
-        let failure;
-        try { await api.update(issue.id, patch); } catch (error) { failure = error; }
-        const confirmed = await api.issue(issue.id);
-        if (failure || !matchesPatch(confirmed, patch)) throw new Error(`${failure?.message || 'Membership not retained.'} Observed Sprint: ${confirmed.fixed_version?.id || 'none'}.`);
-      }
+      const fresh = await api.issue(issue.id);
+      if (fresh.project.id !== plan.root.project.id) throw new Error('Issue moved to another project.');
+      // Removal must never clear membership that changed to a different Sprint.
+      if (!plan.add && fresh.fixed_version?.id !== sprint.id) throw new Error('Sprint membership changed; removal skipped.');
+      if (plan.add && fresh.fixed_version?.id !== issue.fixed_version?.id) throw new Error('Sprint membership changed; refresh and confirm again.');
+      const { version } = await api.request(`/versions/${sprint.id}.json`);
+      if (version.status !== 'open') throw new Error('Sprint is no longer open.');
+      const patch = { fixed_version_id: plan.add ? sprint.id : null };
+      let failure;
+      try { await api.update(issue.id, patch); } catch (error) { failure = error; }
+      const confirmed = await api.issue(issue.id);
+      if (failure || !matchesPatch(confirmed, patch)) throw new Error(`${failure?.message || 'Membership not retained.'} Observed Sprint: ${confirmed.fixed_version?.id || 'none'}.`);
       succeeded.push(issue.id);
     } catch (error) { failed.push({ id: issue.id, message: error.message }); }
   }
