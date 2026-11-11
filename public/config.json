@@ -1,6 +1,7 @@
 {
   "redminePublicUrl": "http://localhost:3000",
   "backlogStatusId": 1,
+  "sprintFieldId": null,
   "columnStatusIds": [1, 2, 3, 5],
   "refreshSeconds": 60,
   "swimlaneTrackers": ["Feature", "Bug", "Improvement"]

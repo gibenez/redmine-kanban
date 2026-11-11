@@ -7,6 +7,7 @@ services:
     environment:
       REDMINE_URL: ${REDMINE_URL:?Set your Redmine instance URL in .env}
       BACKLOG_STATUS_ID: ${BACKLOG_STATUS_ID:?Set the New status ID in .env}
+      SPRINT_FIELD_ID: ${SPRINT_FIELD_ID:?Set the Sprint Version custom field ID in .env}
       COLUMN_STATUS_IDS: ${COLUMN_STATUS_IDS:?Set ordered column status IDs in .env}
       REFRESH_SECONDS: ${REFRESH_SECONDS:-60}
       # Cutover guard only: reject an obsolete Build-mode deployment instead of silently switching it.

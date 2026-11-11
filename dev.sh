@@ -15,7 +15,7 @@ fi
 
 if [ ! -f .env ]; then
   cp .env.example .env
-  printf '%s\n' 'Created .env from .env.example. Set REDMINE_URL and the actual status IDs, then rerun ./dev.sh.'
+  printf '%s\n' 'Created .env from .env.example. Set REDMINE_URL, SPRINT_FIELD_ID and the actual status IDs, then rerun ./dev.sh.'
   exit 0
 fi
 

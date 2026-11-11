@@ -6,7 +6,7 @@ A frontend-only sprint planner for one team. [jKanban](https://github.com/riktar
 
 - Redmine **5.0+**, with REST API enabled under Administration → Settings → API.
 - Each user supplies their own API key from their Redmine account page. Existing Redmine sessions are not reused.
-- At least one visible project. Create target versions in Redmine to use as Sprints.
+- A visible Product Project with versions shared with its module subprojects, plus a dedicated **Version custom issue field** for Sprint membership, supporting multiple values (see setup below).
 - Docker Compose. The board can run anywhere that can reach your Redmine URL; no shared Docker network or access to Redmine's Docker setup is required.
 - HTTPS for the board and public Redmine URLs outside local development. Terminate board TLS at your existing ingress/reverse proxy.
 
@@ -14,7 +14,7 @@ A frontend-only sprint planner for one team. [jKanban](https://github.com/riktar
 
 ```sh
 cp .env.example .env
-# Edit .env: REDMINE_URL=https://your-redmine.example.com and actual status IDs.
+# Edit .env: REDMINE_URL, SPRINT_FIELD_ID and actual status IDs.
 docker compose up --build -d
 ```
 
@@ -26,6 +26,7 @@ Open `http://localhost:8080` locally. For production, route your HTTPS ingress t
 | --- | --- |
 | `REDMINE_URL` | Your existing Redmine URL, e.g. `https://redmine.example.com/redmine`. Used for both API requests and issue links. Must be reachable from the board container and users' browsers. No trailing slash. |
 | `BACKLOG_STATUS_ID` | Actual ID of your **New** status. |
+| `SPRINT_FIELD_ID` | Required positive ID of the Version custom issue field used for Sprint membership. Multiple values supported; no Target-version fallback. |
 | `COLUMN_STATUS_IDS` | Comma-separated status IDs in board order, e.g. `1,2,3,5`. These examples are not universal Redmine defaults. |
 | `REFRESH_SECONDS` | Active-tab refresh interval; default 60, minimum 15. |
 | `SWIMLANE_TRACKERS` | Comma-separated exact tracker names; default `Feature,Bug,Improvement`. Trimmed, case-sensitive; unknown names have no effect. Set empty to disable Swimlanes. |
@@ -69,39 +70,41 @@ Successful login verifies the API key, not access to every project. In stock Red
 
 The board identifies the denied project, clears unavailable data, and pauses automatic refresh after a 403 rather than repeatedly requesting forbidden data. Choose another project, or click **Refresh** after access is corrected. It cannot grant permissions or bypass a Redmine denial. A forbidden membership-list request is handled separately by limiting assignee choices; it does not block the whole board.
 
-## Upgrading from Build-issue Sprints
+## Sprint field setup and upgrading
 
-Sprints now use **target versions only**. Remove `SPRINT_SOURCE` and `BUILD_TRACKER_ID` from `.env`/container environment, and `sprintSource` and `buildTrackerId` from custom browser configuration. Recreate the container or restart the development server. An explicit legacy Build source stops startup/connection with a configuration error rather than silently changing planning semantics. Compose forwards the obsolete source setting solely for this cutover check; it is no longer a supported planning option.
+1. In Redmine Administration, create an **issue custom field of format Version**, with **multiple values enabled** to let issues belong to several Sprints. Enable **Used as a filter**, visibility for board users, and availability on the desired product/module projects and trackers. Roles must be able to edit it for planning. Scalar single-value fields remain supported, but cannot accept an additional Sprint without enabling multiple values.
+2. Set its actual numeric ID as `SPRINT_FIELD_ID` (or `sprintFieldId` in custom browser configuration). This is one shared deployment setting, not a per-project or per-user mapping. The shipped browser configuration deliberately has no usable default.
+3. Create product planning versions on the Product Project, shared with descendants (or broader). Ensure the custom field's version choices/status restrictions allow those versions on module issues. One product version is one Sprint; module releases remain in standard **Target version**.
+4. Recreate the container or restart development after configuration changes. Explicitly populate the new field in Redmine where existing work should remain planned.
 
-No Redmine data is migrated or deleted. Existing Build issues, relations, Categories and target-version assignments remain intact. Build relationships no longer determine planning: an issue without a target version may appear in Backlog according to its status, and an issue with a target version belongs to that Sprint. Former Build-container issues are ordinary issues, with no special tracker exclusion. Review and replan in Redmine as needed before cutover; multiple Build memberships cannot be automatically represented by one target version.
+No data is migrated, copied or deleted: existing Target versions remain module-release data and never determine Sprint membership. An empty Sprint field means Unplanned; arrays of version IDs represent multiple Sprint memberships. Issues whose API response omits the field are excluded from the board and descendant planning, including when omission is caused by visibility permissions. Present malformed values remain errors. The board checks returned values and write retention, but ordinary users cannot discover all custom-field metadata in stock Redmine; an administrator must verify the field format, filter setting and allowed choices. A filter that Redmine silently ignores is rejected when returned memberships contradict it.
 
-Category selection, Backlog Category Scope and in-board Sprint creation/closing/reopening are removed. Manage versions in Redmine. Old browser category/Build selection preferences are unused and are never interpreted as version IDs; API keys and shared view preferences are preserved. Independent Swimlanes and tracker filters remain supported. See [ADR 0003](docs/adr/0003-version-only-sprints.md).
+Build-issue relation-based Sprints remain retired. Remove `SPRINT_SOURCE`, `BUILD_TRACKER_ID`, `sprintSource` and `buildTrackerId`; explicit legacy Build mode is rejected. Existing Build issues, relations and Categories remain untouched. Manage versions in Redmine; no Sprint lifecycle, Category selection or relation-write controls are provided. See [ADR 0004](docs/adr/0004-product-sprints-and-context-only-swimlanes.md).
 
 ## Swimlane planning
 
-Issues with a tracker named in `SWIMLANE_TRACKERS` become horizontal **Swimlanes** when planned. The equivalent browser configuration is `swimlaneTrackers: ["Feature", "Bug", "Improvement"]` (or `[]` to disable).
+Issues with trackers named in `SWIMLANE_TRACKERS` render as **Swimlane headings** when their own Sprint field contains the selected Sprint. The equivalent browser setting is `swimlaneTrackers: ["Feature", "Bug", "Improvement"]` (or `[]` to disable).
 
-- Drop a qualifying Backlog issue into any Sprint Column, or use its Card planner: the parent and all visible same-project descendants join the Sprint, including completed descendants. **Statuses stay unchanged**; the drop Column does not change the group's status. Planning confirms before replacing another target-version Sprint.
-- The parent has one horizontal header spanning all status Columns: linked `#ID — subject`, Tracker, Priority and Tags, with both actions at the far right. It is not a duplicate Card. Descendants appear once in their existing status Columns. Nested qualifying descendants remain Cards in the topmost qualifying member's Swimlane. Empty Swimlanes remain visible. Rows alternate between subtle neutral background shades in both light and dark mode; other Sprint Cards appear under **Ungrouped**.
-- No status Columns are added. Issues outside configured statuses appear as an expandable list of issue links and status names in the Swimlane header (or Ungrouped). Filters affect descendant Cards and this notice, but retain parent context.
-- Cards can be moved between status Columns or independently removed without changing their parent or siblings. Dropping a Card over a different Swimlane does not reparent it; its hierarchy determines its Swimlane.
-- Refresh never writes membership. New or individually removed descendants join only through **Add missing descendants**. Hierarchy changes made in Redmine are reflected on refresh.
-- **Remove** requests confirmation, then removes the parent and all current same-project descendants that belong to the selected Sprint. It does not delete issues, reset statuses, clear another target version, or change issue relations.
-- Cross-project descendants are excluded with a warning. A hierarchy read failure stops group planning before writes. As with individual saves, permissions and concurrent changes may cause partial results: successes and failures are reported and the board reloads without automatic retries or rollback. Only issues visible to your account can be read or changed.
+- Each Sprint Card groups beneath its **nearest qualifying ancestor that also belongs to the selected Sprint**, at any depth. Without one it appears under **Ungrouped**. Parent and child memberships are independent; loading an ancestor never grants membership.
+- Every planned qualifying parent creates a heading, even without planned children. Parents not in the selected Sprint remain available in Backlog, including when their children are planned elsewhere. Nested planned parents each create their own heading. Search filters retain planned heading context.
+- Open parent shortcuts are shown by default, regardless of New status. The **Show closed** icon includes closed shortcuts and remembers the choice locally. Closed parents can always supply Sprint headings; the toggle never admits closed ordinary Backlog work.
+- Drag a Backlog parent or use its planner to plan **only that issue**, just like an ordinary issue. Append the selected Sprint while preserving other Sprint values; the drop Column may change that issue's status. Children and siblings are never written implicitly.
+- Headings show linked `#ID — subject`, Tracker, Priority and Tags. They are non-draggable and have no bulk-add/removal buttons. Individual Cards remain independently editable/removable; dropping across Swimlanes does not reparent them. Issues outside displayed statuses remain available through the expandable heading notice.
+- All inclusion is determined by each issue's own field. Missing-field issues are skipped, and no descendant-planning operation remains. Individual writes recheck project scope and Sprint openness, preserve other Sprint values, and verify retention without automatic retry or rollback.
 
 ## How version-based planning works
 
-- Select a project and a sprint (Redmine target version). The board excludes subprojects.
-- **Backlog = no target version.** By default it is narrowed to the configured New status; use the **Show all unplanned** eye toggle at the right of the Backlog column header (crossed out while narrowed) to widen it to every open status with no target version. Closed issues never appear in the backlog, and issues assigned to any version are never backlog. The setting is a personal view preference: it is remembered per browser, is not a filter, and **Show all unplanned** survives clearing the search and filters.
+- Select a Product Project and a Sprint (a version owned by that project and shared with descendants). The board includes the project and all nested subprojects, not unrelated projects sharing the same version.
+- **Ordinary Backlog Cards = empty Sprint custom field.** By default they are narrowed to the configured New status; **Show all unplanned** widens to every open status. Target version has no effect. Swimlane-capable Backlog issues follow the separate visibility rules above. Backlog Scope is remembered per browser, is not a filter, and survives clearing searches.
 - The backlog requests **one page sized to its visible column**, measured from the rendered card height plus two spare rows, so a tall screen fills in a single request and a short one stays small. Scrolling near the bottom requests another page of the same size. Its header shows loaded / total matching issues; without a Tag filter it never downloads the whole backlog just to filter or count it. Each page is re-measured, so a page may differ in size from the one before it when the layout changes.
 - Sprint columns represent configured Redmine statuses. Completed issues remain visible. Issues with unconfigured statuses appear in an expandable header notice rather than another Column.
-- Drag from backlog to a sprint column to set the target version and, if different, status. Drag between sprint columns to change status.
-- Moving to backlog **only clears the target version**. It does not reset status. The issue consequently leaves this board when its status is outside the current backlog scope, with an explicit explanation; with **Show all unplanned** on, only closed issues leave.
+- Drag an ordinary Card from Backlog to a Sprint Column to set the Sprint custom field and, if different, status. Drag between Sprint Columns to change status.
+- Moving to Backlog **removes only the selected Sprint**, preserving other Sprint values, status and Target version. The issue returns to Backlog only when no Sprint values remain and its status meets the Backlog Scope. Status changes affect the same issue in every Sprint containing it.
 - The Backlog header's chevron collapses it into a narrow rail, freeing space for Sprint Columns. Expand it with the rail's chevron. This is a browser-local preference shared across projects; it does not change issues, membership or filters. Hidden Backlog Cards and controls are inaccessible, extra backlog pages are not automatically loaded while collapsed, and dragging into Backlog requires expanding it first. The Card planner can still remove Sprint membership.
 - Use **Plan** on a card for keyboard-accessible sprint/status changes, assignee editing, and estimated hours. Blank hours mean unestimated; zero is a real estimate.
 - **Search, Tracker and Assignee filters run on Redmine**, before pagination, for both backlog and sprint results. Text searches the subject; a number or `#123` searches that exact issue ID. Tracker and assignee (including Unassigned) predicates are combined with the search. Search is debounced by 300 ms; superseded requests are aborted and late responses ignored. Filter changes restart the backlog at its first page of matching issues. The last confirmed cards remain visible while searching; results update in place without rebuilding the board or unchanged cards. A failed search keeps those results with an explicit message.
 - **Backlog tag** accepts one exact, case-sensitive Tag name and leaves Sprint results unchanged. Clear the input to remove the filter. There is no catalogue, autocomplete request or multi-select; focusing the input makes no network requests. Changes are debounced by 300 ms. Redmine cannot filter Tags through its issue JSON API, so applying a tag filter scans candidate pages client-side until it fills a page of matches or reaches the end; sparse matches may require scanning the whole candidate stream. The matching total is `?` until all matches have been displayed. Tags are read-only in Card detail and Swimlane headers, never on Cards; issues without Tags remain supported. See [the API notes](docs/redmine-api-tags.md).
-- Effort totals count all sprint issues, independently of filters. The board loads the selected sprint's complete issue set for those totals and reuses it while filtering; only the backlog is lazy-paginated. Filtered sprint issues are queried separately and show a labeled visible-sprint total only while search, Tracker or Assignee filters are active, avoiding duplicate totals in the unfiltered view. Parent and child estimates are summed as returned by Redmine; no hierarchy deduplication or capacity model is applied.
+- Effort totals count all Sprint members, including planned Swimlane parents, independently of filters. The board loads the complete Sprint set and reuses it while filtering. Ordinary Backlog Cards are lazy-paginated; Swimlane-capable Backlog issues are loaded separately. Ancestor reads connect planned Cards to planned headings but never change membership. Filtered Sprint totals appear only with search, Tracker or Assignee filters. No capacity model is applied.
 - Redmine sorts issues by priority order, highest first, then ascending issue ID, before paging. Vertical drag order is not persisted. Tracker filter choices come from project metadata rather than only the loaded page; assignees come from visible memberships and known issue assignees.
 - Open versions are selectable by default. Opt in to closed sprints for read-only viewing. Locked versions are excluded.
 - Create issues and versions, edit detailed fields, and manage workflow in Redmine.
@@ -126,7 +129,7 @@ Cards return to their original location immediately after a drop and move only a
 
 Refresh runs while the tab is visible and pauses during dragging, editing, saves, searches, page loads, or while the backlog is scrolled away from the top, so it does not disrupt reading the list. Manual **Refresh** resets the backlog to its first page of matches. A confirmed write also reloads that first page so changed membership/order cannot leave an invalid pagination cursor. Failed lazy-page requests keep their offset; because a column already scrolled to its bottom cannot raise another scroll event, a **Retry loading issues** button appears in the backlog footer until the page succeeds.
 
-Project/sprint selection is locked during metadata loads and saves, but remains available while a search is pending; changing scope discards the old search/page response. The server's current target-version state is checked before writes, so a newly closed sprint cannot be knowingly edited from a stale view. Redmine uses offset pagination, not a snapshot: concurrent changes elsewhere can still shift page boundaries; duplicate IDs are suppressed, and Refresh starts a fresh result set.
+Project/sprint selection is locked during metadata loads and saves, but remains available while a search is pending; changing scope discards the old search/page response. The product version's current state is checked before writes, so a newly closed Sprint cannot be knowingly edited from a stale view. Membership changes are rechecked before planning writes. Redmine uses offset pagination, not a snapshot: concurrent changes elsewhere can still shift page boundaries; duplicate IDs are suppressed, and Refresh starts a fresh result set.
 
 This is **not transactional conflict detection**: another editor can race a read or update. No force-write/retry loop is used. If a write response or confirmation is lost, it may already have succeeded; the board says "Save not confirmed" and asks you to refresh before retrying. Redmine journals remain the authoritative history.
 
@@ -150,7 +153,7 @@ With Docker Desktop (or Docker Engine with Compose v2) running:
 ./dev.sh
 ```
 
-On first run, the script creates `.env` if missing and asks you to configure `REDMINE_URL` and the actual status IDs. It preserves an existing `.env`. Rerun the script after configuring it, then open **http://localhost:5173** once Vite is ready (set `DEV_PORT` to use another port).
+On first run, the script creates `.env` if missing and asks you to configure `REDMINE_URL`, `SPRINT_FIELD_ID` and the actual status IDs. It preserves an existing `.env`. Rerun the script after configuring it, then open **http://localhost:5173** once Vite is ready (set `DEV_PORT` to use another port).
 
 The script runs `docker compose --profile dev watch dev`, which builds the `dev` target of the same `Dockerfile` and runs Vite inside it. Compose copies your edits under `src/`, `public/` and `index.html` into the running container, and Vite refreshes the browser. Editing `vite.config.js` restarts the server; changing `package-lock.json` rebuilds the image. No host Node installation is needed, and `npm install` is not required on the host.
 

@@ -1,12 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { validateConfig, isBacklog, effort, movePatch, parseEstimate, assertTransition, matchesPatch, escapeHtml } from '../src/domain.js';
+import { validateConfig, isBacklog, effort, movePatch, parseEstimate, assertTransition, matchesPatch, escapeHtml, sprintValue, sprintValues, membershipPatch, sprintPatch, projectScope } from '../src/domain.js';
 
 const statuses = [{ id: 1, name: 'New', is_closed: false }, { id: 2, name: 'Open', is_closed: false }, { id: 5, name: 'Done', is_closed: true }];
 const sprint = { id: 10, status: 'open' };
-const issue = { id: 8, subject: 'Ship a feature', status: statuses[0], tracker: { id: 1 }, priority: { id: 2 }, estimated_hours: null };
+const issue = { id: 8, custom_fields: [{ id: 7, value: '' }], subject: 'Ship a feature', status: statuses[0], tracker: { id: 1 }, priority: { id: 2 }, estimated_hours: null };
 
 describe('deployment configuration', () => {
-  const config = { backlogStatusId: 1, columnStatusIds: [1, 2, 5], redminePublicUrl: 'https://redmine.example.test/subpath' };
+  const config = { sprintFieldId: 7, backlogStatusId: 1, columnStatusIds: [1, 2, 5], redminePublicUrl: 'https://redmine.example.test/subpath' };
   it('validates IDs against actual statuses and preserves deployment paths', () => {
     expect(validateConfig(config, statuses)).toMatchObject({ backlogStatusId: 1, refreshSeconds: 60, redminePublicUrl: config.redminePublicUrl });
   });
@@ -25,33 +25,34 @@ describe('deployment configuration', () => {
     { swimlaneTrackers: 'Feature,Bug' }, { swimlaneTrackers: [''] }, { swimlaneTrackers: [1] },
     { columnStatusIds: [] }, { columnStatusIds: [1, 1] }, { backlogStatusId: 5 }, { columnStatusIds: [999] },
     { backlogStatusId: -1 }, { redminePublicUrl: 'javascript:alert(1)' }, { redminePublicUrl: 'https://secret@redmine.test' },
+    { sprintFieldId: null }, { sprintFieldId: -1 }, { sprintFieldId: 1.5 },
   ])('rejects unsafe or invalid mappings: %j', overrides => expect(() => validateConfig({ ...config, ...overrides }, statuses)).toThrow());
 });
 
 describe('planning semantics', () => {
   it('treats former Build containers and related work as ordinary version-planned issues', () => {
     const formerBuild = { ...issue, tracker: { id: 9, name: 'Build' }, openBuildIds: [42] };
-    expect(isBacklog(formerBuild, { backlogStatusId: 1 })).toBe(true);
-    expect(isBacklog({ ...formerBuild, fixed_version: { id: 10, status: 'closed' } }, { backlogStatusId: 1 })).toBe(false);
-    expect(movePatch(formerBuild, 'status-2', sprint)).toEqual({ fixed_version_id: 10, status_id: 2 });
+    expect(isBacklog(formerBuild, { sprintFieldId: 7, backlogStatusId: 1 })).toBe(true);
+    expect(isBacklog({ ...formerBuild, fixed_version: { id: 10, status: 'closed' } }, { sprintFieldId: 7, backlogStatusId: 1 })).toBe(true);
+    expect(movePatch(formerBuild, 'status-2', sprint, 7)).toEqual({ ...sprintPatch(7, 10), status_id: 2 });
   });
   it('backlog means unplanned, narrowed to New unless the scope is widened', () => {
-    const narrow = { backlogStatusId: 1, allUnplanned: false, closedStatusIds: [5] };
+    const narrow = { sprintFieldId: 7, backlogStatusId: 1, allUnplanned: false, closedStatusIds: [5] };
     const wide = { ...narrow, allUnplanned: true };
     expect(isBacklog(issue, narrow)).toBe(true);
     expect(isBacklog({ ...issue, status: statuses[1] }, narrow)).toBe(false);
     expect(isBacklog({ ...issue, status: statuses[1] }, wide)).toBe(true);
     // Widening admits every OPEN status; closed unplanned issues stay off the board.
     expect(isBacklog({ ...issue, status: statuses[2] }, wide)).toBe(false);
-    expect(isBacklog({ ...issue, fixed_version: sprint }, narrow)).toBe(false);
-    expect(isBacklog({ ...issue, fixed_version: sprint }, wide)).toBe(false);
+    expect(isBacklog({ ...issue, ...sprintPatch(7, 10) }, narrow)).toBe(false);
+    expect(isBacklog({ ...issue, ...sprintPatch(7, 10) }, wide)).toBe(false);
   });
   it('commits and changes status in one explicit move', () => {
-    expect(movePatch(issue, 'status-2', sprint)).toEqual({ fixed_version_id: 10, status_id: 2 });
-    expect(movePatch({ ...issue, fixed_version: sprint }, 'status-1', sprint)).toEqual({});
+    expect(movePatch(issue, 'status-2', sprint, 7)).toEqual({ ...sprintPatch(7, 10), status_id: 2 });
+    expect(movePatch({ ...issue, ...sprintPatch(7, 10) }, 'status-1', sprint, 7)).toEqual({});
   });
   it('removing in-progress work does NOT reset its status', () => {
-    expect(movePatch({ ...issue, status: statuses[1], fixed_version: sprint }, 'backlog', sprint)).toEqual({ fixed_version_id: null });
+    expect(movePatch({ ...issue, status: statuses[1], ...sprintPatch(7, 10) }, 'backlog', sprint, 7)).toEqual(sprintPatch(7, null));
   });
   it('rejects writes to closed sprints or unmapped drop targets', () => {
     expect(() => movePatch(issue, 'backlog', { ...sprint, status: 'closed' })).toThrow();
@@ -63,10 +64,32 @@ describe('planning semantics', () => {
     expect(() => assertTransition({ ...issue, allowed_statuses: statuses }, { status_id: 2 })).not.toThrow();
   });
   it('detects fields silently ignored by Redmine', () => {
-    expect(matchesPatch(issue, { fixed_version_id: null, estimated_hours: null, status_id: 1 })).toBe(true);
+    expect(matchesPatch(issue, { ...sprintPatch(7, null), estimated_hours: null, status_id: 1 })).toBe(true);
     expect(matchesPatch(issue, { assigned_to_id: 9 })).toBe(false);
     expect(matchesPatch({ ...issue, estimated_hours: 0 }, { estimated_hours: 0 })).toBe(true);
     expect(matchesPatch(issue, { estimated_hours: 0 })).toBe(false);
+  });
+  it('rejects missing and malformed membership without using Target version', () => {
+    for (const fields of [undefined, [], [{ id: 7, value: ['invalid'] }], [{ id: 7, value: 'invalid' }]]) {
+      expect(() => sprintValue({ ...issue, custom_fields: fields, fixed_version: sprint }, 7)).toThrow();
+    }
+    expect(sprintValue({ ...issue, fixed_version: sprint }, 7)).toBeNull();
+    expect(matchesPatch({ ...issue, ...sprintPatch(7, 11) }, sprintPatch(7, 10))).toBe(false);
+  });
+  it('reads multiple Sprint values, appends and removes only the selected Sprint', () => {
+    const multiple = { ...issue, custom_fields: [{ id: 7, multiple: true, value: ['20', '10'] }] };
+    expect(sprintValues(multiple, 7)).toEqual([10, 20]);
+    expect(movePatch(multiple, 'status-1', sprint, 7)).toEqual({});
+    expect(movePatch(multiple, 'backlog', sprint, 7)).toEqual(sprintPatch(7, [20]));
+    expect(membershipPatch(multiple, 7, 30, true)).toEqual(sprintPatch(7, [10, 20, 30]));
+    expect(membershipPatch(multiple, 7, 10, true)).toEqual(sprintPatch(7, [10, 20]));
+    expect(matchesPatch(multiple, sprintPatch(7, [20, 10]))).toBe(true);
+    expect(matchesPatch(multiple, sprintPatch(7, [10]))).toBe(false);
+    expect(isBacklog({ ...issue, custom_fields: [{ id: 7, multiple: true, value: [] }] }, { sprintFieldId: 7, backlogStatusId: 1 })).toBe(true);
+    expect(membershipPatch({ ...issue, custom_fields: [{ id: 7, value: ['10'] }] }, 7, 10, false)).toEqual(sprintPatch(7, []));
+  });
+  it('includes all nested projects but not unrelated version-sharing projects', () => {
+    expect(projectScope([{ id: 3, parent: { id: 2 } }, { id: 2, parent: { id: 1 } }, { id: 4 }], 1)).toEqual([1, 2, 3]);
   });
 });
 

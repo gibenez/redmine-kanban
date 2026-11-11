@@ -13,6 +13,7 @@ export default defineConfig(({ mode }) => {
     ...defaults,
     redminePublicUrl: redmineUrl,
     backlogStatusId: env.BACKLOG_STATUS_ID ? Number(env.BACKLOG_STATUS_ID) : defaults.backlogStatusId,
+    sprintFieldId: env.SPRINT_FIELD_ID ? Number(env.SPRINT_FIELD_ID) : defaults.sprintFieldId,
     columnStatusIds: env.COLUMN_STATUS_IDS ? env.COLUMN_STATUS_IDS.split(',').map(Number) : defaults.columnStatusIds,
     refreshSeconds: env.REFRESH_SECONDS ? Number(env.REFRESH_SECONDS) : defaults.refreshSeconds,
     swimlaneTrackers: env.SWIMLANE_TRACKERS === undefined ? defaults.swimlaneTrackers : env.SWIMLANE_TRACKERS.split(',').map(name => name.trim()).filter(Boolean),

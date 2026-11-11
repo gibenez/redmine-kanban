@@ -4,19 +4,19 @@ import { test, expect } from '@playwright/test';
 test.beforeEach(async ({ page }) => {
   await page.route('**/config.json', async route => {
     const response = await route.fetch();
-    await route.fulfill({ json: { ...await response.json(), swimlaneTrackers: [] } });
+    await route.fulfill({ json: { ...await response.json(), sprintFieldId: 7, swimlaneTrackers: [] } });
   });
 });
 
 async function setup(page, { deny = false, ignored = false, denyVersions = false, user = { id: 7, firstname: 'Team', lastname: 'Member' } } = {}) {
   const statuses = [{ id: 1, name: 'New' }, { id: 2, name: 'Open' }, { id: 3, name: 'Review' }, { id: 5, name: 'Done', is_closed: true }];
-  const versions = [{ id: 10, name: 'Sprint 10', status: 'open' }, { id: 11, name: 'Sprint 9', status: 'closed' }];
-  const base = { tracker: { id: 1, name: 'Feature' }, priority: { id: 2, name: 'Normal' }, project: { id: 1, name: 'Team' }, allowed_statuses: statuses };
+  const versions = [{ id: 10, name: 'Sprint 10', status: 'open', project: { id: 1 } }, { id: 11, name: 'Sprint 9', status: 'closed', project: { id: 1 } }];
+  const base = { custom_fields: [{ id: 7, value: '' }], tracker: { id: 1, name: 'Feature' }, priority: { id: 2, name: 'Normal' }, project: { id: 1, name: 'Team' }, allowed_statuses: statuses };
   const issues = [
     { ...base, id: 1, subject: 'Build backlog feature', status: statuses[0], estimated_hours: null },
-    { ...base, id: 2, subject: 'Already underway', status: statuses[1], fixed_version: versions[0], assigned_to: { id: 7, name: 'Team Member' }, estimated_hours: 3 },
+    { ...base, custom_fields: [{ id: 7, value: '10' }], id: 2, subject: 'Already underway', status: statuses[1], fixed_version: { id: 300 }, assigned_to: { id: 7, name: 'Team Member' }, estimated_hours: 3 },
     { ...base, id: 3, subject: '<img src=x onerror="window.injected=true">', status: statuses[0], estimated_hours: 0 },
-    { ...base, id: 4, subject: 'Unmapped status still visible', status: { id: 8, name: 'Waiting' }, fixed_version: versions[0], estimated_hours: null },
+    { ...base, custom_fields: [{ id: 7, value: '10' }], id: 4, subject: 'Unmapped status still visible', status: { id: 8, name: 'Waiting' }, estimated_hours: null },
   ];
   const writes = [], requests = [];
   await page.route('**/redmine/**', async route => {
@@ -32,10 +32,11 @@ async function setup(page, { deny = false, ignored = false, denyVersions = false
     if (path.endsWith('/versions.json')) return send({ versions });
     if (path.startsWith('/versions/')) return send({ version: versions.find(v => v.id === Number(path.match(/\d+/)[0])) });
     if (path === '/issues.json') {
-      const version = url.searchParams.get('fixed_version_id'), project = Number(url.searchParams.get('project_id'));
+      const version = url.searchParams.get('cf_7'), project = Number(url.searchParams.get('project_id'));
       const status = url.searchParams.get('status_id');
-      const unplanned = issue => !issue.fixed_version && (status === 'open' ? !issue.status.is_closed : issue.status.id === Number(status));
-      let selected = issues.filter(issue => issue.project.id === project && (version === '!*' ? unplanned(issue) : issue.fixed_version?.id === Number(version)));
+      const value = issue => issue.custom_fields?.find(field => field.id === 7)?.value;
+      const unplanned = issue => value(issue) === '' && (status === 'open' ? !issue.status.is_closed : issue.status.id === Number(status));
+      let selected = issues.filter(issue => issue.project.id === project && (version === '!*' ? unplanned(issue) : Number(value(issue)) === Number(version)));
       const tracker = url.searchParams.get('tracker_id'), assignee = url.searchParams.get('assigned_to_id'), subject = url.searchParams.get('subject'), issueId = url.searchParams.get('issue_id');
       if (tracker) selected = selected.filter(issue => issue.tracker.id === Number(tracker));
       if (assignee) selected = selected.filter(issue => assignee === '!*' ? !issue.assigned_to : issue.assigned_to?.id === Number(assignee));
@@ -51,7 +52,7 @@ async function setup(page, { deny = false, ignored = false, denyVersions = false
       const patch = request.postDataJSON().issue; writes.push(patch);
       if (deny) return route.fulfill({ status: 403, json: {} });
       if (!ignored) {
-        if ('fixed_version_id' in patch) issue.fixed_version = versions.find(v => v.id === patch.fixed_version_id);
+        if ('custom_fields' in patch) issue.custom_fields = patch.custom_fields;
         if ('status_id' in patch) issue.status = statuses.find(s => s.id === patch.status_id);
         if ('estimated_hours' in patch) issue.estimated_hours = patch.estimated_hours;
         if ('assigned_to_id' in patch) issue.assigned_to = patch.assigned_to_id ? { id: 7, name: 'Team Member' } : undefined;
@@ -87,7 +88,7 @@ for (const activation of ['click', 'keyboard']) {
   test(`issue ID opens Redmine in a new tab via ${activation}`, async ({ page }) => {
     const fixture = await setup(page);
     await page.route('**/config.json', route => route.fulfill({ json: {
-      redminePublicUrl: 'https://redmine.example.test', backlogStatusId: 1, swimlaneTrackers: [],
+      redminePublicUrl: 'https://redmine.example.test', backlogStatusId: 1, sprintFieldId: 7, swimlaneTrackers: [],
       columnStatusIds: [1, 2, 3, 5], refreshSeconds: 60,
     } }));
     let navigationHeaders;
@@ -238,7 +239,7 @@ test('a delayed old search cannot overwrite newer results', async ({ page }) => 
   const firstRequest = new Promise(resolve => { started = resolve; });
   await page.route('**/redmine/issues.json?**', async route => {
     const params = new URL(route.request().url()).searchParams;
-    if (params.get('subject') === '~Build' && params.get('fixed_version_id') === '!*') {
+    if (params.get('subject') === '~Build' && params.get('cf_7') === '!*') {
       started(); await gate;
     }
     await route.fallback();
@@ -761,7 +762,7 @@ test('collapsed Backlog survives refresh, filters and reconnecting without drain
   for (let id = 100; id < 150; id++) fixture.issues.push({ ...fixture.issues[0], id, subject: `Backlog ${id}` });
   await login(page);
   await page.getByRole('button', { name: 'Collapse Backlog', exact: true }).click();
-  const backlogRequests = () => fixture.requests.filter(request => new URL(request.url()).searchParams.get('fixed_version_id') === '!*').length;
+  const backlogRequests = () => fixture.requests.filter(request => new URL(request.url()).searchParams.get('cf_7') === '!*').length;
   const before = backlogRequests();
   await page.getByRole('button', { name: 'Refresh', exact: true }).click();
   await expect(page.locator('#workspace')).toHaveAttribute('aria-busy', 'false');
@@ -787,7 +788,7 @@ test('backlog requests one column-sized page, not every page', async ({ page }) 
   await login(page);
   const column = page.getByLabel('Backlog issues', { exact: true });
   const count = page.locator('[data-id="backlog"] .kanban-item');
-  const requests = fixture.requests.filter(request => new URL(request.url()).searchParams.get('fixed_version_id') === '!*');
+  const requests = fixture.requests.filter(request => new URL(request.url()).searchParams.get('cf_7') === '!*');
   // One request, sized to the visible column: more than the old fixed five, far short of 32.
   expect(requests).toHaveLength(1);
   const limit = Number(new URL(requests[0].url()).searchParams.get('limit'));
@@ -816,7 +817,7 @@ test('scrolling appends another page without duplicates or reloading metadata', 
   const column = page.getByLabel('Backlog issues', { exact: true });
   const count = page.locator('[data-id="backlog"] .kanban-item');
   const metadataCount = fixture.requests.filter(request => new URL(request.url()).pathname.endsWith('/versions.json')).length;
-  const firstPage = Number(new URL(fixture.requests.filter(request => new URL(request.url()).searchParams.get('fixed_version_id') === '!*')[0].url()).searchParams.get('limit'));
+  const firstPage = Number(new URL(fixture.requests.filter(request => new URL(request.url()).searchParams.get('cf_7') === '!*')[0].url()).searchParams.get('limit'));
   await expect(count).toHaveCount(firstPage);
   await column.evaluate(element => { element.scrollTop = element.scrollHeight; });
   expect(await column.evaluate(element => element.scrollTop)).toBeGreaterThan(0);
@@ -824,7 +825,7 @@ test('scrolling appends another page without duplicates or reloading metadata', 
   await expect(page.locator('[data-id="backlog"] footer')).toContainText('All matching backlog issues loaded');
   const ids = await count.evaluateAll(elements => elements.map(element => element.dataset.eid));
   expect(new Set(ids).size).toBe(12);
-  const requests = fixture.requests.filter(request => new URL(request.url()).searchParams.get('fixed_version_id') === '!*');
+  const requests = fixture.requests.filter(request => new URL(request.url()).searchParams.get('cf_7') === '!*');
   // The second page continues from where the first stopped rather than refetching it.
   expect(requests.map(request => new URL(request.url()).searchParams.get('offset'))).toEqual(['0', String(firstPage)]);
   expect(fixture.requests.filter(request => new URL(request.url()).pathname.endsWith('/versions.json'))).toHaveLength(metadataCount);
@@ -840,19 +841,19 @@ test('tracker and assignee filters query unseen issues on the server and preserv
   await page.getByLabel('Find an issue').fill('needle');
   await expect.poll(() => fixture.requests.some(request => {
     const params = new URL(request.url()).searchParams;
-    return params.get('subject') === '~needle' && params.get('tracker_id') === '2' && params.get('assigned_to_id') === '9' && params.get('fixed_version_id') === '!*';
+    return params.get('subject') === '~needle' && params.get('tracker_id') === '2' && params.get('assigned_to_id') === '9' && params.get('cf_7') === '!*';
   })).toBe(true);
   await expect(page.locator('[data-id="backlog"] .kanban-item')).toHaveCount(1);
   await expect(page.locator('#totals')).toContainText('2issues');
   await expect(page.locator('#filtered')).toContainText('0 issues');
   const filteredSprintRequests = fixture.requests.filter(request => {
     const params = new URL(request.url()).searchParams;
-    return params.get('fixed_version_id') === '10' && params.get('subject') === '~needle' && params.get('tracker_id') === '2' && params.get('assigned_to_id') === '9';
+    return params.get('cf_7') === '10' && params.get('subject') === '~needle' && params.get('tracker_id') === '2' && params.get('assigned_to_id') === '9';
   });
   expect(filteredSprintRequests).toHaveLength(1);
   const fullSprintRequests = fixture.requests.filter(request => {
     const params = new URL(request.url()).searchParams;
-    return params.get('fixed_version_id') === '10' && !params.has('tracker_id') && !params.has('assigned_to_id') && !params.has('subject');
+    return params.get('cf_7') === '10' && !params.has('tracker_id') && !params.has('assigned_to_id') && !params.has('subject');
   });
   expect(fullSprintRequests).toHaveLength(1);
 });
@@ -870,7 +871,7 @@ test('search is debounced and resets the backlog cursor', async ({ page }) => {
   // One search for three keystrokes, restarted at offset 0. The stable board lets
   // pagination measure real Cards rather than falling back to an empty-board estimate.
   await expect(page.locator('#workspace')).toHaveAttribute('aria-busy', 'false');
-  const searches = fixture.requests.filter(request => new URL(request.url()).searchParams.has('subject') && new URL(request.url()).searchParams.get('fixed_version_id') === '!*');
+  const searches = fixture.requests.filter(request => new URL(request.url()).searchParams.has('subject') && new URL(request.url()).searchParams.get('cf_7') === '!*');
   expect(searches).toHaveLength(1);
   const limit = Number(new URL(searches[0].url()).searchParams.get('limit'));
   await expect(page.locator('[data-id="backlog"] .kanban-item')).toHaveCount(Math.min(10, limit));
@@ -884,7 +885,7 @@ test('a failed lazy page can be retried without skipping issues', async ({ page 
   let failed = false;
   await page.route('**/redmine/issues.json?**', route => {
     const params = new URL(route.request().url()).searchParams;
-    if (params.get('fixed_version_id') === '!*' && params.get('offset') !== '0' && !failed) { failed = true; return route.fulfill({ status: 503, json: {} }); }
+    if (params.get('cf_7') === '!*' && params.get('offset') !== '0' && !failed) { failed = true; return route.fulfill({ status: 503, json: {} }); }
     return route.fallback();
   });
   await login(page);
@@ -990,7 +991,7 @@ test('keyboard-accessible planner changes sprint, assignee and estimate', async 
   await page.getByRole('button', { name: 'Save changes' }).click();
   await expect(page.getByRole('dialog')).not.toBeVisible();
   await expect(page.locator('[data-id="status-1"]')).toContainText('Build backlog feature');
-  expect(writes).toEqual([{ assigned_to_id: 7, estimated_hours: 5.5, fixed_version_id: 10 }]);
+  expect(writes).toEqual([{ assigned_to_id: 7, estimated_hours: 5.5, custom_fields: [{ id: 7, value: '10' }] }]);
 });
 
 for (const statusId of [1, 2]) {
@@ -999,7 +1000,7 @@ for (const statusId of [1, 2]) {
     await drag(page, 1, `status-${statusId}`);
     await expect(page.locator('#notice')).toContainText('Issue #1 saved');
     await expect(page.locator(`[data-id="status-${statusId}"] [data-eid="1"]`)).toBeVisible();
-    expect(writes).toEqual([statusId === 1 ? { fixed_version_id: 10 } : { fixed_version_id: 10, status_id: 2 }]);
+    expect(writes).toEqual([statusId === 1 ? { custom_fields: [{ id: 7, value: '10' }] } : { custom_fields: [{ id: 7, value: '10' }], status_id: 2 }]);
   });
 }
 
@@ -1008,7 +1009,7 @@ test('removing in-progress work does not reset its status', async ({ page }) => 
   await drag(page, 2, 'backlog');
   await expect(page.locator('#notice')).toContainText('Its status is not the backlog status');
   await expect(page.locator('[data-eid="2"]')).toHaveCount(0);
-  expect(writes).toEqual([{ fixed_version_id: null }]);
+  expect(writes).toEqual([{ custom_fields: [{ id: 7, value: '' }] }]);
 });
 
 test('rejected writes restore the card and expose permission errors', async ({ page }) => {
@@ -1024,7 +1025,7 @@ for (const statusId of [1, 2]) {
     await drag(page, 1, `status-${statusId}`);
     await expect(page.locator('#notice')).toContainText('did not retain all requested changes');
     await expect(page.locator('[data-id="backlog"] [data-eid="1"]')).toBeVisible();
-    expect(writes).toEqual([statusId === 1 ? { fixed_version_id: 10 } : { fixed_version_id: 10, status_id: 2 }]);
+    expect(writes).toEqual([statusId === 1 ? { custom_fields: [{ id: 7, value: '10' }] } : { custom_fields: [{ id: 7, value: '10' }], status_id: 2 }]);
   });
 }
 
@@ -1060,7 +1061,7 @@ test('closed sprints are opt-in and read only', async ({ page }) => {
 
 test('widening the backlog scope opts in to open unplanned issues, and is remembered', async ({ page }) => {
   const fixture = await setup(page);
-  const unplanned = { tracker: { id: 1, name: 'Feature' }, priority: { id: 2, name: 'Normal' }, project: { id: 1, name: 'Team' }, estimated_hours: null };
+  const unplanned = { custom_fields: [{ id: 7, value: '' }], tracker: { id: 1, name: 'Feature' }, priority: { id: 2, name: 'Normal' }, project: { id: 1, name: 'Team' }, estimated_hours: null };
   fixture.issues.push(
     { ...unplanned, id: 5, subject: 'Unplanned, in progress', status: { id: 2, name: 'Open' } },
     { ...unplanned, id: 6, subject: 'Unplanned and done', status: { id: 5, name: 'Done', is_closed: true } },
@@ -1084,7 +1085,7 @@ test('widening the backlog scope opts in to open unplanned issues, and is rememb
 
 test('the backlog scope is not a filter and survives clearing a search', async ({ page }) => {
   const fixture = await setup(page);
-  fixture.issues.push({ id: 5, subject: 'Unplanned, in progress', status: { id: 2, name: 'Open' }, tracker: { id: 1, name: 'Feature' }, priority: { id: 2, name: 'Normal' }, project: { id: 1, name: 'Team' }, estimated_hours: null });
+  fixture.issues.push({ custom_fields: [{ id: 7, value: '' }], id: 5, subject: 'Unplanned, in progress', status: { id: 2, name: 'Open' }, tracker: { id: 1, name: 'Feature' }, priority: { id: 2, name: 'Normal' }, project: { id: 1, name: 'Team' }, estimated_hours: null });
   await login(page);
   await page.getByLabel('Show all unplanned').click();
   await expect(page.locator('[data-id="backlog"] [data-eid="5"]')).toBeVisible();

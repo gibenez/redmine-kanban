@@ -15,7 +15,7 @@ The project defining a Sprint Board's scope, together with all of its nested sub
 A subproject within a Product Project's hierarchy, representing a part of the product with its own release versions.
 
 **Sprint**:
-A product-wide planning container represented by one version owned by the Product Project and shared with its Module Projects. An issue belongs to at most one Sprint, independently of its module release.
+A product-wide planning container represented by one version owned by the Product Project and shared with its Module Projects. An issue may belong to several Sprints, independently of its module release.
 _Avoid_: Iteration, milestone
 
 **Target Version**:
@@ -30,11 +30,11 @@ A single issue as it appears inside a Column.
 _Avoid_: Ticket, task, tile
 
 **Swimlane**:
-A horizontal grouping of Sprint Cards under their nearest Swimlane-capable ancestor. The ancestor supplies context, not Sprint membership; a Swimlane exists only while at least one Card groups beneath it.
+A horizontal grouping headed by a Swimlane-capable issue belonging to the selected Sprint, with Cards grouped beneath their nearest such ancestor. The heading can exist without Cards; every issue's Sprint membership is independent.
 _Avoid_: Column, bucket
 
 **Swimlane-capable Issue**:
-An issue of a configured tracker type that supplies grouping context rather than a Sprint Card. When it does not head a Swimlane in the selected Sprint, it can appear in Backlog as a shortcut for planning eligible descendants without planning itself.
+An issue of a configured tracker type, rendered as a Swimlane heading rather than a Card when it belongs to the selected Sprint. Planning it changes only its own membership, never that of its descendants.
 
 **Ungrouped**:
 The section of a Sprint containing Cards that do not belong to a Swimlane.

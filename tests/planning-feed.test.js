@@ -1,28 +1,51 @@
 import { describe, it, expect, vi } from 'vitest';
 import { PlanningFeed, issueQuery } from '../src/planning-feed.js';
 
-const scope = { projectId: '2', sprintId: 10, backlogStatusId: 1 };
+const scope = { projectId: '2', sprintId: 10, sprintFieldId: 7, backlogStatusId: 1 };
 const filters = { query: '', tracker: '', assignee: '' };
-const page = (ids, total = ids.length, offset = 0) => ({ items: ids.map(id => ({ id })), total, nextOffset: offset + ids.length, hasMore: offset + ids.length < total });
+const row = (id, value = '') => ({ id, custom_fields: [{ id: 7, value }] });
+const page = (ids, total = ids.length, offset = 0) => ({ items: ids.map(id => row(id)), total, nextOffset: offset + ids.length, hasMore: offset + ids.length < total });
 const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r; }); return { promise, resolve }; };
 
 describe('server-side issue queries', () => {
   it('applies project, backlog, search and filters before stable server sorting/pagination', () => {
-    expect(issueQuery(scope, { query: 'Needs review', tracker: '3', assignee: 'none' }, true)).toEqual({ project_id: '2', subproject_id: '!*', sort: 'priority:desc,id:asc', status_id: 1, fixed_version_id: '!*', subject: '~Needs review', tracker_id: '3', assigned_to_id: '!*' });
-    expect(issueQuery(scope, { query: ' #123 ', assignee: '7' })).toMatchObject({ issue_id: '123', assigned_to_id: '7', fixed_version_id: 10, status_id: '*' });
+    expect(issueQuery(scope, { query: 'Needs review', tracker: '3', assignee: 'none' }, true)).toEqual({ project_id: '2', subproject_id: '!*', sort: 'priority:desc,id:asc', status_id: 1, cf_7: '!*', subject: '~Needs review', tracker_id: '3', assigned_to_id: '!*' });
+    expect(issueQuery(scope, { query: ' #123 ', assignee: '7' })).toMatchObject({ issue_id: '123', assigned_to_id: '7', cf_7: 10, status_id: '*' });
+    expect(issueQuery({ ...scope, projectIds: [2, 3, 4] })).toMatchObject({ subproject_id: '3|4' });
     expect(issueQuery(scope, { query: '123' })).not.toHaveProperty('subject');
   });
   it('widens the backlog query to every open status when the backlog scope is widened', () => {
     const wide = { ...scope, allUnplanned: true };
-    expect(issueQuery(wide, {}, true)).toMatchObject({ status_id: 'open', fixed_version_id: '!*' });
+    expect(issueQuery(wide, {}, true)).toMatchObject({ status_id: 'open', cf_7: '!*' });
     // Only the backlog column is scoped; sprint columns already show every status.
-    expect(issueQuery(wide, {})).toMatchObject({ status_id: '*', fixed_version_id: 10 });
+    expect(issueQuery(wide, {})).toMatchObject({ status_id: '*', cf_7: 10 });
   });
 });
 
 describe('bounded backlog feed', () => {
+  it('rejects silently ignored custom-field filters instead of showing incorrect membership', async () => {
+    const api = { page: vi.fn().mockResolvedValue({ ...page([1]), items: [row(1, '10')] }), list: vi.fn().mockResolvedValue([]) };
+    const feed = new PlanningFeed(api);
+    await expect(feed.load(scope, filters)).rejects.toThrow('Used as a filter');
+    api.page.mockResolvedValue(page([1])); api.list.mockResolvedValue([row(20, '99')]);
+    await expect(feed.load(scope, filters)).rejects.toThrow('Sprint field filter');
+    api.list.mockResolvedValue([{ id: 20 }]);
+    await feed.load(scope, filters);
+    expect(feed.snapshot.sprintAll).toEqual([]);
+  });
+  it('skips missing-field issues and continues paging to fill the Backlog', async () => {
+    const api = {
+      page: vi.fn().mockResolvedValueOnce({ items: [{ id: 9262 }], total: 2, nextOffset: 1, hasMore: true }).mockResolvedValueOnce({ items: [row(2)], total: 2, nextOffset: 2, hasMore: false }),
+      list: vi.fn().mockResolvedValue([{ id: 9262 }, row(20, '10')]),
+    };
+    const feed = new PlanningFeed(api);
+    await feed.load(scope, filters);
+    expect(feed.snapshot.backlog.map(issue => issue.id)).toEqual([2]);
+    expect(feed.snapshot.sprintAll.map(issue => issue.id)).toEqual([20]);
+    expect(api.page).toHaveBeenCalledTimes(2);
+  });
   it('loads just five initially, and fetches the next cursor only when requested', async () => {
-    const api = { page: vi.fn().mockResolvedValueOnce(page([1, 2, 3, 4, 5], 8)).mockResolvedValueOnce(page([6, 7, 8], 8, 5)), list: vi.fn().mockResolvedValue([{ id: 20 }]) };
+    const api = { page: vi.fn().mockResolvedValueOnce(page([1, 2, 3, 4, 5], 8)).mockResolvedValueOnce(page([6, 7, 8], 8, 5)), list: vi.fn().mockResolvedValue([row(20, '10')]) };
     const feed = new PlanningFeed(api);
     await feed.load(scope, filters);
     expect(api.page).toHaveBeenCalledTimes(1);
@@ -33,7 +56,7 @@ describe('bounded backlog feed', () => {
     await feed.next(); expect(api.page).toHaveBeenCalledTimes(2);
   });
   it('reuses whole-sprint totals while querying filtered sprint/backlog results from the server', async () => {
-    const api = { page: vi.fn().mockResolvedValue(page([1])), list: vi.fn().mockResolvedValueOnce([{ id: 20 }, { id: 21 }]).mockResolvedValueOnce([{ id: 21 }]) };
+    const api = { page: vi.fn().mockResolvedValue(page([1])), list: vi.fn().mockResolvedValueOnce([row(20, '10'), row(21, '10')]).mockResolvedValueOnce([row(21, '10')]) };
     const feed = new PlanningFeed(api);
     await feed.load(scope, filters);
     await feed.load(scope, { ...filters, query: 'unloaded subject' }, { refreshSprint: false });
@@ -50,7 +73,7 @@ describe('bounded backlog feed', () => {
     await feed.load(scope, { ...filters, query: 'new' });
     expect(api.page.mock.calls[0][3].signal.aborted).toBe(true);
     slow.resolve(page([1])); expect(await old).toBeNull();
-    expect(feed.snapshot.backlog).toEqual([{ id: 9 }]);
+    expect(feed.snapshot.backlog).toEqual([row(9)]);
   });
   it('deduplicates overlapping scroll events and overlapping issue IDs', async () => {
     const slow = deferred();
@@ -74,6 +97,6 @@ describe('bounded backlog feed', () => {
     const feed = new PlanningFeed(api); await feed.load(scope, filters);
     const oldPage = feed.next(); await feed.load({ ...scope, projectId: '3' }, filters);
     slow.resolve(page([6, 7, 8], 8, 5)); expect(await oldPage).toBeNull();
-    expect(feed.snapshot.backlog).toEqual([{ id: 99 }]);
+    expect(feed.snapshot.backlog).toEqual([row(99)]);
   });
 });
