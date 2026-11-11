@@ -119,6 +119,8 @@ Redmine's per-issue `allowed_statuses` restricts status changes. Field edits and
 
 ## Board layout
 
+Your last selected project and the last explicitly selected Sprint for each project are remembered on this browser, separately for each Redmine server and account. Refreshing or returning restores available selections. Hidden, deleted, or inaccessible selections use the normal defaults without erasing the saved preference; Sprint **Show closed** is not remembered or enabled automatically. Open tabs keep their own current view. These preferences survive sign-out, are independent of API-key remembering, and are best-effort when browser storage is unavailable.
+
 Appearance defaults to **System**, following your OS light/dark theme, including changes while the page is open. The icon-only **Appearance** button in the header cycles **System** (monitor) → **Light** (sun) → **Dark** (moon). Its tooltip and accessible label identify the current mode and the next action; your preference is remembered on this browser. Login, board, notices and dialogs share the selected appearance.
 
 The interface reproduces the visual language of JetBrains YouTrack's agile board: neutral chrome with colour reserved for data, hairline-separated columns, and compact cards carrying a priority stripe and a clearly coloured priority label. Low / Bassa is green, Medium / Media (also Normal / Normale) yellow, High / Alta red, Urgent orange, and Immediate red/rose, with readable label colours in both themes. English and Italian stock names are recognized (for example High / Alta); unrecognized custom names stay neutral rather than guessing severity from IDs. See [docs/adr/0001-jetbrains-ring-ui-visual-language.md](docs/adr/0001-jetbrains-ring-ui-visual-language.md).

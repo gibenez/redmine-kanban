@@ -79,6 +79,98 @@ async function signOut(page) {
   await page.getByRole('button', { name: /^Account:/ }).click();
   await page.getByRole('button', { name: 'Sign out', exact: true }).click();
 }
+
+test('remembers the project and an explicit Sprint per project across visits', async ({ page }) => {
+  const { versions } = await setup(page);
+  versions.push(
+    { id: 12, name: 'Sprint 12', status: 'open', project: { id: 1 } },
+    { id: 20, name: 'Other Sprint', status: 'open', project: { id: 2 } },
+    { id: 21, name: 'Other Sprint 2', status: 'open', project: { id: 2 } },
+  );
+  await login(page);
+  await page.locator('#sprint').selectOption('12');
+  await expect(page.locator('#workspace')).toHaveAttribute('aria-busy', 'false');
+  await page.locator('#project').selectOption('2');
+  await page.locator('#sprint').selectOption('21');
+  await expect(page.locator('#workspace')).toHaveAttribute('aria-busy', 'false');
+  await login(page);
+  await expect(page.locator('#project')).toHaveValue('2');
+  await expect(page.locator('#sprint')).toHaveValue('21');
+  await page.locator('#project').selectOption('1');
+  await expect(page.locator('#sprint')).toHaveValue('12');
+});
+
+test('closed and inaccessible saved Sprints fall back without erasing the preference', async ({ page }) => {
+  const { versions } = await setup(page);
+  await login(page);
+  await page.locator('#closed').check();
+  await page.locator('#sprint').selectOption('11');
+  await expect(page.locator('#workspace')).toHaveAttribute('aria-busy', 'false');
+  await login(page);
+  await expect(page.locator('#closed')).not.toBeChecked();
+  await expect(page.locator('#sprint')).toHaveValue('10');
+  versions.find(version => version.id === 11).status = 'open';
+  await login(page);
+  await expect(page.locator('#sprint')).toHaveValue('11');
+  versions.splice(versions.findIndex(version => version.id === 11), 1);
+  await login(page);
+  await expect(page.locator('#sprint')).toHaveValue('10');
+  versions.push({ id: 11, name: 'Sprint 9', status: 'open', project: { id: 1 } });
+  await login(page);
+  await expect(page.locator('#sprint')).toHaveValue('11');
+});
+
+test('selection preferences remain separate when the authenticated user changes', async ({ page }) => {
+  const user = { id: 7, firstname: 'Team', lastname: 'Member' };
+  await setup(page, { user });
+  await login(page);
+  await page.locator('#project').selectOption('2');
+  await expect(page.locator('#workspace')).toHaveAttribute('aria-busy', 'false');
+  await signOut(page);
+  user.id = 8;
+  await login(page);
+  await expect(page.locator('#project')).toHaveValue('1');
+  await signOut(page);
+  user.id = 7;
+  await login(page);
+  await expect(page.locator('#project')).toHaveValue('2');
+});
+
+test('unavailable saved project falls back without replacing the preference', async ({ page }) => {
+  await setup(page);
+  await login(page);
+  await page.locator('#project').selectOption('2');
+  await expect(page.locator('#workspace')).toHaveAttribute('aria-busy', 'false');
+  const hideProject = async route => route.fulfill({ json: { projects: [{ id: 1, name: 'Team', trackers: [{ id: 1, name: 'Feature' }] }] } });
+  await page.route('**/redmine/projects.json?*', hideProject);
+  await login(page);
+  await expect(page.locator('#project')).toHaveValue('1');
+  await page.unroute('**/redmine/projects.json?*', hideProject);
+  await login(page);
+  await expect(page.locator('#project')).toHaveValue('2');
+});
+
+test('blocked selection storage does not break connection or selectors', async ({ page }) => {
+  await setup(page);
+  await page.addInitScript(() => {
+    for (const method of ['getItem', 'setItem']) {
+      const original = Storage.prototype[method];
+      Storage.prototype[method] = function (key, ...args) {
+        if (key.startsWith('redmine-sprint-board.selection:')) throw new Error('Storage blocked');
+        return original.call(this, key, ...args);
+      };
+    }
+  });
+  await login(page);
+  await page.locator('#closed').check();
+  await page.locator('#sprint').selectOption('11');
+  await expect(page.locator('#workspace')).toHaveAttribute('aria-busy', 'false');
+  await page.locator('#project').selectOption('2');
+  await expect(page.locator('#sprint')).toHaveValue('');
+  await page.locator('#project').selectOption('1');
+  await expect(page.locator('#sprint')).toHaveValue('11');
+  await expect(page.locator('#notice')).not.toHaveClass('error');
+});
 async function setAppearance(page, mode) {
   const button = page.getByRole('button', { name: /^Appearance:/ });
   for (let step = 0; step < 3 && await button.getAttribute('data-theme') !== mode; step++) await button.click();

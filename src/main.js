@@ -8,6 +8,7 @@ import { isSwimlane, loadAncestors, groupSwimlanes } from './swimlanes.js';
 import { collectMissingSubtasks, planDescendants } from './descendant-planning.js';
 import { createLoadingOverlay } from './loading-overlay.js';
 import { settledResults } from './settled-results.js';
+import { createSelectionPreferences } from './selection-preferences.js';
 
 const $ = id => document.getElementById(id);
 const beginLoading = createLoadingOverlay($('loading-overlay'));
@@ -20,6 +21,7 @@ const closedParentsStorageKey = 'redmine-sprint-board.closed-parents';
 let api, config, statuses = [], projects = [], versions = [], memberships = [], issues = [], board;
 let sprint = null, projectId = '', blockedProjectId = '', busy = false, dragging = false, loading = false, epoch = 0, timer, editing;
 let autorefresh = false;
+let selectionPreferences;
 function setAutorefresh(enabled) {
   autorefresh = enabled;
   clearInterval(timer);
@@ -183,6 +185,7 @@ async function syncFeed(snapshot) {
   return true;
 }
 function forget() {
+  selectionPreferences = null;
   cancelQuery(); feed = null;
   epoch++; setAutorefresh(false); api?.dispose(); api = null; busy = loading = dragging = false;
   resetFilters();
@@ -461,7 +464,7 @@ async function refresh(projectChanged = false, retryDenied = false) {
     ]);
     if (stamp !== epoch) return;
     versions = newVersions.filter(version => Number(version.project?.id) === Number(projectId) && version.sharing !== 'none'); memberships = newMemberships;
-    chooseSprint(projectChanged ? null : sprint?.id);
+    chooseSprint(projectChanged || !sprint ? selectionPreferences?.sprint(projectId) : sprint.id);
     renderFilters();
     feed.pageSize = backlogPageSize(); backlogFailed = false;
     const next = await feed.load(feedScope(), filters);
@@ -619,7 +622,10 @@ async function connect(key, remember) {
     document.body.classList.add('board-active');
     $('refresh').hidden = false; $('refresh-now').hidden = false; $('statusbar').hidden = false;
     renderIdentity(userData.user);
-    projectId = String(projects[0].id); options($('project'), projects.map(project => [project.id, project.name]), projectId);
+    selectionPreferences = createSelectionPreferences(config.redminePublicUrl, userData.user.id);
+    const savedProjectId = selectionPreferences.project();
+    projectId = String((projects.find(project => String(project.id) === savedProjectId) || projects[0]).id);
+    options($('project'), projects.map(project => [project.id, project.name]), projectId);
     notify('Connected.'); loading = false; await refresh(true);
     if (stamp !== epoch) return;
   } catch (error) {
@@ -644,12 +650,18 @@ $('login-form').addEventListener('submit', event => { event.preventDefault(); vo
 $('project').addEventListener('change', () => {
   cancelQuery(); feed = newFeed();
   projectId = $('project').value; issues = []; sprint = null; versions = []; memberships = [];
+  selectionPreferences?.selectProject(projectId);
   resetFilters(); renderFilters();
   clearBoardCards(); void refresh(true);
 });
 $('sprint').addEventListener('change', () => {
   cancelQuery(); feed = newFeed();
-  sprint = versions.find(version => version.id === Number($('sprint').value)); issues = []; void refresh(false, true);
+  sprint = versions.find(version => version.id === Number($('sprint').value));
+  if (sprint) {
+    selectionPreferences?.selectProject(projectId);
+    selectionPreferences?.selectSprint(projectId, sprint.id);
+  }
+  issues = []; void refresh(false, true);
 });
 $('closed').addEventListener('change', () => { cancelQuery(); issues = []; void refresh(false, true); });
 $('refresh').addEventListener('click', () => setAutorefresh(!autorefresh));
