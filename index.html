@@ -49,15 +49,16 @@
       </div>
       <section class="summary panel" aria-label="Sprint commitment"><div><span class="eyebrow">SPRINT COMMITMENT</span><h2 id="sprint-name">Select a sprint</h2><p id="sprint-state" class="muted"></p></div><div id="totals" class="totals"></div></section>
       </div>
-      <details id="filter-controls" open>
-        <summary>Filters</summary>
+      <div id="backlog-search" hidden><input id="query" type="search" aria-label="Search backlog" placeholder="Search"><button id="toggle-backlog-filters" type="button" aria-label="Backlog filters" title="Backlog filters" aria-expanded="false" aria-controls="filter-controls"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg></button></div>
+      <section id="filter-controls" aria-label="Backlog filters" hidden>
       <div class="filters">
-        <div class="search field"><div class="search-heading"><label for="query">Find an issue</label><span id="filtered" class="muted" role="status" aria-live="polite"></span></div><input id="query" type="search" placeholder="Search subject or #ID"></div>
-        <div class="field"><label for="tracker">Tracker</label><select id="tracker"><option value="">All trackers</option></select></div>
+        <div class="field"><label for="tracker">Tracker</label><select id="tracker"><option value="">All eligible trackers</option></select></div>
         <div class="field"><label for="assignee">Assignee</label><select id="assignee"><option value="">Everyone</option></select></div>
         <div class="field"><label for="backlog-tag">Backlog tag</label><input id="backlog-tag" type="search" placeholder="Exact tag" autocomplete="off"></div>
       </div>
-      </details>
+        <div class="backlog-filter-footer"><label class="closed-backlog-filter"><span class="checkbox"><input id="backlog-closed" type="checkbox" aria-label="Show closed issues" aria-describedby="backlog-closed-description"> Show closed issues</span><span id="backlog-closed-description" class="muted">Include closed issues in Backlog.</span></label><button id="clear-filters" type="button">Clear filters</button></div>
+      </section>
+      <span id="filtered" class="muted" role="status" aria-live="polite" hidden></span>
       <div id="board" aria-label="Backlog and sprint board"></div>
       <p id="empty" class="muted" hidden>No matching issues.</p>
     </section>
@@ -66,10 +67,10 @@
   <dialog id="help-dialog" aria-labelledby="help-title">
     <div class="dialog-heading"><h2 id="help-title">Sprint board · Quick guide</h2><button id="close-help" type="button" aria-label="Close help" autofocus>×</button></div>
     <dl class="quick-guide">
-      <div><dt>Choose your Sprint</dt><dd>Select a Project and Sprint. Commitment totals always include the whole Sprint, even when you filter.</dd></div>
+      <div><dt>Choose your Sprint</dt><dd>Select a Project and Sprint. Backlog filters never change Sprint Cards, Swimlanes or commitment totals.</dd></div>
       <div><dt>Plan and update work</dt><dd>Drag a Card into a Sprint Column to plan it and set its status. Move it to Backlog to remove it from the selected Sprint, without resetting its status. Use the pencil button for keyboard-accessible planning, assignment and estimates.</dd></div>
-      <div><dt>Find an issue</dt><dd>Search by subject or exact issue ID, such as #123. Combine Tracker and Assignee filters to narrow the results. Scroll each Column independently; Backlog loads more as you scroll.</dd></div>
-      <div><dt>Widen the Backlog</dt><dd>The eye button switches between Unplanned issues in the New status and all open Unplanned issues. Use the chevron in the Backlog header to collapse it into a narrow rail and expand it again. This browser remembers your choice; expand Backlog before dragging Cards into it.</dd></div>
+      <div><dt>Search backlog</dt><dd>Search Backlog by subject or exact issue ID, such as #123. Combine Tracker, Assignee and exact Backlog tag filters. Only Swimlane-capable trackers are offered. Clear filters resets these four controls, not Show closed. Scroll each Column independently; Backlog loads more as you scroll.</dd></div>
+      <div><dt>Widen the Backlog</dt><dd>Backlog shows Unplanned Swimlane-capable issues in all open statuses; Show closed also includes closed issues. Use the chevron in the Backlog header to collapse it and its filters into a narrow rail. Active filters are retained and indicated by “Filtered”. This browser remembers the collapsed state; expand Backlog before dragging Cards into it.</dd></div>
       <div><dt>Permissions stay yours</dt><dd>Closed Sprints are read only. Redmine checks your permissions and workflow; changes appear only after they are confirmed. Open an issue ID to view its details in Redmine.</dd></div>
     </dl>
     <p class="muted guide-hint">Press Esc or use × to close this guide.</p>

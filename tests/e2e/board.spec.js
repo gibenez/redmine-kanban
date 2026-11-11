@@ -69,6 +69,11 @@ async function login(page, remember = false) {
   if (remember) await page.getByLabel('Remember API key on this browser').check();
   await page.getByRole('button', { name: 'Connect to Redmine' }).click();
   await expect(page.locator('#updated')).toContainText('Updated');
+  await expect(page.locator('#filter-controls')).toBeHidden();
+  await expect(page.getByLabel('Search backlog')).toBeVisible();
+  await expect(page.locator('[data-id="backlog"] header #query')).toBeVisible();
+  await expect(page.locator('#tracker')).toBeHidden();
+  await page.getByRole('button', { name: 'Backlog filters', exact: true }).click();
 }
 async function signOut(page) {
   await page.getByRole('button', { name: /^Account:/ }).click();
@@ -134,15 +139,17 @@ for (const control of ['query', 'tracker', 'assignee']) {
     let release;
     const gate = new Promise(resolve => { release = resolve; });
     await page.route('**/redmine/issues.json?**', async route => { await gate; await route.fallback(); });
-    if (control === 'query') await page.getByLabel('Find an issue').fill('Already');
-    if (control === 'tracker') await page.getByLabel('Tracker', { exact: true }).selectOption('2');
+    if (control === 'query') await page.getByLabel('Search backlog').fill('Already');
+    if (control === 'tracker') await page.getByLabel('Tracker', { exact: true }).selectOption('1');
     if (control === 'assignee') await page.getByLabel('Assignee', { exact: true }).selectOption('7');
     try {
-      await expect(page.locator('#workspace')).toHaveAttribute('aria-busy', 'true');
+      await expect(page.locator('[data-id="backlog"] .kanban-drag')).toHaveAttribute('aria-busy', 'true');
+      await expect(page.locator('#workspace')).toHaveAttribute('aria-busy', 'false');
+      await expect(page.getByRole('button', { name: 'Plan #2', exact: true })).toBeEnabled();
       expect(await page.evaluate(() => window.stableBoard.isConnected && window.stableColumns.every(node => node.isConnected))).toBe(true);
       await expect(page.locator('[data-eid="2"]')).toBeVisible();
     } finally { release(); }
-    await expect(page.locator('#workspace')).toHaveAttribute('aria-busy', 'false');
+    await expect(page.locator('[data-id="backlog"] .kanban-drag')).toHaveAttribute('aria-busy', 'false');
     expect(await page.evaluate(() => ({
       sameBoard: window.stableBoard === document.querySelector('.kanban-container'),
       sameColumns: window.stableColumns.every(node => node.isConnected),
@@ -153,19 +160,119 @@ for (const control of ['query', 'tracker', 'assignee']) {
   });
 }
 
+test('Sprint dragging and planning remain usable during a pending Backlog search', async ({ page }) => {
+  const fixture = await setup(page); await login(page);
+  let release, started;
+  const gate = new Promise(resolve => { release = resolve; });
+  const requestStarted = new Promise(resolve => { started = resolve; });
+  let held = false;
+  await page.route('**/redmine/issues.json?**', async route => {
+    if (!held && new URL(route.request().url()).searchParams.has('subject')) { held = true; started(); await gate; }
+    await route.fallback();
+  });
+  await page.getByLabel('Search backlog').fill('absent');
+  await requestStarted;
+  try {
+    await expect(page.getByRole('button', { name: 'Plan #2', exact: true })).toBeEnabled();
+    await drag(page, 2, 'status-3');
+    await expect.poll(() => fixture.writes.length).toBe(1);
+    await expect(page.locator('[data-id="status-3"] [data-eid="2"]')).toBeVisible();
+    await page.getByRole('button', { name: 'Plan #2', exact: true }).click();
+    await expect(page.locator('#editor')).toBeVisible();
+  } finally { release(); }
+});
+
+test('filters survive refresh and Sprint switches, but reset on project change and sign-out', async ({ page }) => {
+  await setup(page); await login(page);
+  await page.getByLabel('Tracker', { exact: true }).selectOption('1');
+  await page.getByLabel('Assignee', { exact: true }).selectOption('none');
+  await page.getByLabel('Search backlog').fill('Build');
+  await expect(page.locator('[data-id="backlog"] .kanban-item')).toHaveCount(1);
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click();
+  await expect(page.locator('#workspace')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.getByLabel('Search backlog')).toHaveValue('Build');
+  await page.getByLabel('Include closed sprints').check();
+  await expect(page.locator('#workspace')).toHaveAttribute('aria-busy', 'false');
+  await page.getByLabel('Sprint', { exact: true }).selectOption('11');
+  await expect(page.locator('#workspace')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.getByLabel('Search backlog')).toHaveValue('Build');
+  await expect(page.locator('#tracker')).toHaveValue('1');
+  await expect(page.locator('#assignee')).toHaveValue('none');
+  await page.getByLabel('Project', { exact: true }).selectOption('2');
+  await expect(page.locator('#workspace')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.getByLabel('Search backlog')).toHaveValue('');
+  await expect(page.locator('#tracker')).toHaveValue('');
+  await expect(page.locator('#assignee')).toHaveValue('');
+  await page.getByLabel('Search backlog').fill('retained?');
+  await signOut(page);
+  await page.getByLabel('Personal API key').fill('test-personal-key');
+  await page.getByRole('button', { name: 'Connect to Redmine' }).click();
+  await expect(page.locator('#updated')).toContainText('Updated');
+  await expect(page.getByLabel('Search backlog')).toHaveValue('');
+});
+
+test('Tracker choices include eligible Module metadata but exclude unrelated projects and ordinary trackers', async ({ page }) => {
+  await setup(page);
+  await page.route('**/config.json', route => route.fulfill({ json: {
+    redminePublicUrl: 'https://redmine.example.test', sprintFieldId: 7, backlogStatusId: 1,
+    columnStatusIds: [1, 2, 3, 5], swimlaneTrackers: ['Feature', 'Improvement', 'Bug'], refreshSeconds: 60,
+  } }));
+  await page.route('**/redmine/projects.json?**', route => route.fulfill({ json: { projects: [
+    { id: 1, name: 'Product', trackers: [{ id: 1, name: 'Feature' }, { id: 8, name: 'Task' }] },
+    { id: 3, name: 'Module', parent: { id: 1 }, trackers: [{ id: 4, name: 'Improvement' }] },
+    { id: 2, name: 'Unrelated', trackers: [{ id: 2, name: 'Bug' }] },
+  ] } }));
+  await login(page);
+  await expect(page.locator('#tracker option')).toHaveText(['All eligible trackers', 'Feature', 'Improvement']);
+  await page.getByLabel('Tracker', { exact: true }).selectOption('4');
+  await expect(page.locator('[data-id="backlog"] footer')).toContainText('No backlog issues match these filters');
+  await page.getByLabel('Project', { exact: true }).selectOption('3');
+  await expect(page.locator('#workspace')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.locator('#tracker option')).toHaveText(['All eligible trackers', 'Improvement']);
+});
+
+test('Tracker is disabled when no configured Swimlane-capable trackers are available', async ({ page }) => {
+  await setup(page);
+  await page.route('**/config.json', route => route.fulfill({ json: {
+    redminePublicUrl: 'https://redmine.example.test', sprintFieldId: 7, backlogStatusId: 1,
+    columnStatusIds: [1, 2, 3, 5], swimlaneTrackers: [], refreshSeconds: 60,
+  } }));
+  await login(page);
+  await expect(page.locator('#tracker')).toBeDisabled();
+  await expect(page.locator('#tracker option')).toHaveText(['All eligible trackers']);
+  await expect(page.locator('[data-eid="2"]')).toBeVisible();
+});
+
+test('Clear filters resets all four Backlog controls without changing Show closed or Sprint', async ({ page }) => {
+  const fixture = await setup(page); fixture.issues[0].tags = ['release'];
+  await login(page);
+  await page.getByRole('checkbox', { name: 'Show closed issues', exact: true }).check();
+  await expect(page.locator('[data-id="backlog"] .kanban-drag')).toHaveAttribute('aria-busy', 'false');
+  await page.getByLabel('Tracker', { exact: true }).selectOption('1');
+  await page.getByLabel('Assignee', { exact: true }).selectOption('none');
+  await page.getByLabel('Search backlog').fill('Build');
+  await page.getByLabel('Backlog tag', { exact: true }).fill('release');
+  await expect(page.locator('[data-id="backlog"] .kanban-item')).toHaveCount(1);
+  await page.getByRole('button', { name: 'Clear filters', exact: true }).click();
+  for (const id of ['query', 'tracker', 'assignee', 'backlog-tag']) await expect(page.locator(`#${id}`)).toHaveValue('');
+  await expect(page.locator('[data-id="backlog"] .kanban-item')).toHaveCount(2);
+  await expect(page.getByRole('checkbox', { name: 'Show closed issues', exact: true })).toBeChecked();
+  await expect(page.getByLabel('Sprint', { exact: true })).toHaveValue('10');
+  await expect(page.locator('[data-eid="2"]')).toBeVisible();
+});
+
 test('unchanged filters preserve column scroll, horizontal scroll, focus and card nodes', async ({ page }) => {
   await page.setViewportSize({ width: 800, height: 650 });
   const fixture = await setup(page);
   for (let id = 100; id < 120; id++) fixture.issues.push({ ...fixture.issues[1], id, subject: `Already underway ${id}` });
   await login(page);
-  await page.locator('#filter-controls > summary').click();
-  await page.getByLabel('Tracker', { exact: true }).selectOption('2');
+  await page.getByLabel('Tracker', { exact: true }).selectOption('1');
   await expect(page.locator('#workspace')).toHaveAttribute('aria-busy', 'false');
   await page.evaluate(() => {
     const board = document.getElementById('board'), list = document.querySelector('[data-id="status-2"] .kanban-drag');
     board.scrollLeft = 300; list.scrollTop = 160; list.focus({ preventScroll: true });
     window.position = { x: board.scrollLeft, y: list.scrollTop, list, card: list.firstElementChild };
-    document.getElementById('tracker').value = '2';
+    document.getElementById('tracker').value = '1';
     document.getElementById('tracker').dispatchEvent(new Event('change'));
   });
   await expect(page.locator('#workspace')).toHaveAttribute('aria-busy', 'false');
@@ -185,7 +292,7 @@ test('failed search keeps the confirmed cards and does not page with the previou
   await page.evaluate(() => { window.confirmedCard = document.querySelector('[data-eid="1"]'); });
   let failedRequests = 0;
   await page.route('**/redmine/issues.json?**', route => { failedRequests++; return route.fulfill({ status: 422, json: { errors: ['Search unavailable'] } }); });
-  await page.getByLabel('Find an issue').fill('failed');
+  await page.getByLabel('Search backlog').fill('failed');
   await expect(page.locator('#filtered')).toContainText('showing previous results');
   await expect(page.locator('[data-id="backlog"] .kanban-item')).toHaveCount(before);
   expect(await page.evaluate(() => window.confirmedCard.isConnected)).toBe(true);
@@ -195,12 +302,12 @@ test('failed search keeps the confirmed cards and does not page with the previou
   expect(failedRequests).toBe(requestsAfterFailure);
   await expect(page.locator('[data-id="backlog"] footer')).toContainText('Previous results');
   await page.unroute('**/redmine/issues.json?**');
-  await page.getByLabel('Find an issue').fill('Build');
+  await page.getByLabel('Search backlog').fill('Build');
   await expect(page.locator('#workspace')).toHaveAttribute('aria-busy', 'false');
   await expect(page.locator('#filtered')).not.toContainText('unavailable');
 });
 
-test('filtered totals appear only with active filters and do not shift the layout', async ({ page }) => {
+test('Backlog filters leave Sprint totals and board geometry unchanged', async ({ page }) => {
   await setup(page); await login(page);
   const summary = page.locator('#filtered');
   await expect(summary).toBeEmpty();
@@ -209,16 +316,19 @@ test('filtered totals appear only with active filters and do not shift the layou
   const filterRow = await page.locator('.filters').boundingBox();
   const lastFilter = await page.locator('#backlog-tag').boundingBox();
   expect(Math.abs(lastFilter.x + lastFilter.width - filterRow.x - filterRow.width)).toBeLessThanOrEqual(1);
-  await page.getByLabel('Find an issue').fill('#2');
-  await expect(summary).toContainText('1 issues · 3 h · 0 unestimated');
+  await page.getByLabel('Search backlog').fill('#2');
+  await expect(page.locator('[data-id="backlog"] footer')).toContainText('No backlog issues match these filters');
+  await expect(summary).toBeEmpty();
+  await expect(page.locator('[data-eid="2"]')).toBeVisible();
   await expect(page.locator('#totals')).toContainText('2issues');
   expect(await page.locator('#board').boundingBox()).toEqual(before);
   expect(await page.locator('#query').boundingBox()).toEqual(searchBefore);
-  await page.getByLabel('Find an issue').fill('');
+  await page.getByLabel('Search backlog').fill('');
   await expect(page.locator('#workspace')).toHaveAttribute('aria-busy', 'false');
   await expect(summary).toBeEmpty();
   await page.getByLabel('Tracker', { exact: true }).selectOption('1');
-  await expect(summary).toContainText('Visible sprint:');
+  await expect(page.locator('[data-id="backlog"] .kanban-drag')).toHaveAttribute('aria-busy', 'false');
+  await expect(summary).toBeEmpty();
   await page.getByLabel('Tracker', { exact: true }).selectOption('');
   await expect(page.locator('#workspace')).toHaveAttribute('aria-busy', 'false');
   await expect(summary).toBeEmpty();
@@ -229,9 +339,12 @@ test('empty search results do not change the board or column geometry', async ({
   await setup(page); await login(page);
   const before = await page.locator('.kanban-container').boundingBox();
   const columns = await page.locator('.kanban-board').evaluateAll(nodes => nodes.map(node => node.getBoundingClientRect().toJSON()));
-  await page.getByLabel('Find an issue').fill('No issue can match this');
-  await expect(page.locator('#empty')).toBeVisible();
-  await expect(page.locator('.kanban-item')).toHaveCount(0);
+  await page.getByLabel('Search backlog').fill('No issue can match this');
+  await expect(page.locator('[data-id="backlog"] footer')).toContainText('No backlog issues match these filters');
+  await expect(page.locator('[data-id="backlog"] .kanban-item')).toHaveCount(0);
+  await expect(page.locator('[data-eid="2"]')).toBeVisible();
+  await page.getByRole('button', { name: 'Clear filters', exact: true }).click();
+  await expect(page.locator('[data-id="backlog"] .kanban-item')).toHaveCount(2);
   expect(await page.locator('.kanban-container').boundingBox()).toEqual(before);
   expect(await page.locator('.kanban-board').evaluateAll(nodes => nodes.map(node => node.getBoundingClientRect().toJSON()))).toEqual(columns);
 });
@@ -248,9 +361,9 @@ test('a delayed old search cannot overwrite newer results', async ({ page }) => 
     }
     await route.fallback();
   });
-  await page.getByLabel('Find an issue').fill('Build');
+  await page.getByLabel('Search backlog').fill('Build');
   await firstRequest;
-  await page.getByLabel('Find an issue').fill('Already');
+  await page.getByLabel('Search backlog').fill('Already');
   try {
     await expect(page.locator('#workspace')).toHaveAttribute('aria-busy', 'false');
     await expect(page.locator('[data-id="backlog"] .kanban-item')).toHaveCount(0);
@@ -258,7 +371,7 @@ test('a delayed old search cannot overwrite newer results', async ({ page }) => 
   } finally { release(); }
   await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   await expect(page.locator('[data-id="backlog"] .kanban-item')).toHaveCount(0);
-  await expect(page.getByLabel('Find an issue')).toHaveValue('Already');
+  await expect(page.getByLabel('Search backlog')).toHaveValue('Already');
 });
 
 test('refresh patches changed fields without replacing cards or their controls', async ({ page }) => {
@@ -303,7 +416,7 @@ test('column heading text, counts and scope controls share the same vertical cen
     const range = document.createRange(); range.selectNodeContents(title.firstChild);
     const text = range.getBoundingClientRect(), bounds = header.getBoundingClientRect();
     const count = header.querySelector('.count')?.getBoundingClientRect();
-    const toggle = header.querySelector('[data-closed-parents]')?.getBoundingClientRect();
+    const toggle = header.querySelector('#toggle-backlog-filters')?.getBoundingClientRect();
     return { top: bounds.top, height: bounds.height, center: bounds.top + bounds.height / 2,
       textCenter: text.top + text.height / 2,
       countCenter: count ? count.top + count.height / 2 : null,
@@ -684,16 +797,16 @@ for (const viewport of [{ width: 1280, height: 720 }, { width: 1440, height: 100
   });
 }
 
-test('long notices keep the board usable and expose the complete message', async ({ page }) => {
+test('long Backlog search errors stay local and keep the board usable', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 720 });
   await setup(page); await login(page);
   const message = 'Detailed upstream explanation. '.repeat(60);
   await page.route('**/redmine/issues.json?**', route => route.fulfill({ status: 422, json: { errors: [message] } }));
-  await page.getByLabel('Find an issue').fill('failed search');
-  await page.getByRole('button', { name: 'Full message', exact: true }).click();
-  await expect(page.locator('#notice-dialog')).toBeVisible();
-  await expect(page.locator('#notice-message')).toContainText(message.trim());
-  await page.getByRole('button', { name: 'Close message' }).click();
+  await page.getByLabel('Search backlog').fill('failed search');
+  await expect(page.locator('#filtered')).toContainText('Search unavailable');
+  await expect(page.locator('#filtered')).toHaveAttribute('title', new RegExp('Detailed upstream explanation'));
+  await expect(page.locator('#notice')).toBeHidden();
+  await expect(page.getByRole('button', { name: 'Plan #2', exact: true })).toBeEnabled();
   expect(await page.evaluate(() => document.scrollingElement.scrollHeight)).toBe(720);
   await expect(page.getByRole('button', { name: 'Refresh', exact: true })).toBeInViewport();
 });
@@ -701,9 +814,7 @@ test('long notices keep the board usable and expose the complete message', async
 test('compact board exposes filters and allows board-only horizontal scrolling', async ({ page }) => {
   await page.setViewportSize({ width: 800, height: 650 });
   await setup(page); await login(page);
-  await expect(page.getByLabel('Find an issue')).not.toBeVisible();
-  await page.locator('#filter-controls > summary').click();
-  await expect(page.getByLabel('Find an issue')).toBeVisible();
+  await expect(page.getByLabel('Search backlog')).toBeVisible();
   const dimensions = await page.evaluate(() => ({
     width: document.scrollingElement.scrollWidth, height: document.scrollingElement.scrollHeight,
     boardWidth: document.getElementById('board').clientWidth, boardScrollWidth: document.getElementById('board').scrollWidth,
@@ -711,8 +822,8 @@ test('compact board exposes filters and allows board-only horizontal scrolling',
   expect(dimensions.width).toBe(800); expect(dimensions.height).toBe(650);
   expect(dimensions.boardScrollWidth).toBeGreaterThan(dimensions.boardWidth);
   await page.setViewportSize({ width: 1280, height: 720 });
-  await expect(page.getByLabel('Find an issue')).toBeVisible();
-  await expect(page.locator('#filter-controls > summary')).not.toBeVisible();
+  await expect(page.getByLabel('Search backlog')).toBeVisible();
+  await expect(page.locator('[data-id="backlog"] #filter-controls')).toBeVisible();
 });
 
 test('phone layout keeps appearance, planning controls and board inside the viewport', async ({ page }) => {
@@ -749,6 +860,12 @@ for (const width of [1280, 390]) {
     await expect(column.locator('footer')).toBeHidden();
     await expect(column.locator('[data-backlog-scope]')).toHaveCount(0);
     expect((await column.boundingBox()).width).toBe(40);
+    const centers = await column.evaluate(node => {
+      const center = element => { const rect = element.getBoundingClientRect(); return rect.left + rect.width / 2; };
+      return { rail: center(node), label: center(node.querySelector('.backlog-label')), toggle: center(node.querySelector('.backlog-toggle')) };
+    });
+    expect(Math.abs(centers.label - centers.rail)).toBeLessThanOrEqual(1);
+    expect(Math.abs(centers.toggle - centers.rail)).toBeLessThanOrEqual(1);
     if (width === 1280) expect((await page.locator('.kanban-board[data-id="status-2"]').boundingBox()).width).toBeGreaterThan(beforeWidth);
     expect(await card.evaluate(node => node.isConnected)).toBe(true);
     expect(await page.evaluate(() => document.scrollingElement.scrollWidth)).toBe(width);
@@ -772,8 +889,13 @@ test('collapsed Backlog survives refresh, filters and reconnecting without drain
   await expect(page.locator('#workspace')).toHaveAttribute('aria-busy', 'false');
   expect(backlogRequests()).toBe(before + 1);
   await expect(page.getByRole('button', { name: 'Expand Backlog', exact: true })).toBeVisible();
-  await page.getByLabel('Find an issue').fill('Build backlog');
-  await expect(page.locator('#workspace')).toHaveAttribute('aria-busy', 'false');
+  await page.getByRole('button', { name: 'Expand Backlog', exact: true }).click();
+  await page.getByLabel('Search backlog').fill('Build backlog');
+  await expect(page.locator('[data-id="backlog"] .kanban-drag')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.locator('[data-id="backlog"] .kanban-item')).toHaveCount(1);
+  await page.getByRole('button', { name: 'Collapse Backlog', exact: true }).click();
+  await expect(page.locator('[data-id="backlog"] .backlog-filtered')).toHaveText('Filtered');
+  await expect(page.getByLabel('Search backlog')).toBeHidden();
   await expect(page.getByLabel('Backlog issues', { exact: true })).toBeHidden();
   await page.reload();
   await page.getByLabel('Personal API key').fill('test-personal-key');
@@ -808,7 +930,7 @@ test('server search finds a backlog issue beyond the loaded page', async ({ page
   const fixture = await setup(page);
   for (let id = 100; id < 110; id++) fixture.issues.push({ ...fixture.issues[0], id, subject: id === 109 ? 'Unseen needle' : `Backlog ${id}` });
   await login(page);
-  await page.getByLabel('Find an issue').fill('needle');
+  await page.getByLabel('Search backlog').fill('needle');
   await expect.poll(() => fixture.requests.some(request => new URL(request.url()).searchParams.get('subject') === '~needle')).toBe(true);
   await expect(page.locator('[data-id="backlog"] .kanban-item')).toHaveCount(1);
   await expect(page.locator('[data-id="backlog"]')).toContainText('Unseen needle');
@@ -816,7 +938,7 @@ test('server search finds a backlog issue beyond the loaded page', async ({ page
 
 test('scrolling appends another page without duplicates or reloading metadata', async ({ page }) => {
   const fixture = await setup(page);
-  for (let id = 100; id < 110; id++) fixture.issues.push({ ...fixture.issues[0], id, subject: `Backlog ${id}` });
+  for (let id = 100; id < 130; id++) fixture.issues.push({ ...fixture.issues[0], id, subject: `Backlog ${id}` });
   await login(page);
   const column = page.getByLabel('Backlog issues', { exact: true });
   const count = page.locator('[data-id="backlog"] .kanban-item');
@@ -825,10 +947,10 @@ test('scrolling appends another page without duplicates or reloading metadata', 
   await expect(count).toHaveCount(firstPage);
   await column.evaluate(element => { element.scrollTop = element.scrollHeight; });
   expect(await column.evaluate(element => element.scrollTop)).toBeGreaterThan(0);
-  await expect(count).toHaveCount(12);
-  await expect(page.locator('[data-id="backlog"] footer')).toContainText('All matching backlog issues loaded');
+  await expect.poll(() => count.count()).toBeGreaterThan(firstPage);
+  await expect(page.locator('[data-id="backlog"] .kanban-drag')).toHaveAttribute('aria-busy', 'false');
   const ids = await count.evaluateAll(elements => elements.map(element => element.dataset.eid));
-  expect(new Set(ids).size).toBe(12);
+  expect(new Set(ids).size).toBe(ids.length);
   const requests = fixture.requests.filter(request => new URL(request.url()).searchParams.get('cf_7') === '!*');
   // The second page continues from where the first stopped rather than refetching it.
   expect(requests.map(request => new URL(request.url()).searchParams.get('offset'))).toEqual(['0', String(firstPage)]);
@@ -842,19 +964,20 @@ test('tracker and assignee filters query unseen issues on the server and preserv
   await page.getByLabel('Tracker', { exact: true }).selectOption('1');
   await page.getByLabel('Assignee', { exact: true }).selectOption('9');
   await expect(page.locator('[data-id="backlog"]')).toContainText('Unseen needle');
-  await page.getByLabel('Find an issue').fill('needle');
+  await page.getByLabel('Search backlog').fill('needle');
   await expect.poll(() => fixture.requests.some(request => {
     const params = new URL(request.url()).searchParams;
     return params.get('subject') === '~needle' && params.get('tracker_id') === '1' && params.get('assigned_to_id') === '9' && params.get('cf_7') === '!*';
   })).toBe(true);
   await expect(page.locator('[data-id="backlog"] .kanban-item')).toHaveCount(1);
   await expect(page.locator('#totals')).toContainText('2issues');
-  await expect(page.locator('#filtered')).toContainText('0 issues');
+  await expect(page.locator('#filtered')).toBeEmpty();
+  await expect(page.locator('[data-eid="2"]')).toBeVisible();
   const filteredSprintRequests = fixture.requests.filter(request => {
     const params = new URL(request.url()).searchParams;
     return params.get('cf_7') === '10' && params.get('subject') === '~needle' && params.get('tracker_id') === '1' && params.get('assigned_to_id') === '9';
   });
-  expect(filteredSprintRequests).toHaveLength(1);
+  expect(filteredSprintRequests).toHaveLength(0);
   const fullSprintRequests = fixture.requests.filter(request => {
     const params = new URL(request.url()).searchParams;
     return params.get('cf_7') === '10' && !params.has('tracker_id') && !params.has('assigned_to_id') && !params.has('subject');
@@ -868,9 +991,9 @@ test('search is debounced and resets the backlog cursor', async ({ page }) => {
   for (let id = 100; id < 110; id++) fixture.issues.push({ ...fixture.issues[0], id, subject: `Needle ${id}` });
   await login(page);
   await expect(page.locator('[data-id="backlog"] .kanban-item').first()).toBeVisible();
-  await page.getByLabel('Find an issue').fill('n');
-  await page.getByLabel('Find an issue').fill('nee');
-  await page.getByLabel('Find an issue').fill('needle');
+  await page.getByLabel('Search backlog').fill('n');
+  await page.getByLabel('Search backlog').fill('nee');
+  await page.getByLabel('Search backlog').fill('needle');
   await page.clock.runFor(350);
   // One search for three keystrokes, restarted at offset 0. The stable board lets
   // pagination measure real Cards rather than falling back to an empty-board estimate.
@@ -977,8 +1100,9 @@ test('loads backlog, all sprint statuses and totals without executing issue HTML
   await expect(page.locator('.unmapped-notice')).toContainText('Unmapped status still visible');
   await expect(page.locator('.kanban-board[data-id="other"]')).toHaveCount(0);
   await expect(page.locator('#totals')).toContainText('3estimated hours');
-  await page.getByLabel('Find an issue').fill('#2');
-  await expect(page.locator('#filtered')).toContainText('1 issues · 3 h · 0 unestimated');
+  await page.getByLabel('Search backlog').fill('#2');
+  await expect(page.locator('[data-id="backlog"] footer')).toContainText('No backlog issues match these filters');
+  await expect(page.locator('[data-eid="2"]')).toBeVisible();
   await expect(page.locator('#totals')).toContainText('2issues');
   expect(await page.evaluate(() => window.injected)).toBeUndefined();
   expect(errors).toEqual([]);
@@ -1072,9 +1196,9 @@ test('Show closed opts in to closed unplanned Swimlane-capable issues, and is re
   );
   await login(page, true);
   await expect(page.locator('[data-id="backlog"] .kanban-item')).toHaveCount(3);
-  // The control lives in the Backlog column header, not the toolbar.
-  const toggle = page.locator('[data-id="backlog"] [data-closed-parents]');
-  await expect(toggle).toHaveAttribute('aria-pressed', 'false');
+  // The checkbox lives in the expandable Backlog filter panel.
+  const toggle = page.locator('[data-id="backlog"] #filter-controls #backlog-closed');
+  await expect(toggle).not.toBeChecked();
   await expect(page.locator('[data-id="backlog"] [data-eid="5"]')).toBeVisible();
   await expect(page.locator('[data-eid="6"]')).toHaveCount(0);
   await toggle.click();
@@ -1082,7 +1206,8 @@ test('Show closed opts in to closed unplanned Swimlane-capable issues, and is re
   await expect(page.locator('[data-id="backlog"] .kanban-item')).toHaveCount(4);
   await page.reload();
   await expect(page.locator('#updated')).toContainText('Updated');
-  await expect(page.locator('[data-id="backlog"] [data-closed-parents]')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('#backlog-closed')).toBeChecked();
+  await expect(page.locator('#filter-controls')).toBeHidden();
   await expect(page.locator('[data-id="backlog"] [data-eid="6"]')).toBeVisible();
 });
 
@@ -1091,9 +1216,9 @@ test('all open statuses remain eligible after clearing a search', async ({ page 
   fixture.issues.push({ custom_fields: [{ id: 7, value: '' }], id: 5, subject: 'Unplanned, in progress', status: { id: 2, name: 'Open' }, tracker: { id: 1, name: 'Feature' }, priority: { id: 2, name: 'Normal' }, project: { id: 1, name: 'Team' }, estimated_hours: null });
   await login(page);
   await expect(page.locator('[data-id="backlog"] [data-eid="5"]')).toBeVisible();
-  await page.getByLabel('Find an issue').fill('underway');
+  await page.getByLabel('Search backlog').fill('underway');
   await expect(page.locator('[data-id="backlog"] [data-eid="5"]')).toHaveCount(0);
-  await page.getByLabel('Find an issue').fill('');
+  await page.getByLabel('Search backlog').fill('');
   await expect(page.getByLabel('Show all unplanned')).toHaveCount(0);
   await expect(page.locator('[data-id="backlog"] [data-eid="5"]')).toBeVisible();
 });

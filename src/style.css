@@ -151,10 +151,11 @@ input::placeholder { color: var(--secondary); opacity: 1; }
 .totals div { display: flex; flex-direction: column; gap: 2px; }
 .totals strong { font-size: 20px; line-height: 24px; font-weight: 600; letter-spacing: 0; }
 .totals span { color: var(--secondary); font-size: 12px; line-height: 16px; }
-.filters { display: flex; align-items: end; gap: 16px; padding: 8px 0; border-top: 1px solid var(--line); }
-.filters .search { min-width: 240px; }
+.filters { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; }
+.filters .search { grid-column: 1 / -1; min-width: 0; }
+.filters .field:last-child { grid-column: 1 / -1; }
 .filters .field { display: flex; flex-direction: column; gap: 4px; }
-.filters select { min-width: 136px; }
+.filters select, .filters input { width: 100%; min-width: 0; }
 .search-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; height: 16px; }
 .search-heading label { flex: none; }
 #filtered { margin: 0; }
@@ -212,11 +213,19 @@ input::placeholder { color: var(--secondary); opacity: 1; }
 .scope-toggle:hover:not(:disabled) { background: var(--tag); border-color: transparent; color: var(--text); }
 .scope-toggle[aria-pressed="true"] { color: var(--text); background: var(--tag); }
 .backlog-toggle { margin-left: 0; }
+.kanban-board[data-id="backlog"] header { gap: 6px; }
+.kanban-board[data-id="backlog"] header .kanban-title-board { width: auto; flex: none; }
+#backlog-search { display: flex; align-items: center; gap: 4px; flex: 1; min-width: 0; }
+#toggle-backlog-filters { display: inline-grid; place-items: center; flex: none; width: 20px; height: 24px; padding: 0; border-color: transparent; background: transparent; color: var(--secondary); }
+#toggle-backlog-filters[aria-expanded="true"] svg { transform: rotate(180deg); }
+#workspace #backlog-search #query { width: 100%; min-width: 0; padding-right: 4px; font-size: 12px; }
+.kanban-board[data-id="backlog"]:not(.backlog-collapsed) { min-width: 290px; }
 .kanban-board[data-id="backlog"].backlog-collapsed { flex: 0 0 40px; min-width: 40px; }
 .kanban-board.backlog-collapsed header { flex: 1; height: auto; padding: 8px 0; align-items: flex-start; border-bottom: 0; }
-.kanban-board.backlog-collapsed header.backlog-board .kanban-title-board { flex-direction: column; gap: 12px; }
+.kanban-board[data-id="backlog"].backlog-collapsed header .kanban-title-board { width: 100%; flex-direction: column; gap: 12px; }
 .backlog-collapsed .backlog-label { writing-mode: vertical-rl; }
 .backlog-collapsed .count { display: none; }
+.backlog-collapsed .backlog-filtered { writing-mode: vertical-rl; }
 .kanban-board .kanban-drag {
   flex: 1 1 0; padding: 8px; min-height: 0; overflow-y: auto; overflow-x: hidden;
   overscroll-behavior: contain; display: flex; flex-direction: column; gap: 8px;
@@ -353,10 +362,16 @@ body.board-active { height: 100dvh; overflow: hidden; display: flex; flex-direct
 #editor-notice.error { color: var(--error); background: var(--error-bg); }
 #editor-notice.success { color: var(--success); background: var(--success-bg); }
 #workspace .totals strong { font-size: 16px; line-height: 24px; }
-#workspace .filters { padding: 8px 0; gap: 8px; }
-#filter-controls > summary { display: none; }
+#filter-controls { flex: none; padding: 8px; border-bottom: 1px solid var(--line); min-width: 0; }
+.backlog-filter-footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; }
+.closed-backlog-filter { min-width: 0; gap: 2px; }
+.closed-backlog-filter .checkbox { gap: 4px; }
+.closed-backlog-filter input { margin: 0; }
+#clear-filters { padding: 0 4px; font-size: 11px; }
+#workspace .filters { padding: 0; gap: 8px; }
 #filter-controls .search { min-width: 0; flex: 1; }
-#workspace #filtered { min-width: 0; text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#workspace #filtered { display: block; flex: none; min-width: 0; overflow-wrap: anywhere; }
+#filtered:not(:empty) { padding: 8px; }
 #board[aria-busy="true"] { cursor: progress; }
 #board .kanban-drag { overflow-anchor: none; }
 summary { cursor: pointer; }
@@ -366,7 +381,6 @@ summary { cursor: pointer; }
   .board-active .masthead { padding: 8px; }
   .board-active main { padding: 8px; }
   .statusbar { padding-inline: 8px; }
-  #filter-controls > summary { display: list-item; padding: 4px 0; font-size: 12px; }
   #board { overflow-x: auto; }
   .kanban-board { flex: 1 0 220px; }
   .kanban-container { min-width: 100%; width: max-content !important; }

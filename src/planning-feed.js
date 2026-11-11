@@ -1,12 +1,12 @@
 import { sprintValues, hasSprintField } from './domain.js';
 // Redmine applies server predicates before pagination; tags must be matched locally.
 export const matchesTags = (issue, tags = []) => !tags.length || tags.some(tag => (issue.tags || []).includes(tag));
-export const sprintFiltered = filters => ['query', 'tracker', 'assignee'].some(key => String(filters[key] || '').trim());
 export function issueQuery({ projectId, projectIds = [Number(projectId)], sprintFieldId, sprintId, showClosedParents = false, parentTrackerIds = [] }, filters = {}, backlog = false) {
   const params = {
     project_id: projectId, subproject_id: projectIds.length > 1 ? projectIds.filter(id => id !== Number(projectId)).join('|') : '!*', sort: 'priority:desc,id:asc',
     status_id: backlog && !showClosedParents ? 'open' : '*', [`cf_${sprintFieldId}`]: backlog ? '!*' : sprintId,
   };
+  if (!backlog) return params;
   if (filters.tracker) params.tracker_id = filters.tracker;
   else if (backlog) params.tracker_id = parentTrackerIds.join('|');
   if (filters.assignee) params.assigned_to_id = filters.assignee === 'none' ? '!*' : filters.assignee;
@@ -55,22 +55,22 @@ export class PlanningFeed {
     const controller = this.controller = new AbortController();
     this.loading = true;
     const key = scopeKey(scope), selectedFilters = { ...filters };
-    const filtered = sprintFiltered(selectedFilters);
     try {
       const unfilteredSprint = !scope.sprintId ? Promise.resolve([])
         : !refreshSprint && this.key === key ? Promise.resolve(this.snapshot.sprintAll)
           : this.api.list('/issues.json', 'issues', issueQuery(scope), { signal: controller.signal });
-      const [backlog, rawSprintAll, rawSprintVisible] = await Promise.all([
+      const [backlog, rawSprintAll] = await Promise.all([
         this.backlogPage(scope, selectedFilters, 0, controller.signal),
         unfilteredSprint,
-        scope.sprintId && filtered ? this.api.list('/issues.json', 'issues', issueQuery(scope, selectedFilters), { signal: controller.signal }) : unfilteredSprint,
       ]);
       const validateMembers = items => items.filter(issue => {
         if (!hasSprintField(issue, scope.sprintFieldId)) return false;
         if (!sprintValues(issue, scope.sprintFieldId).includes(scope.sprintId)) throw new Error('Redmine did not apply the Sprint field filter. Check field visibility and “Used as a filter”.');
         return true;
       });
-      const sprintAll = validateMembers(rawSprintAll), sprintVisible = validateMembers(rawSprintVisible);
+      // Backlog predicates never narrow Sprint membership or trigger a Sprint search.
+      const sprintAll = !refreshSprint && this.key === key ? rawSprintAll : validateMembers(rawSprintAll);
+      const sprintVisible = sprintAll;
       if (revision !== this.revision) return null;
       this.key = key; this.scope = { ...scope }; this.filters = selectedFilters; this.cursor = backlog;
       this.snapshot = { backlog: backlog.items, total: selectedFilters.tags?.length && !backlog.hasMore ? backlog.items.length : backlog.total, nextOffset: backlog.nextOffset, hasMore: backlog.hasMore, sprintAll, sprintVisible };

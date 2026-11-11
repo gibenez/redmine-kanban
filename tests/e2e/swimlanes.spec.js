@@ -108,20 +108,21 @@ test('individual removal preserves other Sprint values', async ({ page }) => {
 });
 test('Show closed only controls Backlog parents, not member headings', async ({ page }) => {
   const fixture = await setup(page); fixture.rows[0].status = { id: 5, name: 'Done', is_closed: true }; await refresh(page);
-  const closed = page.getByRole('button', { name: 'Show closed', exact: true });
+  await page.getByRole('button', { name: 'Backlog filters', exact: true }).click();
+  const closed = page.getByRole('checkbox', { name: 'Show closed issues', exact: true });
   await expect(page.getByRole('button', { name: 'Show all unplanned', exact: true })).toHaveCount(0);
-  await expect(closed.locator('svg')).toHaveAttribute('aria-hidden', 'true');
-  await expect(closed).toHaveAttribute('aria-pressed', 'false');
+  await expect(closed).toHaveAccessibleDescription('Include closed issues in Backlog.');
+  await expect(closed).not.toBeChecked();
   await expect(backlog(page, 1)).toHaveCount(0);
-  await page.getByRole('button', { name: 'Show closed', exact: true }).click(); await expect(backlog(page, 1)).toBeVisible();
-  await expect(closed).toHaveAttribute('aria-pressed', 'true');
+  await closed.check(); await expect(backlog(page, 1)).toBeVisible();
+  await expect(closed).toBeChecked();
   fixture.rows[0].custom_fields[0].value = ['100']; await refresh(page);
   await expect(heading(page, 1)).toBeVisible();
-  await page.getByRole('button', { name: 'Show closed', exact: true }).click(); await expect(heading(page, 1)).toBeVisible();
+  await closed.uncheck(); await expect(heading(page, 1)).toBeVisible();
 });
 test('filters retain planned empty headings and no hierarchy controls remain', async ({ page }) => {
-  await setup(page); await page.getByLabel('Find an issue').fill('absent');
-  await expect(page.locator('#filtered')).toContainText('Visible sprint: 0');
+  await setup(page); await page.getByLabel('Search backlog').fill('absent');
+  await expect(page.locator('[data-id="backlog"] footer')).toContainText('No backlog issues match these filters');
   await expect(heading(page, 4)).toBeVisible();
   await expect(page.locator('[data-add-descendants], [data-remove-lane]')).toHaveCount(0);
 });

@@ -10,6 +10,7 @@ const $ = id => document.getElementById(id);
 const storageKey = 'redmine-sprint-board.api-key';
 const collapsedBacklogStorageKey = 'redmine-sprint-board.backlog-collapsed';
 let backlogCollapsed = false;
+let backlogFiltersExpanded = false;
 let showClosedParents = false;
 const closedParentsStorageKey = 'redmine-sprint-board.closed-parents';
 let api, config, statuses = [], projects = [], versions = [], memberships = [], issues = [], board;
@@ -18,6 +19,11 @@ let feed, queryLoading = false, queryTimer, queryRevision = 0, backlogFailed = f
 const observedLists = new WeakSet();
 const mirroredStatusScrolls = new WeakMap();
 const filters = { query: '', tracker: '', assignee: '', tags: [] };
+const backlogFiltered = () => Boolean(filters.query.trim() || filters.tracker || filters.assignee || filters.tags.length);
+function resetFilters() {
+  Object.assign(filters, { query: '', tracker: '', assignee: '', tags: [] });
+  for (const id of ['query', 'tracker', 'assignee', 'backlog-tag']) $(id).value = '';
+}
 const tagsMarkup = issue => (issue.tags || []).map(tag => `<span class="issue-tag">${e(tag)}</span>`).join('');
 let laneAncestors = [], laneMembers;
 let laneResizeObserver;
@@ -71,12 +77,15 @@ function lock() {
   $('refresh').disabled = busy || loading || !api;
   $('refresh').setAttribute('aria-busy', String(loading));
   document.querySelectorAll('#workspace select, #workspace input, #workspace button, #edit-form input, #edit-form select, #edit-form button[type="submit"]').forEach(el => { el.disabled = busy || loading; });
-  document.querySelectorAll('.plan, .scope-toggle').forEach(el => { el.disabled = busy || loading || queryLoading || feed?.loadingMore; });
+  document.querySelectorAll('.plan, .scope-toggle').forEach(el => { el.disabled = busy || loading || (el.closest('[data-id="backlog"]') && (queryLoading || feed?.loadingMore)); });
+  $('tracker').disabled = busy || loading || !eligibleTrackers().length;
   if ($('backlog-more')) $('backlog-more').disabled = busy || loading || queryLoading || feed?.loadingMore;
-  $('workspace').setAttribute('aria-busy', String(busy || loading || queryLoading));
-  $('board').setAttribute('aria-busy', String(loading || queryLoading));
+  $('workspace').setAttribute('aria-busy', String(busy || loading));
+  $('board').setAttribute('aria-busy', String(loading));
 }
 function destroyBoard() {
+  // Preserve the controls and their event listeners when replacing the board.
+  for (const id of ['filter-controls', 'backlog-search', 'filtered']) { $(id).hidden = true; $('workspace').append($(id)); }
   laneResizeObserver?.disconnect(); laneResizeObserver = null;
   board?.drake?.destroy(); board?.drakeBoard?.destroy(); board = null; $('board').replaceChildren();
 }
@@ -92,7 +101,6 @@ function clearBoardCards() {
 function cancelQuery() {
   clearTimeout(queryTimer); queryRevision++; feed?.cancel(); queryLoading = false;
 }
-const closedIssuesIcon = '<svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="5.6"/><path d="m5 8 2 2 4-4"/></svg>';
 function backlogToggle() {
   const label = backlogCollapsed ? 'Expand Backlog' : 'Collapse Backlog';
   return `<button type="button" class="scope-toggle backlog-toggle" data-backlog-collapse aria-label="${label}" title="${label}" aria-expanded="${!backlogCollapsed}" aria-controls="backlog-issues"><svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="${backlogCollapsed ? 'm6 3 5 5-5 5' : 'm10 3-5 5 5 5'}"/></svg></button>`;
@@ -102,6 +110,17 @@ function syncBacklogVisibility() {
   column.classList.toggle('backlog-collapsed', backlogCollapsed);
   list.id = 'backlog-issues'; list.hidden = backlogCollapsed; list.tabIndex = backlogCollapsed ? -1 : 0;
   column.querySelector('footer').hidden = backlogCollapsed;
+  const controls = $('filter-controls');
+  if (controls.parentElement !== column) column.insertBefore(controls, list);
+  controls.hidden = backlogCollapsed || !backlogFiltersExpanded;
+  $('toggle-backlog-filters').setAttribute('aria-expanded', String(backlogFiltersExpanded));
+  $('backlog-closed').checked = showClosedParents;
+  const search = $('backlog-search'), header = column.querySelector('header');
+  if (search.parentElement !== header) header.append(search);
+  search.hidden = backlogCollapsed;
+  const feedback = $('filtered');
+  if (feedback.parentElement !== column) column.insertBefore(feedback, list);
+  feedback.hidden = backlogCollapsed;
   // Hidden Cards must not remain Dragula drop targets.
   if (backlogCollapsed) {
     const index = board.boardContainer.indexOf(list);
@@ -115,7 +134,13 @@ function toggleBacklog() {
   renderBoard();
   $('board').querySelector('[data-backlog-collapse]')?.focus({ preventScroll: true });
 }
-function feedScope() { return { projectId, projectIds: projectScope(projects, projectId), sprintId: sprint?.id, sprintFieldId: config.sprintFieldId, swimlaneTrackers: config.swimlaneTrackers, showClosedParents, parentTrackerIds: [...new Set(projects.flatMap(project => project.trackers || []).filter(tracker => config.swimlaneTrackers.includes(tracker.name)).map(tracker => tracker.id))] }; }
+function eligibleTrackers() {
+  if (!config) return [];
+  const ids = projectScope(projects, projectId);
+  return [...new Map(projects.filter(project => ids.includes(project.id)).flatMap(project => project.trackers || [])
+    .filter(tracker => config.swimlaneTrackers.includes(tracker.name)).map(tracker => [tracker.id, tracker])).values()];
+}
+function feedScope() { return { projectId, projectIds: projectScope(projects, projectId), sprintId: sprint?.id, sprintFieldId: config.sprintFieldId, swimlaneTrackers: config.swimlaneTrackers, showClosedParents, parentTrackerIds: eligibleTrackers().map(tracker => tracker.id) }; }
 function backlogScope() {
   return { sprintFieldId: config.sprintFieldId, swimlaneTrackers: config.swimlaneTrackers, showClosedParents, closedStatusIds: closedStatusIds() };
 }
@@ -130,7 +155,7 @@ async function syncFeed(snapshot) {
 function forget() {
   cancelQuery(); feed = null;
   epoch++; clearInterval(timer); api?.dispose(); api = null; busy = loading = dragging = false;
-  filters.tags = []; $('backlog-tag').value = '';
+  resetFilters();
   try { localStorage.removeItem(storageKey); } catch { /* Storage may be disabled. */ }
   $('api-key').value = ''; $('remember').checked = false;
   $('login-form').querySelector('button').disabled = false;
@@ -155,10 +180,9 @@ function members() {
   return [...map.entries()].sort((a, b) => a[1].localeCompare(b[1]));
 }
 function renderFilters() {
-  const project = projects.find(item => String(item.id) === projectId);
-  const trackerMap = new Map([...(project?.trackers || []), ...(feed?.snapshot.sprintAll || []).map(issue => issue.tracker), ...issues.map(issue => issue.tracker)].map(tracker => [tracker.id, tracker.name]));
-  if (filters.tracker && !trackerMap.has(Number(filters.tracker))) trackerMap.set(Number(filters.tracker), `Tracker #${filters.tracker}`);
-  options($('tracker'), [['', 'All trackers'], ...trackerMap], filters.tracker);
+  const trackers = eligibleTrackers();
+  if (filters.tracker && !trackers.some(tracker => String(tracker.id) === filters.tracker)) filters.tracker = '';
+  options($('tracker'), [['', 'All eligible trackers'], ...trackers.map(tracker => [tracker.id, tracker.name])], filters.tracker);
   const people = members();
   if (filters.assignee && filters.assignee !== 'none' && !people.some(([id]) => String(id) === filters.assignee)) people.push([filters.assignee, $('assignee').selectedOptions[0]?.textContent || `Assignee #${filters.assignee}`]);
   options($('assignee'), [['', 'Everyone'], ['none', 'Unassigned'], ...people], filters.assignee);
@@ -219,18 +243,14 @@ function laneHeading(lane) {
 function renderBoard() {
   if (dragging) return;
   const visible = issues;
-  const total = effort(feed?.snapshot.sprintAll || []), filtered = effort(feed?.snapshot.sprintVisible || []);
+  const total = effort(feed?.snapshot.sprintAll || []);
   renderSprintHeading();
   $('sprint-state').textContent = sprint ? `${sprint.status === 'open' ? 'Open sprint' : 'Closed sprint · read only'}${sprint.due_date ? ` · Due ${sprint.due_date}` : ''}` : 'Create an open product version in Redmine to start planning.';
   const totalsMarkup = `<div><strong>${e(Number(total.hours.toFixed(2)))}</strong><span>estimated hours</span></div><div><strong>${total.count}</strong><span>issues</span></div><div><strong>${total.unestimated}</strong><span>unestimated</span></div>`;
   if ($('totals').innerHTML !== totalsMarkup) $('totals').innerHTML = totalsMarkup;
-  const filtering = ['query', 'tracker', 'assignee'].some(key => String(filters[key]).trim());
-  $('filtered').textContent = filtering
-    ? `Visible sprint: ${filtered.count} issues · ${Number(filtered.hours.toFixed(2))} h · ${filtered.unestimated} unestimated`
-    : '';
   const backlogIds = new Set(feed?.snapshot.backlog.map(issue => issue.id));
   const backlog = visible.filter(issue => backlogIds.has(issue.id));
-  const boards = [{ id: 'backlog', title: `${backlogToggle()}<span class="backlog-label">Backlog</span> <span class="count">${backlog.length} / ${feed?.snapshot.total ?? '?'}</span><button type="button" class="scope-toggle" data-closed-parents aria-label="Show closed" title="Show closed" aria-pressed="${showClosedParents}">${closedIssuesIcon}</button>`, class: 'backlog-board', item: backlog.map(card) }];
+  const boards = [{ id: 'backlog', title: `${backlogToggle()}<span class="backlog-label">Backlog</span> <span class="count">${backlog.length} / ${feed?.snapshot.total ?? '?'}</span>${backlogCollapsed && backlogFiltered() ? '<span class="backlog-filtered muted">Filtered</span>' : ''}`, class: 'backlog-board', item: backlog.map(card) }];
   const lanes = config.swimlaneTrackers.length ? groupSwimlanes(feed?.snapshot.sprintAll || [], feed?.snapshot.sprintVisible || [], config.swimlaneTrackers, laneAncestors) : null;
   for (const [index, statusId] of config.columnStatusIds.entries()) {
     const items = lanes ? lanes.flatMap(lane => lane.visible.filter(issue => issue.status.id === statusId).map(issue => ({ ...card(issue), lane: lane.id })))
@@ -245,8 +265,8 @@ function renderBoard() {
   }
   if (!board) board = new jKanban({
     element: '#board', gutter: '16px', widthBoard: '290px', responsive: 0, dragBoards: false, boards,
-    dragEl: () => { if (busy || loading || queryLoading || feed?.loadingMore || sprint?.status !== 'open') board.drake.cancel(true); else dragging = true; },
-    dragendEl: () => { dragging = false; },
+    dragEl: element => { if (busy || loading || (element.closest('[data-id="backlog"]') && (queryLoading || feed?.loadingMore)) || sprint?.status !== 'open') board.drake.cancel(true); else dragging = true; },
+    dragendEl: () => { dragging = false; queueMicrotask(() => { if (board && !busy) renderBoard(); }); },
     dropEl: (element, target) => {
       const issue = issues.find(item => item.id === Number(element.dataset.eid));
       // Revert the DOM move immediately; only render a confirmed server state.
@@ -282,7 +302,7 @@ function renderBoard() {
     }, { passive: true });
   }
   renderBacklogFooter(); syncBacklogVisibility(); alignSwimlanes(board.container); lock();
-  $('empty').hidden = visible.length > 0;
+  $('empty').hidden = true;
 }
 
 function renderBacklogFooter() {
@@ -294,9 +314,13 @@ function renderBacklogFooter() {
   let text = footer.querySelector('span');
   if (!text) { text = document.createElement('span'); text.className = 'muted'; footer.append(text); }
   const message = queryLoading ? 'Updating results…' : searchFailed ? 'Previous results · search failed'
+    : !feed.snapshot.backlog.length && backlogFiltered() ? 'No backlog issues match these filters'
+    : !feed.snapshot.backlog.length ? 'No backlog issues'
     : !feed.snapshot.hasMore ? 'All matching backlog issues loaded'
       : feed.loadingMore ? 'Loading…' : 'Scroll to load more';
   if (text.textContent !== message) text.textContent = message;
+  $('filtered').textContent = queryLoading ? 'Searching backlog…' : searchFailed ? 'Search unavailable · showing previous results' : '';
+  $('clear-filters').hidden = !backlogFiltered();
   // A page that failed cannot rely on scrolling to retry: the column may already be at its
   // bottom, so no further scroll event would fire. Keep an explicit control for that case.
   if (feed.snapshot.hasMore && backlogFailed && !feed.loadingMore && !queryLoading && !searchFailed) {
@@ -356,9 +380,9 @@ async function searchIssues(revision) {
   } catch (error) {
     if (revision === queryRevision) {
       searchFailed = true;
-      if (error.status === 403) blockedProjectId = projectId;
       $('filtered').textContent = 'Search unavailable · showing previous results';
-      notify(`Search failed: ${error.message} Change the search or use Refresh to retry.`, true);
+      // Keep failure feedback inside Backlog; Sprint content and access are unaffected.
+      $('filtered').title = error.message;
     }
   } finally {
     if (revision === queryRevision) { queryLoading = false; lock(); renderBacklogFooter(); }
@@ -366,9 +390,8 @@ async function searchIssues(revision) {
 }
 function scheduleSearch(delay) {
   cancelQuery(); queryLoading = true; searchFailed = false; notify('');
-  board?.drake?.cancel(true); dragging = false;
   // Keep the last confirmed view throughout debounce and the network request.
-  $('filtered').textContent = 'Searching Redmine…'; lock(); renderBacklogFooter();
+  $('filtered').removeAttribute('title'); lock(); renderBacklogFooter();
   const revision = queryRevision;
   queryTimer = setTimeout(() => void searchIssues(revision), delay);
 }
@@ -397,6 +420,7 @@ async function refresh(projectChanged = false, retryDenied = false) {
     if (stamp !== epoch) return;
     versions = newVersions.filter(version => Number(version.project?.id) === Number(projectId) && version.sharing !== 'none'); memberships = newMemberships;
     chooseSprint(projectChanged ? null : sprint?.id);
+    renderFilters();
     feed.pageSize = backlogPageSize(); backlogFailed = false;
     const next = await feed.load(feedScope(), filters);
     if (!next || stamp !== epoch) return;
@@ -423,7 +447,7 @@ async function refresh(projectChanged = false, retryDenied = false) {
 
 async function mutate(id, patch) {
   const issue = issues.find(item => item.id === id) || feed?.snapshot.sprintAll.find(item => item.id === id);
-  if (busy || loading || queryLoading || feed?.loadingMore || !api) return;
+  if (busy || loading || !api) return;
   if (!Object.keys(patch).length) { renderBoard(); return; }
   cancelQuery(); busy = true; lock();
   const stamp = epoch;
@@ -466,7 +490,7 @@ async function mutate(id, patch) {
 }
 
 async function openEditor(id) {
-  if (busy || loading || queryLoading || feed?.loadingMore) return;
+  if (busy || loading) return;
   loading = true; lock();
   const stamp = epoch;
   try {
@@ -527,11 +551,6 @@ async function connect(key, remember) {
   } finally { if (stamp === epoch) { loading = false; $('login-form').querySelector('button').disabled = false; lock(); } }
 }
 
-const compactViewport = window.matchMedia('(max-width: 1279px), (max-height: 719px)');
-function syncCompactControls() { $('filter-controls').open = !compactViewport.matches; }
-compactViewport.addEventListener('change', syncCompactControls);
-syncCompactControls();
-
 $('user-popover').addEventListener('beforetoggle', event => {
   if (event.newState === 'open') positionUserPopover();
 });
@@ -549,8 +568,7 @@ $('login-form').addEventListener('submit', event => { event.preventDefault(); vo
 $('project').addEventListener('change', () => {
   cancelQuery(); feed = newFeed();
   projectId = $('project').value; issues = []; sprint = null; versions = []; memberships = [];
-  Object.assign(filters, { query: '', tracker: '', assignee: '', tags: [] }); $('query').value = '';
-  $('backlog-tag').value = '';
+  resetFilters(); renderFilters();
   clearBoardCards(); void refresh(true);
 });
 $('sprint').addEventListener('change', () => {
@@ -565,6 +583,16 @@ for (const [id, field, eventName] of [['query', 'query', 'input'], ['tracker', '
 $('backlog-tag').addEventListener('input', () => {
   const tag = $('backlog-tag').value.trim();
   filters.tags = tag ? [tag] : []; scheduleSearch(300);
+});
+$('clear-filters').addEventListener('click', () => { resetFilters(); scheduleSearch(0); $('query').focus(); });
+$('toggle-backlog-filters').addEventListener('click', () => {
+  backlogFiltersExpanded = !backlogFiltersExpanded;
+  syncBacklogVisibility();
+});
+$('backlog-closed').addEventListener('change', () => {
+  showClosedParents = $('backlog-closed').checked;
+  try { localStorage.setItem(closedParentsStorageKey, showClosedParents ? '1' : '0'); } catch { /* Optional preference. */ }
+  scheduleSearch(0);
 });
 $('board').addEventListener('toggle', () => { if (board) alignSwimlanes(board.container); }, { capture: true });
 // Shared headers live outside the status scrollports; wheel over their links and
@@ -597,11 +625,6 @@ $('board').addEventListener('click', event => {
 }, { capture: true });
 $('board').addEventListener('click', event => {
   if (event.target.closest('[data-backlog-collapse]')) { toggleBacklog(); return; }
-  if (event.target.closest('[data-closed-parents]')) {
-    showClosedParents = !showClosedParents;
-    try { localStorage.setItem(closedParentsStorageKey, showClosedParents ? '1' : '0'); } catch { /* Optional preference. */ }
-    scheduleSearch(0); return;
-  }
   const button = event.target.closest('[data-edit]'); if (button) void openEditor(Number(button.dataset.edit));
 });
 $('close-editor').addEventListener('click', () => { if (!busy) { $('editor').close(); editing = null; } });

@@ -10,7 +10,8 @@ const deferred = () => { let resolve; const promise = new Promise(r => { resolve
 describe('server-side issue queries', () => {
   it('applies project, backlog, search and filters before stable server sorting/pagination', () => {
     expect(issueQuery(scope, { query: 'Needs review', tracker: '3', assignee: 'none' }, true)).toEqual({ project_id: '2', subproject_id: '!*', sort: 'priority:desc,id:asc', status_id: 'open', cf_7: '!*', subject: '~Needs review', tracker_id: '3', assigned_to_id: '!*' });
-    expect(issueQuery(scope, { query: ' #123 ', assignee: '7' })).toMatchObject({ issue_id: '123', assigned_to_id: '7', cf_7: 10, status_id: '*' });
+    expect(issueQuery(scope, { query: ' #123 ', assignee: '7' }, true)).toMatchObject({ issue_id: '123', assigned_to_id: '7', cf_7: '!*', status_id: 'open' });
+    expect(issueQuery(scope, { query: '#123', tracker: '3', assignee: '7' })).toEqual(issueQuery(scope));
     expect(issueQuery({ ...scope, projectIds: [2, 3, 4] })).toMatchObject({ subproject_id: '3|4' });
     expect(issueQuery(scope, { query: '123' })).not.toHaveProperty('subject');
   });
@@ -107,14 +108,13 @@ describe('bounded backlog feed', () => {
     expect(feed.snapshot.backlog.map(i => i.id)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
     await feed.next(); expect(api.page).toHaveBeenCalledTimes(2);
   });
-  it('reuses whole-sprint totals while querying filtered sprint/backlog results from the server', async () => {
+  it('reuses all Sprint members while querying only filtered Backlog results from the server', async () => {
     const api = { page: vi.fn().mockResolvedValue(page([1])), list: vi.fn().mockResolvedValueOnce([row(20, '10'), row(21, '10')]).mockResolvedValueOnce([row(21, '10')]) };
     const feed = new PlanningFeed(api);
     await feed.load(scope, filters);
     await feed.load(scope, { ...filters, query: 'unloaded subject' }, { refreshSprint: false });
-    expect(api.list).toHaveBeenCalledTimes(2);
-    expect(api.list.mock.calls[1][2]).toHaveProperty('subject', '~unloaded subject');
-    expect(feed.snapshot.sprintAll).toHaveLength(2); expect(feed.snapshot.sprintVisible).toHaveLength(1);
+    expect(api.list).toHaveBeenCalledTimes(1);
+    expect(feed.snapshot.sprintAll).toHaveLength(2); expect(feed.snapshot.sprintVisible).toBe(feed.snapshot.sprintAll);
     expect(api.page.mock.calls[1][2]).toMatchObject({ subject: '~unloaded subject', offset: 0, limit: 5 });
   });
   it('discards a superseded search even when the server ignores cancellation', async () => {
