@@ -1,4 +1,5 @@
 import { sprintValues, hasSprintField } from './domain.js';
+import { settledResults } from './settled-results.js';
 // Redmine applies server predicates before pagination; tags must be matched locally.
 export const matchesTags = (issue, tags = []) => !tags.length || tags.some(tag => (issue.tags || []).includes(tag));
 export function issueQuery({ projectId, projectIds = [Number(projectId)], sprintFieldId, sprintId, showClosedParents = false, parentTrackerIds = [] }, filters = {}, backlog = false) {
@@ -59,7 +60,7 @@ export class PlanningFeed {
       const unfilteredSprint = !scope.sprintId ? Promise.resolve([])
         : !refreshSprint && this.key === key ? Promise.resolve(this.snapshot.sprintAll)
           : this.api.list('/issues.json', 'issues', issueQuery(scope), { signal: controller.signal });
-      const [backlog, rawSprintAll] = await Promise.all([
+      const [backlog, rawSprintAll] = await settledResults([
         this.backlogPage(scope, selectedFilters, 0, controller.signal),
         unfilteredSprint,
       ]);

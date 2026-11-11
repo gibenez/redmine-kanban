@@ -160,7 +160,7 @@ for (const control of ['query', 'tracker', 'assignee']) {
   });
 }
 
-test('Sprint dragging and planning remain usable during a pending Backlog search', async ({ page }) => {
+test('Backlog search blocks Sprint interaction until loading finishes', async ({ page }) => {
   const fixture = await setup(page); await login(page);
   let release, started;
   const gate = new Promise(resolve => { release = resolve; });
@@ -173,22 +173,25 @@ test('Sprint dragging and planning remain usable during a pending Backlog search
   await page.getByLabel('Search backlog').fill('absent');
   await requestStarted;
   try {
-    await expect(page.getByRole('button', { name: 'Plan #2', exact: true })).toBeEnabled();
-    await drag(page, 2, 'status-3');
-    await expect.poll(() => fixture.writes.length).toBe(1);
-    await expect(page.locator('[data-id="status-3"] [data-eid="2"]')).toBeVisible();
-    await page.getByRole('button', { name: 'Plan #2', exact: true }).click();
-    await expect(page.locator('#editor')).toBeVisible();
+    await expect(page.locator('#loading-overlay')).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#loading-overlay')).toBeVisible();
+    expect(fixture.writes).toEqual([]);
   } finally { release(); }
+  await expect(page.locator('#loading-overlay')).not.toBeVisible();
+  await page.getByRole('button', { name: 'Plan #2', exact: true }).click();
+  await expect(page.locator('#editor')).toBeVisible();
 });
 
 test('filters survive refresh and Sprint switches, but reset on project change and sign-out', async ({ page }) => {
   await setup(page); await login(page);
   await page.getByLabel('Tracker', { exact: true }).selectOption('1');
+  await expect(page.locator('[data-id="backlog"] .kanban-drag')).toHaveAttribute('aria-busy', 'false');
   await page.getByLabel('Assignee', { exact: true }).selectOption('none');
+  await expect(page.locator('[data-id="backlog"] .kanban-drag')).toHaveAttribute('aria-busy', 'false');
   await page.getByLabel('Search backlog').fill('Build');
   await expect(page.locator('[data-id="backlog"] .kanban-item')).toHaveCount(1);
-  await page.getByRole('button', { name: 'Refresh', exact: true }).click();
+  await page.getByRole('button', { name: 'Refresh now', exact: true }).click();
   await expect(page.locator('#workspace')).toHaveAttribute('aria-busy', 'false');
   await expect(page.getByLabel('Search backlog')).toHaveValue('Build');
   await page.getByLabel('Include closed sprints').check();
@@ -363,7 +366,9 @@ test('a delayed old search cannot overwrite newer results', async ({ page }) => 
   });
   await page.getByLabel('Search backlog').fill('Build');
   await firstRequest;
-  await page.getByLabel('Search backlog').fill('Already');
+  // Simulate a superseding application event; real user input is blocked by
+  // the overlay, but stale-response protection must still hold.
+  await page.locator('#query').evaluate(input => { input.value = 'Already'; input.dispatchEvent(new Event('input', { bubbles: true })); });
   try {
     await expect(page.locator('#workspace')).toHaveAttribute('aria-busy', 'false');
     await expect(page.locator('[data-id="backlog"] .kanban-item')).toHaveCount(0);
@@ -384,7 +389,7 @@ test('refresh patches changed fields without replacing cards or their controls',
   fixture.issues[1].subject = 'Updated on Redmine';
   fixture.issues[1].priority = { id: 5, name: 'Urgent' };
   fixture.issues[1].estimated_hours = 8;
-  await page.getByRole('button', { name: 'Refresh', exact: true }).click();
+  await page.getByRole('button', { name: 'Refresh now', exact: true }).click();
   await expect(page.locator('[data-eid="2"] h3')).toHaveText('Updated on Redmine');
   await expect(page.locator('[data-eid="2"]')).toHaveClass(/prio-urgent/);
   await expect(page.locator('[data-eid="2"] .card-footer strong')).toHaveText('8 h');
@@ -489,7 +494,7 @@ test('dark mode follows the system preference on login, board and dialogs', asyn
   await expect(page.locator('#editor')).toHaveCSS('background-color', 'rgb(30, 31, 34)');
   await page.getByRole('button', { name: 'Close editor' }).click();
   await page.route('**/redmine/issues.json?**', route => route.fulfill({ status: 422, json: { errors: ['A theme test error'] } }));
-  await page.getByRole('button', { name: 'Refresh', exact: true }).click();
+  await page.getByRole('button', { name: 'Refresh now', exact: true }).click();
   await expect(page.locator('#notice.error')).toContainText('A theme test error');
   await expect(page.locator('#notice')).toHaveCSS('color', 'rgb(255, 188, 170)');
   await expect(page.locator('#notice')).toHaveCSS('background-color', 'rgb(56, 37, 31)');
@@ -554,6 +559,69 @@ for (const [user, initials] of [
   });
 }
 
+test('autorefresh is opt-in, waits an interval, survives scope switches and resets on reload/sign-out', async ({ page }) => {
+  await page.clock.install();
+  const fixture = await setup(page); await login(page);
+  const toggle = page.getByRole('button', { name: 'Autorefresh', exact: true });
+  const count = () => fixture.requests.filter(request => new URL(request.url()).pathname.endsWith('/versions.json')).length;
+  await expect(toggle).toHaveAttribute('aria-pressed', 'false');
+  const initial = count();
+  await page.clock.runFor(125000);
+  expect(count()).toBe(initial);
+  await toggle.click();
+  await expect(toggle).toHaveAttribute('aria-pressed', 'true');
+  await expect(toggle).toHaveAttribute('title', 'Autorefresh on — disable');
+  await page.clock.runFor(59000);
+  expect(count()).toBe(initial);
+  await page.clock.runFor(1000);
+  await expect.poll(count).toBe(initial + 1);
+  await expect(page.locator('#loading-overlay')).not.toBeVisible();
+  await toggle.click();
+  const stopped = count();
+  await page.clock.runFor(125000);
+  expect(count()).toBe(stopped);
+  // Visibility-return remains independent from timed polling.
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+  await expect.poll(count).toBe(stopped + 1);
+  await expect(page.locator('#loading-overlay')).not.toBeVisible();
+  await toggle.click();
+  await page.getByLabel('Project', { exact: true }).selectOption('2');
+  await expect(page.locator('#loading-overlay')).not.toBeVisible();
+  await expect(toggle).toHaveAttribute('aria-pressed', 'true');
+  await signOut(page);
+  await login(page);
+  await expect(toggle).toHaveAttribute('aria-pressed', 'false');
+  await toggle.click();
+  await page.reload();
+  await expect(page.locator('#login')).toBeVisible();
+  await expect(page.locator('#refresh')).toHaveAttribute('aria-pressed', 'false');
+});
+
+test('loading overlay blocks login and keyboard interaction, cannot be escaped, and clears on failure', async ({ page }) => {
+  await setup(page);
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  await page.route('**/redmine/users/current.json', async route => {
+    await gate; await route.fulfill({ status: 401, json: {} });
+  });
+  await page.goto('/');
+  await page.getByLabel('Personal API key').fill('invalid');
+  await page.getByRole('button', { name: 'Connect to Redmine' }).click();
+  const overlay = page.locator('#loading-overlay');
+  try {
+    await expect(overlay).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(overlay).toBeVisible();
+    await page.keyboard.press('Tab');
+    expect(await page.evaluate(() => document.activeElement.closest('#loading-overlay') !== null || document.activeElement === document.body)).toBe(true);
+    const bounds = await overlay.boundingBox();
+    expect(bounds.width).toBe(1440); expect(bounds.height).toBe(1000);
+  } finally { release(); }
+  await expect(overlay).not.toBeVisible();
+  await expect(page.locator('#notice')).toContainText('Invalid or revoked API key');
+  await expect(page.getByRole('button', { name: 'Connect to Redmine' })).toBeEnabled();
+});
+
 for (const viewport of [{ width: 1280, height: 720 }, { width: 390, height: 650 }]) {
   test(`refresh lives in the topbar and last update in a thin bottom bar at ${viewport.width}px`, async ({ page }) => {
     await page.setViewportSize(viewport);
@@ -562,7 +630,7 @@ for (const viewport of [{ width: 1280, height: 720 }, { width: 390, height: 650 
     await expect(page.locator('#refresh')).not.toBeVisible();
     await expect(page.locator('#statusbar')).not.toBeVisible();
     await login(page);
-    const refresh = page.getByRole('banner').getByRole('button', { name: 'Refresh', exact: true });
+    const refresh = page.locator('#refresh-now');
     const statusbar = page.getByRole('contentinfo', { name: 'Board status' });
     await expect(refresh).toBeInViewport();
     await expect(refresh).toHaveText('');
@@ -581,11 +649,15 @@ for (const viewport of [{ width: 1280, height: 720 }, { width: 390, height: 650 
     await page.route('**/redmine/issues.json?**', async route => { await gate; await route.fallback(); });
     await refresh.click();
     try {
+      await expect(page.locator('#loading-overlay')).toBeVisible();
+      await page.keyboard.press('Escape');
+      await expect(page.locator('#loading-overlay')).toBeVisible();
       await expect(refresh).toBeDisabled();
       await expect(refresh).toHaveAttribute('aria-busy', 'true');
       await expect(page.locator('#updated')).toHaveText(previousUpdate);
       expect(await statusbar.boundingBox()).toEqual(status);
     } finally { release(); }
+    await expect(page.locator('#loading-overlay')).not.toBeVisible();
     await expect(refresh).toBeEnabled();
     await expect(refresh).toHaveAttribute('aria-busy', 'false');
     expect(fixture.requests.length).toBeGreaterThan(previousRequests);
@@ -808,7 +880,7 @@ test('long Backlog search errors stay local and keep the board usable', async ({
   await expect(page.locator('#notice')).toBeHidden();
   await expect(page.getByRole('button', { name: 'Plan #2', exact: true })).toBeEnabled();
   expect(await page.evaluate(() => document.scrollingElement.scrollHeight)).toBe(720);
-  await expect(page.getByRole('button', { name: 'Refresh', exact: true })).toBeInViewport();
+  await expect(page.getByRole('button', { name: 'Refresh now', exact: true })).toBeInViewport();
 });
 
 test('compact board exposes filters and allows board-only horizontal scrolling', async ({ page }) => {
@@ -885,7 +957,7 @@ test('collapsed Backlog survives refresh, filters and reconnecting without drain
   await page.getByRole('button', { name: 'Collapse Backlog', exact: true }).click();
   const backlogRequests = () => fixture.requests.filter(request => new URL(request.url()).searchParams.get('cf_7') === '!*').length;
   const before = backlogRequests();
-  await page.getByRole('button', { name: 'Refresh', exact: true }).click();
+  await page.getByRole('button', { name: 'Refresh now', exact: true }).click();
   await expect(page.locator('#workspace')).toHaveAttribute('aria-busy', 'false');
   expect(backlogRequests()).toBe(before + 1);
   await expect(page.getByRole('button', { name: 'Expand Backlog', exact: true })).toBeVisible();
@@ -945,7 +1017,20 @@ test('scrolling appends another page without duplicates or reloading metadata', 
   const metadataCount = fixture.requests.filter(request => new URL(request.url()).pathname.endsWith('/versions.json')).length;
   const firstPage = Number(new URL(fixture.requests.filter(request => new URL(request.url()).searchParams.get('cf_7') === '!*')[0].url()).searchParams.get('limit'));
   await expect(count).toHaveCount(firstPage);
+  let release, started;
+  const gate = new Promise(resolve => { release = resolve; });
+  const requestStarted = new Promise(resolve => { started = resolve; });
+  await page.route('**/redmine/issues.json?**', async route => {
+    if (Number(new URL(route.request().url()).searchParams.get('offset')) > 0) { started(); await gate; }
+    await route.fallback();
+  });
   await column.evaluate(element => { element.scrollTop = element.scrollHeight; });
+  await requestStarted;
+  try {
+    await expect(page.locator('#loading-overlay')).not.toBeVisible();
+    await page.getByRole('button', { name: 'Autorefresh', exact: true }).click();
+    await expect(page.locator('#refresh')).toHaveAttribute('aria-pressed', 'true');
+  } finally { release(); }
   expect(await column.evaluate(element => element.scrollTop)).toBeGreaterThan(0);
   await expect.poll(() => count.count()).toBeGreaterThan(firstPage);
   await expect(page.locator('[data-id="backlog"] .kanban-drag')).toHaveAttribute('aria-busy', 'false');
@@ -1078,11 +1163,12 @@ test('versions 403 pauses polling but manual Refresh retries after permissions c
   await page.getByLabel('Personal API key').fill('test-personal-key');
   await page.getByRole('button', { name: 'Connect to Redmine' }).click();
   await expect(page.locator('#notice')).toContainText('Cannot load sprints');
-  await expect(page.getByRole('button', { name: 'Refresh', exact: true })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Refresh now', exact: true })).toBeEnabled();
+  await page.getByRole('button', { name: 'Autorefresh', exact: true }).click();
   await page.clock.runFor(125000);
   expect(count()).toBe(1);
   fixture.allowVersions();
-  await page.getByRole('button', { name: 'Refresh', exact: true }).click();
+  await page.getByRole('button', { name: 'Refresh now', exact: true }).click();
   await expect(page.locator('#updated')).toContainText('Updated');
   await expect(page.locator('#notice')).toBeHidden();
   expect(count()).toBe(2);
@@ -1117,7 +1203,7 @@ test('keyboard-accessible planner changes sprint, assignee and estimate', async 
   await page.getByLabel('Estimated hours', { exact: true }).fill('5.5');
   await page.getByLabel('Planning destination').selectOption('sprint');
   await page.getByRole('button', { name: 'Save changes' }).click();
-  await expect(page.getByRole('dialog')).not.toBeVisible();
+  await expect(page.locator('#editor')).not.toBeVisible();
   await expect(page.locator('.swimlane-headers')).toContainText('Build backlog feature');
   expect(writes).toEqual([{ assigned_to_id: 7, estimated_hours: 5.5, custom_fields: [{ id: 7, value: '10' }] }]);
 });
@@ -1249,7 +1335,7 @@ test('saving an unchanged issue does not send read-only fields back to Redmine',
   const fixture = await setup(page); await login(page);
   await page.getByRole('button', { name: 'Plan #2', exact: true }).click();
   await page.getByRole('button', { name: 'Save changes' }).click();
-  await expect(page.getByRole('dialog')).not.toBeVisible();
+  await expect(page.locator('#editor')).not.toBeVisible();
   expect(fixture.writes).toEqual([]);
 });
 

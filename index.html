@@ -13,7 +13,7 @@
 <body>
   <header class="masthead">
     <div class="brand"><span class="brand-mark"><img src="/branding/redmine-logo.png" width="32" height="32" alt="Redmine"></span><div><span class="eyebrow">Redmine / Team planning</span><h1>Sprint board</h1></div></div>
-    <div class="masthead-actions"><button id="refresh" class="refresh-button" type="button" aria-label="Refresh" title="Refresh board" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6.1 6.1A8 8 0 0 1 20 12M4 12a8 8 0 0 0 13.9 5.9"/></svg></button><button id="theme" class="theme-button" type="button" data-theme="system" aria-label="Appearance: System. Switch to Light" title="Appearance: System. Switch to Light">
+    <div class="masthead-actions"><button id="refresh" class="refresh-button" type="button" aria-label="Autorefresh" aria-pressed="false" title="Autorefresh off — enable" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6.1 6.1A8 8 0 0 1 20 12M4 12a8 8 0 0 0 13.9 5.9"/><path class="autorefresh-check" d="m8 12 3 3 5-6"/></svg></button><button id="refresh-now" class="refresh-button" type="button" aria-label="Refresh now" title="Refresh now" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M20 5v6h-6M20 11a8 8 0 1 0-2 7"/></svg></button><button id="theme" class="theme-button" type="button" data-theme="system" aria-label="Appearance: System. Switch to Light" title="Appearance: System. Switch to Light">
       <svg data-theme-icon="system" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8m-4-4v4"/></svg>
       <svg data-theme-icon="light" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true" focusable="false" hidden><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.4 1.4m11.2 11.2L19 19M5 19l1.4-1.4M17.6 6.4 19 5"/></svg>
       <svg data-theme-icon="dark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false" hidden><path d="M20.5 14.5A9 9 0 0 1 9.5 3.5a9 9 0 1 0 11 11Z"/></svg>
@@ -72,6 +72,7 @@
       <div><dt>Search backlog</dt><dd>Search Backlog by subject or exact issue ID, such as #123. Combine Tracker, Assignee and exact Backlog tag filters. Only Swimlane-capable trackers are offered. Clear filters resets these four controls, not Show closed. Scroll each Column independently; Backlog loads more as you scroll.</dd></div>
       <div><dt>Widen the Backlog</dt><dd>Backlog shows Unplanned Swimlane-capable issues in all open statuses; Show closed also includes closed issues. Use the chevron in the Backlog header to collapse it and its filters into a narrow rail. Active filters are retained and indicated by “Filtered”. This browser remembers the collapsed state; expand Backlog before dragging Cards into it.</dd></div>
       <div><dt>Permissions stay yours</dt><dd>Closed Sprints are read only. Redmine checks your permissions and workflow; changes appear only after they are confirmed. Open an issue ID to view its details in Redmine.</dd></div>
+      <div><dt>Refresh the Sprint Board</dt><dd>Autorefresh starts off. Toggle it in the top bar to enable periodic polling for this session, or use Refresh now for a one-time update. Returning to the tab still refreshes when polling is off. Loading and saving block interaction until finished; scrolling to load more Backlog issues does not.</dd></div>
     </dl>
     <p class="muted guide-hint">Press Esc or use × to close this guide.</p>
   </dialog>
@@ -93,6 +94,9 @@
       <select id="edit-destination"><option value="sprint">Selected sprint</option><option value="backlog">Remove from sprint (keep status)</option></select>
       <div class="dialog-actions"><a id="issue-link" target="_blank" rel="noopener noreferrer">Open in Redmine ↗</a><button type="submit" class="primary">Save changes</button></div>
     </form>
+  </dialog>
+  <dialog id="loading-overlay" aria-labelledby="loading-message" aria-busy="true" tabindex="-1">
+    <div role="status" aria-live="polite"><span class="loading-spinner" aria-hidden="true"></span><p id="loading-message">Loading… Please wait.</p></div>
   </dialog>
   <script src="/vendor/jkanban.min.js"></script>
   <script type="module" src="/src/main.js"></script>

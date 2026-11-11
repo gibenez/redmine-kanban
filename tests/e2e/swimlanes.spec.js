@@ -45,7 +45,7 @@ const heading = (page, id) => page.locator(`.swimlane-headers > [data-lane="${id
 const backlog = (page, id) => page.locator(`[data-id="backlog"] [data-eid="${id}"]`);
 const laneCard = (page, lane, id) => page.locator(`[data-id="status-1"] [data-lane="${lane}"] [data-eid="${id}"]`);
 async function refresh(page) {
-  await page.getByRole('button', { name: 'Refresh', exact: true }).click();
+  await page.getByRole('button', { name: 'Refresh now', exact: true }).click();
   await expect(page.locator('#workspace')).toHaveAttribute('aria-busy', 'false');
 }
 

@@ -6,8 +6,11 @@ import { validateConfig, isBacklog, effort, movePatch, parseEstimate, assertTran
 import { PlanningFeed } from './planning-feed.js';
 import { isSwimlane, loadAncestors, groupSwimlanes } from './swimlanes.js';
 import { collectMissingSubtasks, planDescendants } from './descendant-planning.js';
+import { createLoadingOverlay } from './loading-overlay.js';
+import { settledResults } from './settled-results.js';
 
 const $ = id => document.getElementById(id);
+const beginLoading = createLoadingOverlay($('loading-overlay'));
 const storageKey = 'redmine-sprint-board.api-key';
 const collapsedBacklogStorageKey = 'redmine-sprint-board.backlog-collapsed';
 let backlogCollapsed = false;
@@ -16,6 +19,14 @@ let showClosedParents = false;
 const closedParentsStorageKey = 'redmine-sprint-board.closed-parents';
 let api, config, statuses = [], projects = [], versions = [], memberships = [], issues = [], board;
 let sprint = null, projectId = '', blockedProjectId = '', busy = false, dragging = false, loading = false, epoch = 0, timer, editing;
+let autorefresh = false;
+function setAutorefresh(enabled) {
+  autorefresh = enabled;
+  clearInterval(timer);
+  if (enabled) timer = setInterval(() => { if (document.visibilityState === 'visible') void refresh(); }, config.refreshSeconds * 1000);
+  $('refresh').setAttribute('aria-pressed', String(enabled));
+  $('refresh').title = `Autorefresh ${enabled ? 'on — disable' : 'off — enable'}`;
+}
 let feed, queryLoading = false, queryTimer, queryRevision = 0, backlogFailed = false, searchFailed = false;
 const observedLists = new WeakSet();
 const mirroredStatusScrolls = new WeakMap();
@@ -76,8 +87,9 @@ function options(select, rows, selected = '') {
   select.value = String(selected);
 }
 function lock() {
-  $('refresh').disabled = busy || loading || !api;
-  $('refresh').setAttribute('aria-busy', String(loading));
+  $('refresh').disabled = !api;
+  $('refresh-now').disabled = busy || loading || !api;
+  $('refresh-now').setAttribute('aria-busy', String(loading));
   document.querySelectorAll('#workspace select, #workspace input, #workspace button, #edit-form input, #edit-form select, #edit-form button[type="submit"]').forEach(el => { el.disabled = busy || loading; });
   document.querySelectorAll('.plan, .scope-toggle').forEach(el => { el.disabled = busy || loading || (el.closest('[data-id="backlog"]') && (queryLoading || feed?.loadingMore)); });
   $('tracker').disabled = busy || loading || !eligibleTrackers().length;
@@ -172,7 +184,7 @@ async function syncFeed(snapshot) {
 }
 function forget() {
   cancelQuery(); feed = null;
-  epoch++; clearInterval(timer); api?.dispose(); api = null; busy = loading = dragging = false;
+  epoch++; setAutorefresh(false); api?.dispose(); api = null; busy = loading = dragging = false;
   resetFilters();
   try { localStorage.removeItem(storageKey); } catch { /* Storage may be disabled. */ }
   $('api-key').value = ''; $('remember').checked = false;
@@ -183,7 +195,7 @@ function forget() {
   document.body.classList.remove('board-active');
   $('notice-dialog').close(); $('help-dialog').close();
   $('user-popover').hidePopover(); $('identity').hidden = true;
-  $('refresh').hidden = true; $('refresh').disabled = true; $('statusbar').hidden = true; $('updated').textContent = '';
+  $('refresh').hidden = true; $('refresh').disabled = true; $('refresh-now').hidden = true; $('statusbar').hidden = true; $('updated').textContent = '';
   $('user-avatar').textContent = ''; $('user-avatar').setAttribute('aria-label', 'Account'); $('user-avatar').removeAttribute('title'); $('user-name').textContent = '';
   $('workspace').hidden = true; $('login').hidden = false; $('api-key').focus(); notify('API key forgotten on this browser.');
 }
@@ -397,6 +409,8 @@ async function loadMoreBacklog({ silent = false } = {}) {
   }
 }
 async function searchIssues(revision) {
+  if (revision !== queryRevision) return;
+  const finishLoading = beginLoading();
   try {
     feed.pageSize = backlogPageSize();
     const snapshot = await feed.load(feedScope(), filters, { refreshSprint: false });
@@ -412,6 +426,7 @@ async function searchIssues(revision) {
     }
   } finally {
     if (revision === queryRevision) { queryLoading = false; lock(); renderBacklogFooter(); }
+    finishLoading();
   }
 }
 function scheduleSearch(delay) {
@@ -433,10 +448,11 @@ async function refresh(projectChanged = false, retryDenied = false) {
   cancelQuery();
   if (projectChanged || retryDenied) notify('');
   loading = true; lock();
+  const finishLoading = beginLoading();
   const stamp = epoch;
   try {
     const project = projects.find(item => String(item.id) === projectId);
-    const [newVersions, newMemberships] = await Promise.all([
+    const [newVersions, newMemberships] = await settledResults([
       api.list(`/projects/${projectId}/versions.json`, 'versions').catch(error => {
         if (error.status === 403) throw new RedmineError(`Cannot load sprints for project "${project?.name || projectId}" (#${projectId}): Redmine returned 403 Forbidden. Check that Issue tracking is enabled and your project role has View issues permission. If both are correct, check plugin or gateway restrictions. Select another project, or click Refresh after access is corrected.`, 403);
         throw error;
@@ -468,12 +484,13 @@ async function refresh(projectChanged = false, retryDenied = false) {
         $('totals').replaceChildren(); $('filtered').textContent = ''; $('updated').textContent = ''; $('empty').hidden = true;
       }
     }
-  } finally { if (stamp === epoch) { loading = false; lock(); renderBacklogFooter(); } }
+  } finally { if (stamp === epoch) { loading = false; lock(); renderBacklogFooter(); } finishLoading(); }
 }
 
 async function addMissingSubtasks(id, includeParent = false) {
   if (busy || loading || !api || sprint?.status !== 'open') return;
   cancelQuery(); busy = true; lock();
+  const finishLoading = beginLoading();
   const stamp = epoch, currentApi = api;
   notify('Checking hierarchy and planning Sprint membership…');
   try {
@@ -497,6 +514,7 @@ async function addMissingSubtasks(id, includeParent = false) {
     if (stamp === epoch) notify(`Planning failed: ${error.message}. Refresh before retrying.`, true);
   } finally {
     if (stamp === epoch) { busy = false; renderFilters(); renderBoard(); }
+    finishLoading();
   }
 }
 
@@ -505,6 +523,7 @@ async function mutate(id, patch) {
   if (busy || loading || !api) return;
   if (!Object.keys(patch).length) { renderBoard(); return; }
   cancelQuery(); busy = true; lock();
+  const finishLoading = beginLoading();
   const stamp = epoch;
   let writeConfirmed = false;
   try {
@@ -541,12 +560,13 @@ async function mutate(id, patch) {
   } catch (error) {
     if (stamp === epoch) notify(writeConfirmed ? `Issue #${id} was saved, but reloading the board failed: ${error.message} Use Refresh; do not repeat the write.` : `Save not confirmed: ${error.message} Refresh before retrying if the connection failed.`, true);
   }
-  finally { if (stamp === epoch) { busy = false; lock(); renderFilters(); renderBoard(); } }
+  finally { if (stamp === epoch) { busy = false; lock(); renderFilters(); renderBoard(); } finishLoading(); }
 }
 
 async function openEditor(id) {
   if (busy || loading) return;
   loading = true; lock();
+  const finishLoading = beginLoading();
   const stamp = epoch;
   try {
     const issue = await api.issue(id);
@@ -563,12 +583,13 @@ async function openEditor(id) {
     $('edit-destination').value = selectedMember(issue) ? 'sprint' : 'backlog';
     $('issue-link').href = linkToIssue(issue.id);
     $('editor-warning').textContent = sprint?.status !== 'open' ? 'Read only. Select an open sprint to plan issues.' : 'Redmine enforces workflow and field permissions. Removing from a sprint does not reset status or Target version.';
-    $('editor').showModal();
   } catch (error) { if (stamp === epoch) notify(error.message, true); }
   finally {
+    finishLoading();
     if (stamp === epoch) {
       loading = false; lock();
       $('edit-form').querySelectorAll('input, select, button[type="submit"]').forEach(el => { el.disabled = sprint?.status !== 'open'; });
+      if (editing?.id === id) $('editor').showModal();
     }
   }
 }
@@ -576,13 +597,14 @@ async function openEditor(id) {
 async function connect(key, remember) {
   if (loading) return;
   loading = true; const stamp = ++epoch;
+  const finishLoading = beginLoading();
   $('login-form').querySelector('button').disabled = true;
   api = new RedmineClient(key); feed = new PlanningFeed(api);
   try {
     const response = await fetch(`${import.meta.env.BASE_URL}config.json`, { cache: 'no-store' });
     if (!response.ok) throw new Error('Cannot load deployment configuration.');
     const raw = await response.json();
-    const [userData, statusData, projectData] = await Promise.all([
+    const [userData, statusData, projectData] = await settledResults([
       api.request('/users/current.json'), api.list('/issue_statuses.json', 'issue_statuses'),
       api.list('/projects.json', 'projects', { include: 'trackers' }),
     ]);
@@ -595,15 +617,14 @@ async function connect(key, remember) {
     } catch { notify('Connected, but browser storage is unavailable. The API key will not be remembered.', true); }
     $('api-key').value = ''; $('login').hidden = true; $('workspace').hidden = false;
     document.body.classList.add('board-active');
-    $('refresh').hidden = false; $('statusbar').hidden = false;
+    $('refresh').hidden = false; $('refresh-now').hidden = false; $('statusbar').hidden = false;
     renderIdentity(userData.user);
     projectId = String(projects[0].id); options($('project'), projects.map(project => [project.id, project.name]), projectId);
     notify('Connected.'); loading = false; await refresh(true);
     if (stamp !== epoch) return;
-    timer = setInterval(() => { if (document.visibilityState === 'visible') void refresh(); }, config.refreshSeconds * 1000);
   } catch (error) {
     if (stamp === epoch) { api?.dispose(); api = null; notify(error.message, true); }
-  } finally { if (stamp === epoch) { loading = false; $('login-form').querySelector('button').disabled = false; lock(); } }
+  } finally { if (stamp === epoch) { loading = false; $('login-form').querySelector('button').disabled = false; lock(); } finishLoading(); }
 }
 
 $('user-popover').addEventListener('beforetoggle', event => {
@@ -631,7 +652,8 @@ $('sprint').addEventListener('change', () => {
   sprint = versions.find(version => version.id === Number($('sprint').value)); issues = []; void refresh(false, true);
 });
 $('closed').addEventListener('change', () => { cancelQuery(); issues = []; void refresh(false, true); });
-$('refresh').addEventListener('click', () => { notify(''); void refresh(false, true); });
+$('refresh').addEventListener('click', () => setAutorefresh(!autorefresh));
+$('refresh-now').addEventListener('click', () => { notify(''); void refresh(false, true); });
 for (const [id, field, eventName] of [['query', 'query', 'input'], ['tracker', 'tracker', 'change'], ['assignee', 'assignee', 'change']]) {
   $(id).addEventListener(eventName, () => { filters[field] = $(id).value; scheduleSearch(field === 'query' ? 300 : 0); });
 }

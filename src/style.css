@@ -69,6 +69,16 @@ body { margin: 0; background: var(--sidebar); }
 .masthead-actions { display: flex; align-items: center; justify-content: flex-end; gap: 16px; min-width: 0; }
 .theme-button, .refresh-button { display: inline-grid; place-items: center; flex: none; width: 32px; height: 32px; padding: 0; }
 .theme-button svg, .refresh-button svg { width: 18px; height: 18px; pointer-events: none; }
+.autorefresh-check { display: none; }
+#refresh[aria-pressed="true"] { background: var(--selected-bg); color: var(--link); border-color: currentColor; }
+#refresh[aria-pressed="true"] .autorefresh-check { display: block; }
+#loading-overlay { position: fixed; inset: 0; width: 100%; max-width: none; height: 100%; max-height: none; margin: 0; padding: 0; border: 0; border-radius: 0; background: transparent; color: var(--text); cursor: wait; }
+#loading-overlay::backdrop { background: color-mix(in srgb, var(--content) 75%, transparent); }
+#loading-overlay > div { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; }
+#loading-overlay p { background: var(--content); padding: 8px 16px; border-radius: var(--radius); }
+.loading-spinner { width: 32px; height: 32px; border: 3px solid var(--line); border-top-color: var(--link); border-radius: 50%; animation: loading-spin .8s linear infinite; }
+@keyframes loading-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .loading-spinner { animation: none; } }
 .help-button { display: inline-grid; place-items: center; flex: none; width: 32px; height: 32px; padding: 0; font-weight: 600; font-size: 16px; }
 #help-dialog { width: min(520px, calc(100% - 32px)); max-height: calc(100dvh - 32px); overflow-y: auto; }
 #close-help { display: inline-grid; place-items: center; flex: none; width: 28px; height: 28px; padding: 0; font-size: 20px; }
