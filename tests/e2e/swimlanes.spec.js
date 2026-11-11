@@ -19,8 +19,8 @@ async function setup(page) {
     if (path === '/issues.json') {
       let selected = rows;
       const tracker = params.get('tracker_id'), value = params.get('cf_7'), status = params.get('status_id');
-      if (tracker) selected = selected.filter(row => tracker.split('|').map(Number).includes(row.tracker.id));
-      if (value) selected = selected.filter(row => value === '!*' ? row.custom_fields[0]?.value.length === 0 : row.custom_fields[0]?.value.includes(value));
+      if (tracker) selected = selected.filter(row => tracker.startsWith('!') ? !tracker.slice(1).split('|').map(Number).includes(row.tracker.id) : tracker.split('|').map(Number).includes(row.tracker.id));
+      if (value) selected = selected.filter(row => value === '!*' ? row.custom_fields[0]?.value.length === 0 : value.startsWith('!') ? !row.custom_fields[0]?.value.includes(value.slice(1)) : row.custom_fields[0]?.value.includes(value));
       if (status !== '*') selected = selected.filter(row => status === 'open' ? !row.status.is_closed : row.status.id === Number(status));
       if (params.has('subject')) selected = selected.filter(row => row.subject.includes(params.get('subject').slice(1)));
       const offset = Number(params.get('offset') || 0), limit = Number(params.get('limit') || 100);
@@ -56,6 +56,22 @@ test('own membership alone creates headings and includes children', async ({ pag
   await expect(laneCard(page, 'ungrouped', 2)).toBeVisible();
   await expect(backlog(page, 1)).toBeVisible();
   await expect(laneCard(page, 4, 3)).toHaveCount(0);
+});
+test('thousands of Backlog parents load only one visible page, then append on scroll', async ({ page }) => {
+  const fixture = await setup(page);
+  const base = fixture.rows[0];
+  for (let id = 100; id < 1500; id++) fixture.rows.push({ ...base, id, subject: `Parent ${id}` });
+  const requests = [];
+  page.on('request', request => { const url = new URL(request.url()); if (url.pathname.endsWith('/issues.json') && url.searchParams.get('cf_7') === '!100') requests.push(url); });
+  await refresh(page);
+  const list = page.locator('[data-id="backlog"] .kanban-drag');
+  const initial = await list.locator('.kanban-item').count();
+  expect(initial).toBeLessThan(30);
+  expect(requests).toHaveLength(1);
+  expect(Number(requests[0].searchParams.get('limit'))).toBeLessThan(30);
+  await list.evaluate(node => { node.scrollTop = node.scrollHeight; });
+  await expect.poll(() => list.locator('.kanban-item').count()).toBeGreaterThan(initial);
+  expect(requests).toHaveLength(2);
 });
 test('dragging a parent plans only that parent, preserving child memberships', async ({ page }) => {
   const fixture = await setup(page);

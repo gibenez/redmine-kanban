@@ -12,7 +12,7 @@ const storageKey = 'redmine-sprint-board.api-key';
 const scopeStorageKey = 'redmine-sprint-board.all-unplanned';
 const collapsedBacklogStorageKey = 'redmine-sprint-board.backlog-collapsed';
 let backlogCollapsed = false;
-let showClosedParents = false, parentShortcuts = [];
+let showClosedParents = false;
 const closedParentsStorageKey = 'redmine-sprint-board.closed-parents';
 let api, config, statuses = [], projects = [], versions = [], memberships = [], issues = [], board;
 let sprint = null, projectId = '', blockedProjectId = '', busy = false, dragging = false, loading = false, epoch = 0, timer, editing;
@@ -126,7 +126,6 @@ function toggleBacklog() {
   try { localStorage.setItem(collapsedBacklogStorageKey, backlogCollapsed ? '1' : '0'); } catch { /* Optional view preference. */ }
   renderBoard();
   $('board').querySelector('[data-backlog-collapse]')?.focus({ preventScroll: true });
-  if (!backlogCollapsed) void fillBacklogColumn();
 }
 function toggleScope() {
   allUnplannedScope = !allUnplannedScope;
@@ -141,11 +140,9 @@ function backlogScope() {
 async function syncFeed(snapshot) {
   const activeFeed = feed, currentApi = api, stamp = epoch, revision = queryRevision;
   const ancestors = !config.swimlaneTrackers.length ? [] : laneMembers === snapshot.sprintAll ? laneAncestors : await loadAncestors(currentApi, snapshot.sprintAll);
-  const shortcuts = (snapshot.parents || []).filter(issue => !sprintValues(issue, config.sprintFieldId).includes(sprint?.id));
   if (activeFeed !== feed || stamp !== epoch || revision !== queryRevision || activeFeed.snapshot !== snapshot) return false;
   laneAncestors = ancestors; laneMembers = snapshot.sprintAll;
-  parentShortcuts = shortcuts;
-  issues = [...new Map([...shortcuts, ...snapshot.backlog, ...snapshot.sprintVisible].map(issue => [issue.id, issue])).values()];
+  issues = [...new Map([...snapshot.backlog, ...snapshot.sprintVisible].map(issue => [issue.id, issue])).values()];
   return true;
 }
 function forget() {
@@ -250,7 +247,7 @@ function renderBoard() {
     ? `Visible sprint: ${filtered.count} issues · ${Number(filtered.hours.toFixed(2))} h · ${filtered.unestimated} unestimated`
     : '';
   const backlogIds = new Set(feed?.snapshot.backlog.map(issue => issue.id));
-  const backlog = visible.filter(issue => backlogIds.has(issue.id) || parentShortcuts.some(parent => parent.id === issue.id));
+  const backlog = visible.filter(issue => backlogIds.has(issue.id));
   const boards = [{ id: 'backlog', title: `${backlogToggle()}<span class="backlog-label">Backlog</span> <span class="count">${backlog.length} / ${feed?.snapshot.total ?? '?'}</span>${scopeToggle()}<button type="button" class="scope-toggle" data-closed-parents aria-label="Show closed" title="Show closed" aria-pressed="${showClosedParents}">${eyeIcon(showClosedParents)}</button>`, class: 'backlog-board', item: backlog.map(card) }];
   const lanes = config.swimlaneTrackers.length ? groupSwimlanes(feed?.snapshot.sprintAll || [], feed?.snapshot.sprintVisible || [], config.swimlaneTrackers, laneAncestors) : null;
   for (const [index, statusId] of config.columnStatusIds.entries()) {
@@ -309,7 +306,7 @@ function renderBoard() {
 function renderBacklogFooter() {
   if (!board || !feed) return;
   const node = board.findBoard('backlog');
-  node.querySelector('.count').textContent = `${feed.snapshot.backlog.length + parentShortcuts.length} / ${feed.snapshot.total == null ? '?' : feed.snapshot.total + parentShortcuts.length}`;
+  node.querySelector('.count').textContent = `${feed.snapshot.backlog.length} / ${feed.snapshot.total ?? '?'}`;
   node.querySelector('.kanban-drag').setAttribute('aria-busy', String(feed.loadingMore || queryLoading));
   const footer = node.querySelector('footer');
   let text = footer.querySelector('span');
@@ -340,22 +337,6 @@ function backlogPageSize() {
   const unit = card ? card.getBoundingClientRect().height + 8 : compactCardHeight;
   // Two spare rows so a short column still offers something to scroll to; Redmine caps at 100.
   return Math.min(100, Math.max(5, Math.ceil(height / unit) + 2));
-}
-// Compact cards mean the first page can fit without overflowing a tall column, which would
-// leave scroll-triggered paging unreachable. Fetch further pages until the column scrolls,
-// bounded so a tall screen cannot walk the whole backlog.
-// Called once a load has settled: loadMoreBacklog refuses to run while one is in flight.
-const autoFillPages = 4;
-async function fillBacklogColumn() {
-  const container = board?.findBoard('backlog')?.querySelector('.kanban-drag');
-  if (!container || backlogCollapsed) return;
-  for (let page = 0; page < autoFillPages; page++) {
-    if (backlogCollapsed || !feed?.snapshot.hasMore || container.scrollHeight > container.clientHeight) return;
-    const before = feed.snapshot.backlog.length;
-    await loadMoreBacklog({ silent: true });
-    if (!container.isConnected) return;
-    if (feed.snapshot.backlog.length === before) return;
-  }
 }
 async function loadMoreBacklog({ silent = false } = {}) {
   if (backlogCollapsed || !api || !board || busy || loading || queryLoading || searchFailed || dragging || $('editor').open || feed?.loadingMore || !feed?.snapshot.hasMore) return;
@@ -398,7 +379,7 @@ async function searchIssues(revision) {
       notify(`Search failed: ${error.message} Change the search or use Refresh to retry.`, true);
     }
   } finally {
-    if (revision === queryRevision) { queryLoading = false; lock(); renderBacklogFooter(); void fillBacklogColumn(); }
+    if (revision === queryRevision) { queryLoading = false; lock(); renderBacklogFooter(); }
   }
 }
 function scheduleSearch(delay) {
@@ -455,7 +436,7 @@ async function refresh(projectChanged = false, retryDenied = false) {
         $('totals').replaceChildren(); $('filtered').textContent = ''; $('updated').textContent = ''; $('empty').hidden = true;
       }
     }
-  } finally { if (stamp === epoch) { loading = false; lock(); renderBacklogFooter(); void fillBacklogColumn(); } }
+  } finally { if (stamp === epoch) { loading = false; lock(); renderBacklogFooter(); } }
 }
 
 async function mutate(id, patch) {
@@ -499,7 +480,7 @@ async function mutate(id, patch) {
   } catch (error) {
     if (stamp === epoch) notify(writeConfirmed ? `Issue #${id} was saved, but reloading the board failed: ${error.message} Use Refresh; do not repeat the write.` : `Save not confirmed: ${error.message} Refresh before retrying if the connection failed.`, true);
   }
-  finally { if (stamp === epoch) { busy = false; lock(); renderFilters(); renderBoard(); void fillBacklogColumn(); } }
+  finally { if (stamp === epoch) { busy = false; lock(); renderFilters(); renderBoard(); } }
 }
 
 async function openEditor(id) {

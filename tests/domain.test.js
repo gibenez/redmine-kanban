@@ -30,6 +30,14 @@ describe('deployment configuration', () => {
 });
 
 describe('planning semantics', () => {
+  it('accepts a present single-valued Version field with null as Unplanned', () => {
+    const empty = { ...issue, custom_fields: [{ id: 7, value: null }] };
+    expect(sprintValues(empty, 7)).toEqual([]);
+    expect(isBacklog(empty, { sprintFieldId: 7, backlogStatusId: 1 })).toBe(true);
+    expect(membershipPatch(empty, 7, 10, true)).toEqual(sprintPatch(7, 10));
+    expect(matchesPatch(empty, sprintPatch(7, null))).toBe(true);
+    expect(() => sprintValues({ ...issue, custom_fields: [] }, 7)).toThrow('unavailable');
+  });
   it('treats former Build containers and related work as ordinary version-planned issues', () => {
     const formerBuild = { ...issue, tracker: { id: 9, name: 'Build' }, openBuildIds: [42] };
     expect(isBacklog(formerBuild, { sprintFieldId: 7, backlogStatusId: 1 })).toBe(true);

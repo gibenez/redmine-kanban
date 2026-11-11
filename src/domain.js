@@ -25,8 +25,8 @@ export function sprintValue(issue, fieldId) {
 }
 export function sprintValues(issue, fieldId) {
   const field = issue.custom_fields?.find(field => Number(field.id) === Number(fieldId));
-  if (!field || field.value == null) throw new Error(`Sprint field ${fieldId} is unavailable on #${issue.id}. Check field configuration and visibility.`);
-  const values = Array.isArray(field.value) ? field.value : field.value === '' ? [] : [field.value];
+  if (!field || !Object.hasOwn(field, 'value')) throw new Error(`Sprint field ${fieldId} is unavailable on #${issue.id}. Check field configuration and visibility.`);
+  const values = Array.isArray(field.value) ? field.value : field.value == null || field.value === '' ? [] : [field.value];
   const ids = values.map(Number);
   if (ids.some(id => !Number.isSafeInteger(id) || id <= 0)) throw new Error(`Invalid Sprint value on #${issue.id}. Configure a Version custom field.`);
   return [...new Set(ids)].sort((a, b) => a - b);

@@ -23,6 +23,37 @@ describe('server-side issue queries', () => {
 });
 
 describe('bounded backlog feed', () => {
+  it('does not eagerly list Swimlane-capable Backlog issues on startup', async () => {
+    const parents = Array.from({ length: 1400 }, (_, index) => ({ ...row(index + 1), tracker: { id: 3, name: 'Feature' } }));
+    const api = {
+      page: vi.fn(async (_path, _collection, params) => ({ items: parents.slice(params.offset, params.offset + 5), total: parents.length, nextOffset: params.offset + 5, hasMore: params.offset + 5 < parents.length })),
+      list: vi.fn(async (_path, _collection, params) => params.tracker_id ? parents : []),
+    };
+    const feed = new PlanningFeed(api, 5);
+    await feed.load({ ...scope, parentTrackerIds: [3], swimlaneTrackers: ['Feature'] }, filters);
+    expect(feed.snapshot.backlog.length + (feed.snapshot.parents?.length || 0)).toBeLessThanOrEqual(5);
+    expect(api.list.mock.calls.filter(([, , params]) => params.tracker_id)).toHaveLength(0);
+    expect(api.page).toHaveBeenCalledTimes(1);
+  });
+  it('paginates parents and ordinary issues without duplicates or double-counting totals', async () => {
+    const parents = [1, 2, 3].map(id => ({ ...row(id), tracker: { name: 'Feature' } }));
+    const api = {
+      page: vi.fn(async (_path, _collection, params) => {
+        const rows = params.tracker_id === '3' ? parents : [row(4), row(5)];
+        return { items: rows.slice(params.offset, params.offset + params.limit), total: rows.length, nextOffset: Math.min(rows.length, params.offset + params.limit), hasMore: params.offset + params.limit < rows.length };
+      }), list: vi.fn().mockResolvedValue([]),
+    };
+    const feed = new PlanningFeed(api, 2);
+    await feed.load({ ...scope, parentTrackerIds: [3] }, filters);
+    expect(feed.snapshot.backlog.map(issue => issue.id)).toEqual([1, 2]);
+    await feed.next();
+    expect(feed.snapshot.backlog.map(issue => issue.id)).toEqual([1, 2, 3, 4]);
+    expect(feed.snapshot.total).toBe(5);
+    await feed.next();
+    expect(feed.snapshot.backlog.map(issue => issue.id)).toEqual([1, 2, 3, 4, 5]);
+    expect(feed.snapshot.total).toBe(5);
+    expect(feed.snapshot.hasMore).toBe(false);
+  });
   it('rejects silently ignored custom-field filters instead of showing incorrect membership', async () => {
     const api = { page: vi.fn().mockResolvedValue({ ...page([1]), items: [row(1, '10')] }), list: vi.fn().mockResolvedValue([]) };
     const feed = new PlanningFeed(api);

@@ -9,6 +9,7 @@ export function issueQuery({ projectId, projectIds = [Number(projectId)], sprint
     status_id: backlog ? backlogStatus : '*', [`cf_${sprintFieldId}`]: backlog ? '!*' : sprintId,
   };
   if (filters.tracker) params.tracker_id = filters.tracker;
+  else if (backlog && parentTrackerIds.length) params.tracker_id = `!${parentTrackerIds.join('|')}`;
   if (filters.assignee) params.assigned_to_id = filters.assignee === 'none' ? '!*' : filters.assignee;
   const query = (filters.query || '').trim();
   if (/^#?\d+$/.test(query)) params.issue_id = query.replace(/^#/, '');
@@ -29,20 +30,40 @@ export class PlanningFeed {
   }
   async backlogPage(scope, filters, offset, signal, cursor = {}) {
     const items = [], pending = [...(cursor.pending || [])];
-    let rawHasMore = cursor.rawHasMore ?? true, total = cursor.total ?? null;
-    while (items.length < this.pageSize && (pending.length || rawHasMore)) {
+    let rawHasMore = cursor.rawHasMore ?? true, total = cursor.rawTotal ?? null;
+    let parentOffset = cursor.parentOffset || 0, parentHasMore = cursor.parentHasMore ?? Boolean(scope.parentTrackerIds?.length), parentTotal = cursor.parentTotal ?? null;
+    // Parents have different membership/status predicates, but share the same
+    // bounded page budget and cursor. Never list their entire collection.
+    const parentQuery = issueQuery(scope, filters, true);
+    parentQuery.tracker_id = scope.parentTrackerIds?.join('|');
+    parentQuery.status_id = scope.showClosedParents ? '*' : 'open';
+    if (scope.sprintId) parentQuery[`cf_${scope.sprintFieldId}`] = `!${scope.sprintId}`;
+    else delete parentQuery[`cf_${scope.sprintFieldId}`];
+    const parentAllowed = !filters.tracker || scope.parentTrackerIds?.includes(Number(filters.tracker));
+    if (!parentAllowed) parentHasMore = false;
+    if (filters.tracker && parentAllowed && scope.parentTrackerIds?.length) rawHasMore = false;
+    if (!rawHasMore && total == null) total = 0;
+    while (items.length < this.pageSize && (pending.length || parentHasMore || rawHasMore)) {
       if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
       if (!pending.length) {
-        const page = await this.api.page('/issues.json', 'issues', { ...issueQuery(scope, filters, true), limit: filters.tags?.length ? 100 : this.pageSize, offset }, { signal });
+        const readingParents = parentHasMore;
+        const page = await this.api.page('/issues.json', 'issues', { ...(readingParents ? parentQuery : issueQuery(scope, filters, true)), limit: this.pageSize - items.length, offset: readingParents ? parentOffset : offset }, { signal });
+        if (readingParents) {
+          if (page.hasMore && page.nextOffset <= parentOffset) throw new Error('Redmine did not advance the backlog cursor.');
+          parentOffset = page.nextOffset; parentHasMore = page.hasMore; parentTotal = page.total;
+          pending.push(...page.items.filter(issue => hasSprintField(issue, scope.sprintFieldId) && !sprintValues(issue, scope.sprintFieldId).includes(scope.sprintId) && matchesTags(issue, filters.tags)));
+          items.push(...pending.splice(0, this.pageSize - items.length));
+          continue;
+        }
         if (page.hasMore && page.nextOffset <= offset) throw new Error('Redmine did not advance the backlog cursor.');
         offset = page.nextOffset; rawHasMore = page.hasMore; total = filters.tags?.length ? null : page.total;
-        const cards = page.items.filter(issue => hasSprintField(issue, scope.sprintFieldId) && !scope.swimlaneTrackers?.includes(issue.tracker?.name));
+        const cards = page.items.filter(issue => hasSprintField(issue, scope.sprintFieldId));
         if (cards.some(issue => sprintValues(issue, scope.sprintFieldId).length)) throw new Error('Redmine did not apply the Sprint field filter. Enable “Used as a filter” on the Version custom field.');
         pending.push(...cards.filter(issue => matchesTags(issue, filters.tags)));
       }
       items.push(...pending.splice(0, this.pageSize - items.length));
     }
-    return { items, nextOffset: offset, pending, rawHasMore, total, hasMore: pending.length > 0 || rawHasMore };
+    return { items, nextOffset: offset, pending, rawHasMore, rawTotal: total, parentOffset, parentHasMore, parentTotal, total: ((parentAllowed && scope.parentTrackerIds?.length && parentTotal == null) || total == null) ? null : total + (parentAllowed ? parentTotal || 0 : 0), hasMore: pending.length > 0 || parentHasMore || rawHasMore };
   }
   async load(scope, filters, { refreshSprint = true } = {}) {
     this.cancel();
@@ -55,16 +76,10 @@ export class PlanningFeed {
       const unfilteredSprint = !scope.sprintId ? Promise.resolve([])
         : !refreshSprint && this.key === key ? Promise.resolve(this.snapshot.sprintAll)
           : this.api.list('/issues.json', 'issues', issueQuery(scope), { signal: controller.signal });
-      const parentQuery = issueQuery(scope, selectedFilters);
-      delete parentQuery[`cf_${scope.sprintFieldId}`];
-      delete parentQuery.tracker_id;
-      parentQuery.tracker_id = scope.parentTrackerIds?.join('|');
-      parentQuery.status_id = scope.showClosedParents ? '*' : 'open';
-      const [backlog, rawSprintAll, rawSprintVisible, parents] = await Promise.all([
+      const [backlog, rawSprintAll, rawSprintVisible] = await Promise.all([
         this.backlogPage(scope, selectedFilters, 0, controller.signal),
         unfilteredSprint,
         scope.sprintId && filtered ? this.api.list('/issues.json', 'issues', issueQuery(scope, selectedFilters), { signal: controller.signal }) : unfilteredSprint,
-        scope.parentTrackerIds?.length ? this.api.list('/issues.json', 'issues', parentQuery, { signal: controller.signal }) : [],
       ]);
       const validateMembers = items => items.filter(issue => {
         if (!hasSprintField(issue, scope.sprintFieldId)) return false;
@@ -74,7 +89,7 @@ export class PlanningFeed {
       const sprintAll = validateMembers(rawSprintAll), sprintVisible = validateMembers(rawSprintVisible);
       if (revision !== this.revision) return null;
       this.key = key; this.scope = { ...scope }; this.filters = selectedFilters; this.cursor = backlog;
-      this.snapshot = { backlog: backlog.items, parents: parents.filter(issue => hasSprintField(issue, scope.sprintFieldId) && (!selectedFilters.tracker || issue.tracker?.id === Number(selectedFilters.tracker)) && matchesTags(issue, selectedFilters.tags)), total: selectedFilters.tags?.length && !backlog.hasMore ? backlog.items.length : backlog.total, nextOffset: backlog.nextOffset, hasMore: backlog.hasMore, sprintAll, sprintVisible };
+      this.snapshot = { backlog: backlog.items, total: selectedFilters.tags?.length && !backlog.hasMore ? backlog.items.length : backlog.total, nextOffset: backlog.nextOffset, hasMore: backlog.hasMore, sprintAll, sprintVisible };
       return this.snapshot;
     } catch (error) {
       if (revision !== this.revision) return null;

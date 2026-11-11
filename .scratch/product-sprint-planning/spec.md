@@ -4,6 +4,8 @@ Status: implemented
 
 ## Latest confirmed revision: independent membership for all issues
 
+Startup performance follow-up: removed the eager full-list fetch of Swimlane-capable Backlog issues. Parents and ordinary issues now share a viewport-sized page budget with separate lazy cursors preserving their predicates. Removed automatic post-render page filling; subsequent pages load on user scroll. A regression with 1,400 parents reproduced the former eager load and now verifies one initial page, followed by one scroll-triggered page. Combined totals remain unknown until both streams provide counts.
+
 This section supersedes the earlier context-only parent and descendant-planning rules below, which record the earlier design history.
 
 - Every issue, including Swimlane-capable issues, belongs to the selected Sprint if and only if its own configured field contains the selected version.
