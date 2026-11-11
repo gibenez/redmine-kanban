@@ -3,7 +3,8 @@ import { validateConfig, isBacklog, effort, movePatch, parseEstimate, assertTran
 
 const statuses = [{ id: 1, name: 'New', is_closed: false }, { id: 2, name: 'Open', is_closed: false }, { id: 5, name: 'Done', is_closed: true }];
 const sprint = { id: 10, status: 'open' };
-const issue = { id: 8, custom_fields: [{ id: 7, value: '' }], subject: 'Ship a feature', status: statuses[0], tracker: { id: 1 }, priority: { id: 2 }, estimated_hours: null };
+const issue = { id: 8, custom_fields: [{ id: 7, value: '' }], subject: 'Ship a feature', status: statuses[0], tracker: { id: 1, name: 'Feature' }, priority: { id: 2 }, estimated_hours: null };
+const backlogScope = { sprintFieldId: 7, swimlaneTrackers: ['Feature'], closedStatusIds: [5] };
 
 describe('deployment configuration', () => {
   const config = { sprintFieldId: 7, backlogStatusId: 1, columnStatusIds: [1, 2, 5], redminePublicUrl: 'https://redmine.example.test/subpath' };
@@ -33,27 +34,29 @@ describe('planning semantics', () => {
   it('accepts a present single-valued Version field with null as Unplanned', () => {
     const empty = { ...issue, custom_fields: [{ id: 7, value: null }] };
     expect(sprintValues(empty, 7)).toEqual([]);
-    expect(isBacklog(empty, { sprintFieldId: 7, backlogStatusId: 1 })).toBe(true);
+    expect(isBacklog(empty, backlogScope)).toBe(true);
     expect(membershipPatch(empty, 7, 10, true)).toEqual(sprintPatch(7, 10));
     expect(matchesPatch(empty, sprintPatch(7, null))).toBe(true);
     expect(() => sprintValues({ ...issue, custom_fields: [] }, 7)).toThrow('unavailable');
   });
   it('treats former Build containers and related work as ordinary version-planned issues', () => {
     const formerBuild = { ...issue, tracker: { id: 9, name: 'Build' }, openBuildIds: [42] };
-    expect(isBacklog(formerBuild, { sprintFieldId: 7, backlogStatusId: 1 })).toBe(true);
-    expect(isBacklog({ ...formerBuild, fixed_version: { id: 10, status: 'closed' } }, { sprintFieldId: 7, backlogStatusId: 1 })).toBe(true);
+    expect(isBacklog(formerBuild, backlogScope)).toBe(false);
+    expect(isBacklog({ ...formerBuild, fixed_version: { id: 10, status: 'closed' } }, backlogScope)).toBe(false);
     expect(movePatch(formerBuild, 'status-2', sprint, 7)).toEqual({ ...sprintPatch(7, 10), status_id: 2 });
   });
-  it('backlog means unplanned, narrowed to New unless the scope is widened', () => {
-    const narrow = { sprintFieldId: 7, backlogStatusId: 1, allUnplanned: false, closedStatusIds: [5] };
-    const wide = { ...narrow, allUnplanned: true };
-    expect(isBacklog(issue, narrow)).toBe(true);
-    expect(isBacklog({ ...issue, status: statuses[1] }, narrow)).toBe(false);
-    expect(isBacklog({ ...issue, status: statuses[1] }, wide)).toBe(true);
-    // Widening admits every OPEN status; closed unplanned issues stay off the board.
-    expect(isBacklog({ ...issue, status: statuses[2] }, wide)).toBe(false);
-    expect(isBacklog({ ...issue, ...sprintPatch(7, 10) }, narrow)).toBe(false);
-    expect(isBacklog({ ...issue, ...sprintPatch(7, 10) }, wide)).toBe(false);
+  it('backlog means Swimlane-capable with no Sprint, regardless of open status', () => {
+    expect(isBacklog(issue, backlogScope)).toBe(true);
+    expect(isBacklog({ ...issue, status: statuses[1] }, backlogScope)).toBe(true);
+    expect(isBacklog({ ...issue, tracker: { name: 'Task' } }, backlogScope)).toBe(false);
+    expect(isBacklog({ ...issue, custom_fields: [] }, backlogScope)).toBe(false);
+    expect(isBacklog(issue, { ...backlogScope, swimlaneTrackers: [] })).toBe(false);
+    expect(isBacklog({ ...issue, status: statuses[2] }, backlogScope)).toBe(false);
+    expect(isBacklog({ ...issue, status: statuses[2] }, { ...backlogScope, showClosedParents: true })).toBe(true);
+    for (const value of [10, 20, [10, 20]]) {
+      expect(isBacklog({ ...issue, ...sprintPatch(7, value) }, backlogScope)).toBe(false);
+    }
+    expect(isBacklog({ ...issue, fixed_version: sprint }, backlogScope)).toBe(true);
   });
   it('commits and changes status in one explicit move', () => {
     expect(movePatch(issue, 'status-2', sprint, 7)).toEqual({ ...sprintPatch(7, 10), status_id: 2 });
@@ -93,7 +96,7 @@ describe('planning semantics', () => {
     expect(membershipPatch(multiple, 7, 10, true)).toEqual(sprintPatch(7, [10, 20]));
     expect(matchesPatch(multiple, sprintPatch(7, [20, 10]))).toBe(true);
     expect(matchesPatch(multiple, sprintPatch(7, [10]))).toBe(false);
-    expect(isBacklog({ ...issue, custom_fields: [{ id: 7, multiple: true, value: [] }] }, { sprintFieldId: 7, backlogStatusId: 1 })).toBe(true);
+    expect(isBacklog({ ...issue, custom_fields: [{ id: 7, multiple: true, value: [] }] }, backlogScope)).toBe(true);
     expect(membershipPatch({ ...issue, custom_fields: [{ id: 7, value: ['10'] }] }, 7, 10, false)).toEqual(sprintPatch(7, []));
   });
   it('includes all nested projects but not unrelated version-sharing projects', () => {

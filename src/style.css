@@ -216,7 +216,7 @@ input::placeholder { color: var(--secondary); opacity: 1; }
 .kanban-board.backlog-collapsed header { flex: 1; height: auto; padding: 8px 0; align-items: flex-start; border-bottom: 0; }
 .kanban-board.backlog-collapsed header.backlog-board .kanban-title-board { flex-direction: column; gap: 12px; }
 .backlog-collapsed .backlog-label { writing-mode: vertical-rl; }
-.backlog-collapsed .count, .backlog-collapsed [data-backlog-scope] { display: none; }
+.backlog-collapsed .count { display: none; }
 .kanban-board .kanban-drag {
   flex: 1 1 0; padding: 8px; min-height: 0; overflow-y: auto; overflow-x: hidden;
   overscroll-behavior: contain; display: flex; flex-direction: column; gap: 8px;

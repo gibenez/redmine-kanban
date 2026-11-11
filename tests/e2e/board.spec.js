@@ -1,10 +1,10 @@
 import { test, expect } from '@playwright/test';
 
-// These fixtures exercise individual Card planning; hierarchy behavior has its own suite.
+// Unplanned Features are Backlog Cards; planned Tasks exercise individual Sprint Cards.
 test.beforeEach(async ({ page }) => {
   await page.route('**/config.json', async route => {
     const response = await route.fetch();
-    await route.fulfill({ json: { ...await response.json(), sprintFieldId: 7, swimlaneTrackers: [] } });
+    await route.fulfill({ json: { ...await response.json(), sprintFieldId: 7, swimlaneTrackers: ['Feature'] } });
   });
 });
 
@@ -14,9 +14,9 @@ async function setup(page, { deny = false, ignored = false, denyVersions = false
   const base = { custom_fields: [{ id: 7, value: '' }], tracker: { id: 1, name: 'Feature' }, priority: { id: 2, name: 'Normal' }, project: { id: 1, name: 'Team' }, allowed_statuses: statuses };
   const issues = [
     { ...base, id: 1, subject: 'Build backlog feature', status: statuses[0], estimated_hours: null },
-    { ...base, custom_fields: [{ id: 7, value: '10' }], id: 2, subject: 'Already underway', status: statuses[1], fixed_version: { id: 300 }, assigned_to: { id: 7, name: 'Team Member' }, estimated_hours: 3 },
+    { ...base, tracker: { id: 2, name: 'Bug' }, custom_fields: [{ id: 7, value: '10' }], id: 2, subject: 'Already underway', status: statuses[1], fixed_version: { id: 300 }, assigned_to: { id: 7, name: 'Team Member' }, estimated_hours: 3 },
     { ...base, id: 3, subject: '<img src=x onerror="window.injected=true">', status: statuses[0], estimated_hours: 0 },
-    { ...base, custom_fields: [{ id: 7, value: '10' }], id: 4, subject: 'Unmapped status still visible', status: { id: 8, name: 'Waiting' }, estimated_hours: null },
+    { ...base, tracker: { id: 2, name: 'Bug' }, custom_fields: [{ id: 7, value: '10' }], id: 4, subject: 'Unmapped status still visible', status: { id: 8, name: 'Waiting' }, estimated_hours: null },
   ];
   const writes = [], requests = [];
   await page.route('**/redmine/**', async route => {
@@ -35,7 +35,7 @@ async function setup(page, { deny = false, ignored = false, denyVersions = false
       const version = url.searchParams.get('cf_7'), project = Number(url.searchParams.get('project_id'));
       const status = url.searchParams.get('status_id');
       const value = issue => issue.custom_fields?.find(field => field.id === 7)?.value;
-      const unplanned = issue => value(issue) === '' && (status === 'open' ? !issue.status.is_closed : issue.status.id === Number(status));
+      const unplanned = issue => value(issue) === '' && (status === '*' || (status === 'open' ? !issue.status.is_closed : issue.status.id === Number(status)));
       let selected = issues.filter(issue => issue.project.id === project && (version === '!*' ? unplanned(issue) : Number(value(issue)) === Number(version)));
       const tracker = url.searchParams.get('tracker_id'), assignee = url.searchParams.get('assigned_to_id'), subject = url.searchParams.get('subject'), issueId = url.searchParams.get('issue_id');
       if (tracker) selected = selected.filter(issue => issue.tracker.id === Number(tracker));
@@ -80,7 +80,9 @@ async function setAppearance(page, mode) {
   await expect(button).toHaveAttribute('data-theme', mode);
 }
 async function drag(page, id, target) {
-  const source = page.locator(`[data-eid="${id}"] h3`), destination = page.locator(`[data-id="${target}"] .kanban-drag`);
+  const source = page.locator(`[data-eid="${id}"] h3`), column = page.locator(`.kanban-board[data-id="${target}"]`);
+  const lanes = column.locator('.swimlane-cards');
+  const destination = await lanes.count() ? lanes.first() : column.locator('.kanban-drag');
   await source.dragTo(destination);
 }
 
@@ -88,7 +90,7 @@ for (const activation of ['click', 'keyboard']) {
   test(`issue ID opens Redmine in a new tab via ${activation}`, async ({ page }) => {
     const fixture = await setup(page);
     await page.route('**/config.json', route => route.fulfill({ json: {
-      redminePublicUrl: 'https://redmine.example.test', backlogStatusId: 1, sprintFieldId: 7, swimlaneTrackers: [],
+      redminePublicUrl: 'https://redmine.example.test', backlogStatusId: 1, sprintFieldId: 7, swimlaneTrackers: ['Feature'],
       columnStatusIds: [1, 2, 3, 5], refreshSeconds: 60,
     } }));
     let navigationHeaders;
@@ -133,7 +135,7 @@ for (const control of ['query', 'tracker', 'assignee']) {
     const gate = new Promise(resolve => { release = resolve; });
     await page.route('**/redmine/issues.json?**', async route => { await gate; await route.fallback(); });
     if (control === 'query') await page.getByLabel('Find an issue').fill('Already');
-    if (control === 'tracker') await page.getByLabel('Tracker', { exact: true }).selectOption('1');
+    if (control === 'tracker') await page.getByLabel('Tracker', { exact: true }).selectOption('2');
     if (control === 'assignee') await page.getByLabel('Assignee', { exact: true }).selectOption('7');
     try {
       await expect(page.locator('#workspace')).toHaveAttribute('aria-busy', 'true');
@@ -157,11 +159,13 @@ test('unchanged filters preserve column scroll, horizontal scroll, focus and car
   for (let id = 100; id < 120; id++) fixture.issues.push({ ...fixture.issues[1], id, subject: `Already underway ${id}` });
   await login(page);
   await page.locator('#filter-controls > summary').click();
+  await page.getByLabel('Tracker', { exact: true }).selectOption('2');
+  await expect(page.locator('#workspace')).toHaveAttribute('aria-busy', 'false');
   await page.evaluate(() => {
     const board = document.getElementById('board'), list = document.querySelector('[data-id="status-2"] .kanban-drag');
     board.scrollLeft = 300; list.scrollTop = 160; list.focus({ preventScroll: true });
     window.position = { x: board.scrollLeft, y: list.scrollTop, list, card: list.firstElementChild };
-    document.getElementById('tracker').value = '1';
+    document.getElementById('tracker').value = '2';
     document.getElementById('tracker').dispatchEvent(new Event('change'));
   });
   await expect(page.locator('#workspace')).toHaveAttribute('aria-busy', 'false');
@@ -299,7 +303,7 @@ test('column heading text, counts and scope controls share the same vertical cen
     const range = document.createRange(); range.selectNodeContents(title.firstChild);
     const text = range.getBoundingClientRect(), bounds = header.getBoundingClientRect();
     const count = header.querySelector('.count')?.getBoundingClientRect();
-    const toggle = header.querySelector('[data-backlog-scope]')?.getBoundingClientRect();
+    const toggle = header.querySelector('[data-closed-parents]')?.getBoundingClientRect();
     return { top: bounds.top, height: bounds.height, center: bounds.top + bounds.height / 2,
       textCenter: text.top + text.height / 2,
       countCenter: count ? count.top + count.height / 2 : null,
@@ -732,7 +736,7 @@ for (const width of [1280, 390]) {
     const fixture = await setup(page); await login(page);
     const column = page.locator('[data-id="backlog"]');
     const card = await column.locator('[data-eid="1"]').elementHandle();
-    const beforeWidth = (await page.locator('[data-id="status-2"]').boundingBox()).width;
+    const beforeWidth = (await page.locator('.kanban-board[data-id="status-2"]').boundingBox()).width;
     const requests = fixture.requests.length;
     const collapse = page.getByRole('button', { name: 'Collapse Backlog', exact: true });
     await expect(collapse).toHaveAttribute('aria-expanded', 'true');
@@ -743,9 +747,9 @@ for (const width of [1280, 390]) {
     await expect(expand).toHaveAttribute('title', 'Expand Backlog');
     await expect(page.getByLabel('Backlog issues', { exact: true })).toBeHidden();
     await expect(column.locator('footer')).toBeHidden();
-    await expect(column.locator('[data-backlog-scope]')).toBeHidden();
+    await expect(column.locator('[data-backlog-scope]')).toHaveCount(0);
     expect((await column.boundingBox()).width).toBe(40);
-    if (width === 1280) expect((await page.locator('[data-id="status-2"]').boundingBox()).width).toBeGreaterThan(beforeWidth);
+    if (width === 1280) expect((await page.locator('.kanban-board[data-id="status-2"]').boundingBox()).width).toBeGreaterThan(beforeWidth);
     expect(await card.evaluate(node => node.isConnected)).toBe(true);
     expect(await page.evaluate(() => document.scrollingElement.scrollWidth)).toBe(width);
     expect(fixture.requests.length).toBe(requests);
@@ -833,22 +837,22 @@ test('scrolling appends another page without duplicates or reloading metadata', 
 
 test('tracker and assignee filters query unseen issues on the server and preserve sprint totals', async ({ page }) => {
   const fixture = await setup(page);
-  for (let id = 100; id < 110; id++) fixture.issues.push({ ...fixture.issues[0], id, subject: id === 109 ? 'Unseen needle' : `Backlog ${id}`, ...(id === 109 ? { tracker: { id: 2, name: 'Bug' }, assigned_to: { id: 9, name: 'Other Member' } } : {}) });
+  for (let id = 100; id < 110; id++) fixture.issues.push({ ...fixture.issues[0], id, subject: id === 109 ? 'Unseen needle' : `Backlog ${id}`, ...(id === 109 ? { assigned_to: { id: 9, name: 'Other Member' } } : {}) });
   await login(page);
-  await page.getByLabel('Tracker', { exact: true }).selectOption('2');
-  await expect(page.locator('[data-id="backlog"]')).toContainText('Unseen needle');
+  await page.getByLabel('Tracker', { exact: true }).selectOption('1');
   await page.getByLabel('Assignee', { exact: true }).selectOption('9');
+  await expect(page.locator('[data-id="backlog"]')).toContainText('Unseen needle');
   await page.getByLabel('Find an issue').fill('needle');
   await expect.poll(() => fixture.requests.some(request => {
     const params = new URL(request.url()).searchParams;
-    return params.get('subject') === '~needle' && params.get('tracker_id') === '2' && params.get('assigned_to_id') === '9' && params.get('cf_7') === '!*';
+    return params.get('subject') === '~needle' && params.get('tracker_id') === '1' && params.get('assigned_to_id') === '9' && params.get('cf_7') === '!*';
   })).toBe(true);
   await expect(page.locator('[data-id="backlog"] .kanban-item')).toHaveCount(1);
   await expect(page.locator('#totals')).toContainText('2issues');
   await expect(page.locator('#filtered')).toContainText('0 issues');
   const filteredSprintRequests = fixture.requests.filter(request => {
     const params = new URL(request.url()).searchParams;
-    return params.get('cf_7') === '10' && params.get('subject') === '~needle' && params.get('tracker_id') === '2' && params.get('assigned_to_id') === '9';
+    return params.get('cf_7') === '10' && params.get('subject') === '~needle' && params.get('tracker_id') === '1' && params.get('assigned_to_id') === '9';
   });
   expect(filteredSprintRequests).toHaveLength(1);
   const fullSprintRequests = fixture.requests.filter(request => {
@@ -967,7 +971,7 @@ test('loads backlog, all sprint statuses and totals without executing issue HTML
   // Target-version IDs are not issue IDs and must not become issue links.
   await expect(page.locator('#sprint-name a')).toHaveCount(0);
   await expect(page.locator('[data-id="backlog"] .kanban-item')).toHaveCount(2);
-  await expect(page.locator('[data-id="status-2"]')).toContainText('Already underway');
+  await expect(page.locator('.kanban-board[data-id="status-2"]')).toContainText('Already underway');
   await expect(page.locator('.unmapped-notice summary')).toContainText('1 issues outside displayed statuses');
   await page.locator('.unmapped-notice summary').click();
   await expect(page.locator('.unmapped-notice')).toContainText('Unmapped status still visible');
@@ -990,7 +994,7 @@ test('keyboard-accessible planner changes sprint, assignee and estimate', async 
   await page.getByLabel('Planning destination').selectOption('sprint');
   await page.getByRole('button', { name: 'Save changes' }).click();
   await expect(page.getByRole('dialog')).not.toBeVisible();
-  await expect(page.locator('[data-id="status-1"]')).toContainText('Build backlog feature');
+  await expect(page.locator('.swimlane-headers')).toContainText('Build backlog feature');
   expect(writes).toEqual([{ assigned_to_id: 7, estimated_hours: 5.5, custom_fields: [{ id: 7, value: '10' }] }]);
 });
 
@@ -999,7 +1003,7 @@ for (const statusId of [1, 2]) {
     const { writes } = await setup(page); await login(page);
     await drag(page, 1, `status-${statusId}`);
     await expect(page.locator('#notice')).toContainText('Issue #1 saved');
-    await expect(page.locator(`[data-id="status-${statusId}"] [data-eid="1"]`)).toBeVisible();
+    await expect(page.locator('.swimlane-headers > [data-lane="1"]')).toBeVisible();
     expect(writes).toEqual([statusId === 1 ? { custom_fields: [{ id: 7, value: '10' }] } : { custom_fields: [{ id: 7, value: '10' }], status_id: 2 }]);
   });
 }
@@ -1007,7 +1011,7 @@ for (const statusId of [1, 2]) {
 test('removing in-progress work does not reset its status', async ({ page }) => {
   const { writes } = await setup(page); await login(page);
   await drag(page, 2, 'backlog');
-  await expect(page.locator('#notice')).toContainText('Its status is not the backlog status');
+  await expect(page.locator('#notice')).toContainText('It is not Swimlane-capable');
   await expect(page.locator('[data-eid="2"]')).toHaveCount(0);
   expect(writes).toEqual([{ custom_fields: [{ id: 7, value: '' }] }]);
 });
@@ -1059,7 +1063,7 @@ test('closed sprints are opt-in and read only', async ({ page }) => {
   expect(writes).toEqual([]);
 });
 
-test('widening the backlog scope opts in to open unplanned issues, and is remembered', async ({ page }) => {
+test('Show closed opts in to closed unplanned Swimlane-capable issues, and is remembered', async ({ page }) => {
   const fixture = await setup(page);
   const unplanned = { custom_fields: [{ id: 7, value: '' }], tracker: { id: 1, name: 'Feature' }, priority: { id: 2, name: 'Normal' }, project: { id: 1, name: 'Team' }, estimated_hours: null };
   fixture.issues.push(
@@ -1067,32 +1071,30 @@ test('widening the backlog scope opts in to open unplanned issues, and is rememb
     { ...unplanned, id: 6, subject: 'Unplanned and done', status: { id: 5, name: 'Done', is_closed: true } },
   );
   await login(page, true);
-  await expect(page.locator('[data-id="backlog"] .kanban-item')).toHaveCount(2);
-  // The control lives in the Backlog column header, not the toolbar.
-  const toggle = page.locator('[data-id="backlog"] [data-backlog-scope]');
-  await expect(toggle).toHaveAttribute('aria-pressed', 'false');
-  await expect(toggle).toHaveAttribute('title', /only the New status/);
-  await toggle.click();
-  await expect(page.locator('[data-id="backlog"] [data-eid="5"]')).toBeVisible();
-  // Widening admits OPEN unplanned issues only.
-  await expect(page.locator('[data-eid="6"]')).toHaveCount(0);
   await expect(page.locator('[data-id="backlog"] .kanban-item')).toHaveCount(3);
+  // The control lives in the Backlog column header, not the toolbar.
+  const toggle = page.locator('[data-id="backlog"] [data-closed-parents]');
+  await expect(toggle).toHaveAttribute('aria-pressed', 'false');
+  await expect(page.locator('[data-id="backlog"] [data-eid="5"]')).toBeVisible();
+  await expect(page.locator('[data-eid="6"]')).toHaveCount(0);
+  await toggle.click();
+  await expect(page.locator('[data-id="backlog"] [data-eid="6"]')).toBeVisible();
+  await expect(page.locator('[data-id="backlog"] .kanban-item')).toHaveCount(4);
   await page.reload();
   await expect(page.locator('#updated')).toContainText('Updated');
-  await expect(page.locator('[data-id="backlog"] [data-backlog-scope]')).toHaveAttribute('aria-pressed', 'true');
-  await expect(page.locator('[data-id="backlog"] [data-eid="5"]')).toBeVisible();
+  await expect(page.locator('[data-id="backlog"] [data-closed-parents]')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('[data-id="backlog"] [data-eid="6"]')).toBeVisible();
 });
 
-test('the backlog scope is not a filter and survives clearing a search', async ({ page }) => {
+test('all open statuses remain eligible after clearing a search', async ({ page }) => {
   const fixture = await setup(page);
   fixture.issues.push({ custom_fields: [{ id: 7, value: '' }], id: 5, subject: 'Unplanned, in progress', status: { id: 2, name: 'Open' }, tracker: { id: 1, name: 'Feature' }, priority: { id: 2, name: 'Normal' }, project: { id: 1, name: 'Team' }, estimated_hours: null });
   await login(page);
-  await page.getByLabel('Show all unplanned').click();
   await expect(page.locator('[data-id="backlog"] [data-eid="5"]')).toBeVisible();
   await page.getByLabel('Find an issue').fill('underway');
   await expect(page.locator('[data-id="backlog"] [data-eid="5"]')).toHaveCount(0);
   await page.getByLabel('Find an issue').fill('');
-  await expect(page.getByLabel('Show all unplanned')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByLabel('Show all unplanned')).toHaveCount(0);
   await expect(page.locator('[data-id="backlog"] [data-eid="5"]')).toBeVisible();
 });
 

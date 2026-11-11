@@ -44,11 +44,8 @@ An issue with no Sprint.
 _Avoid_: Unassigned, loose, orphan
 
 **Backlog**:
-The Column of eligible open Unplanned issues and Swimlane-capable issue shortcuts that do not head a Swimlane in the selected Sprint. Closed shortcuts are optionally visible.
+The Column of Unplanned Swimlane-capable issues. Open issues are shown by default; closed issues are optionally visible.
 _Avoid_: Inbox, icebox
-
-**Backlog Scope**:
-Whether the Backlog shows only Unplanned issues in the configured New status, or every open Unplanned issue.
 
 **Tag**:
 A named label attached to a Redmine issue, independent of its Tracker, Priority, Category and Sprint membership. An issue may have several Tags or none.

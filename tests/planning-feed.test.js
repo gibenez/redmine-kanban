@@ -1,24 +1,24 @@
 import { describe, it, expect, vi } from 'vitest';
 import { PlanningFeed, issueQuery } from '../src/planning-feed.js';
 
-const scope = { projectId: '2', sprintId: 10, sprintFieldId: 7, backlogStatusId: 1 };
+const scope = { projectId: '2', sprintId: 10, sprintFieldId: 7, parentTrackerIds: [3] };
 const filters = { query: '', tracker: '', assignee: '' };
-const row = (id, value = '') => ({ id, custom_fields: [{ id: 7, value }] });
+const row = (id, value = '') => ({ id, tracker: { id: 3, name: 'Feature' }, custom_fields: [{ id: 7, value }] });
 const page = (ids, total = ids.length, offset = 0) => ({ items: ids.map(id => row(id)), total, nextOffset: offset + ids.length, hasMore: offset + ids.length < total });
 const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r; }); return { promise, resolve }; };
 
 describe('server-side issue queries', () => {
   it('applies project, backlog, search and filters before stable server sorting/pagination', () => {
-    expect(issueQuery(scope, { query: 'Needs review', tracker: '3', assignee: 'none' }, true)).toEqual({ project_id: '2', subproject_id: '!*', sort: 'priority:desc,id:asc', status_id: 1, cf_7: '!*', subject: '~Needs review', tracker_id: '3', assigned_to_id: '!*' });
+    expect(issueQuery(scope, { query: 'Needs review', tracker: '3', assignee: 'none' }, true)).toEqual({ project_id: '2', subproject_id: '!*', sort: 'priority:desc,id:asc', status_id: 'open', cf_7: '!*', subject: '~Needs review', tracker_id: '3', assigned_to_id: '!*' });
     expect(issueQuery(scope, { query: ' #123 ', assignee: '7' })).toMatchObject({ issue_id: '123', assigned_to_id: '7', cf_7: 10, status_id: '*' });
     expect(issueQuery({ ...scope, projectIds: [2, 3, 4] })).toMatchObject({ subproject_id: '3|4' });
     expect(issueQuery(scope, { query: '123' })).not.toHaveProperty('subject');
   });
-  it('widens the backlog query to every open status when the backlog scope is widened', () => {
-    const wide = { ...scope, allUnplanned: true };
-    expect(issueQuery(wide, {}, true)).toMatchObject({ status_id: 'open', cf_7: '!*' });
-    // Only the backlog column is scoped; sprint columns already show every status.
-    expect(issueQuery(wide, {})).toMatchObject({ status_id: '*', cf_7: 10 });
+  it('queries only unplanned Swimlane-capable issues, optionally including closed ones', () => {
+    expect(issueQuery({ ...scope, parentTrackerIds: [3, 4] }, {}, true)).toMatchObject({ status_id: 'open', cf_7: '!*', tracker_id: '3|4' });
+    expect(issueQuery({ ...scope, showClosedParents: true }, {}, true)).toMatchObject({ status_id: '*', cf_7: '!*' });
+    expect(issueQuery(scope, {})).toMatchObject({ status_id: '*', cf_7: 10 });
+    expect(issueQuery({ ...scope, sprintId: undefined }, {}, true)).toHaveProperty('cf_7', '!*');
   });
 });
 
@@ -35,8 +35,8 @@ describe('bounded backlog feed', () => {
     expect(api.list.mock.calls.filter(([, , params]) => params.tracker_id)).toHaveLength(0);
     expect(api.page).toHaveBeenCalledTimes(1);
   });
-  it('paginates parents and ordinary issues without duplicates or double-counting totals', async () => {
-    const parents = [1, 2, 3].map(id => ({ ...row(id), tracker: { name: 'Feature' } }));
+  it('paginates only Swimlane-capable issues without requesting ordinary issues', async () => {
+    const parents = [1, 2, 3].map(id => row(id));
     const api = {
       page: vi.fn(async (_path, _collection, params) => {
         const rows = params.tracker_id === '3' ? parents : [row(4), row(5)];
@@ -47,12 +47,33 @@ describe('bounded backlog feed', () => {
     await feed.load({ ...scope, parentTrackerIds: [3] }, filters);
     expect(feed.snapshot.backlog.map(issue => issue.id)).toEqual([1, 2]);
     await feed.next();
-    expect(feed.snapshot.backlog.map(issue => issue.id)).toEqual([1, 2, 3, 4]);
-    expect(feed.snapshot.total).toBe(5);
+    expect(feed.snapshot.backlog.map(issue => issue.id)).toEqual([1, 2, 3]);
+    expect(feed.snapshot.total).toBe(3);
     await feed.next();
-    expect(feed.snapshot.backlog.map(issue => issue.id)).toEqual([1, 2, 3, 4, 5]);
-    expect(feed.snapshot.total).toBe(5);
+    expect(feed.snapshot.backlog.map(issue => issue.id)).toEqual([1, 2, 3]);
+    expect(feed.snapshot.total).toBe(3);
     expect(feed.snapshot.hasMore).toBe(false);
+    expect(api.page).toHaveBeenCalledTimes(2);
+    for (const [, , params] of api.page.mock.calls) expect(params).toMatchObject({ tracker_id: '3', cf_7: '!*' });
+  });
+  it('returns an empty Backlog for disabled or nonmatching Swimlane trackers', async () => {
+    const api = { page: vi.fn(), list: vi.fn().mockResolvedValue([]) };
+    const feed = new PlanningFeed(api);
+    await feed.load({ ...scope, parentTrackerIds: [] }, filters);
+    expect(feed.snapshot).toMatchObject({ backlog: [], total: 0, hasMore: false });
+    await feed.load(scope, { ...filters, tracker: '8' });
+    expect(feed.snapshot).toMatchObject({ backlog: [], total: 0, hasMore: false });
+    expect(api.page).not.toHaveBeenCalled();
+  });
+  it('excludes ordinary issues even if Redmine returns them', async () => {
+    const api = { page: vi.fn().mockResolvedValue({ ...page([1, 2]), items: [row(1), { ...row(2), tracker: { id: 8, name: 'Task' } }] }), list: vi.fn().mockResolvedValue([]) };
+    const feed = new PlanningFeed(api);
+    await feed.load(scope, filters);
+    expect(feed.snapshot.backlog.map(issue => issue.id)).toEqual([1]);
+  });
+  it.each(['10', '20', ['10', '20']])('rejects nonempty Sprint membership %j in Backlog results', async value => {
+    const api = { page: vi.fn().mockResolvedValue({ ...page([1]), items: [row(1, value)] }), list: vi.fn().mockResolvedValue([]) };
+    await expect(new PlanningFeed(api).load(scope, filters)).rejects.toThrow('Sprint field filter');
   });
   it('rejects silently ignored custom-field filters instead of showing incorrect membership', async () => {
     const api = { page: vi.fn().mockResolvedValue({ ...page([1]), items: [row(1, '10')] }), list: vi.fn().mockResolvedValue([]) };

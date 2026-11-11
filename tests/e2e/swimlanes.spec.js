@@ -62,7 +62,7 @@ test('thousands of Backlog parents load only one visible page, then append on sc
   const base = fixture.rows[0];
   for (let id = 100; id < 1500; id++) fixture.rows.push({ ...base, id, subject: `Parent ${id}` });
   const requests = [];
-  page.on('request', request => { const url = new URL(request.url()); if (url.pathname.endsWith('/issues.json') && url.searchParams.get('cf_7') === '!100') requests.push(url); });
+  page.on('request', request => { const url = new URL(request.url()); if (url.pathname.endsWith('/issues.json') && url.searchParams.get('cf_7') === '!*') requests.push(url); });
   await refresh(page);
   const list = page.locator('[data-id="backlog"] .kanban-drag');
   const initial = await list.locator('.kanban-item').count();
@@ -78,18 +78,16 @@ test('dragging a parent plans only that parent, preserving child memberships', a
   await backlog(page, 1).locator('h3').dragTo(page.locator('[data-id="status-1"] .swimlane-cards').first());
   await expect(heading(page, 1)).toBeVisible();
   await expect(laneCard(page, 1, 2)).toBeVisible();
-  await expect(backlog(page, 1)).toHaveCount(0); await expect(backlog(page, 3)).toBeVisible();
+  await expect(backlog(page, 1)).toHaveCount(0); await expect(backlog(page, 3)).toHaveCount(0);
   expect(fixture.writes).toEqual([{ id: 1, patch: { custom_fields: [{ id: 7, value: ['100'] }] } }]);
   expect(fixture.rows.find(row => row.id === 3).custom_fields[0].value).toEqual([]);
 });
-test('parent planner appends membership and does not touch descendants', async ({ page }) => {
+test('parents belonging to another Sprint are excluded from Backlog without writes', async ({ page }) => {
   const fixture = await setup(page);
-  await page.getByRole('button', { name: 'Plan #5', exact: true }).click();
-  await page.getByLabel('Destination').selectOption('sprint');
-  await page.getByRole('button', { name: 'Save changes' }).click();
-  await expect(heading(page, 5)).toBeVisible();
-  expect(fixture.rows.find(row => row.id === 5).custom_fields[0].value).toEqual(['99', '100']);
-  expect(fixture.writes.map(row => row.id)).toEqual([5]);
+  await expect(backlog(page, 5)).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Plan #5', exact: true })).toHaveCount(0);
+  expect(fixture.rows.find(row => row.id === 5).custom_fields[0].value).toEqual(['99']);
+  expect(fixture.writes).toEqual([]);
 });
 test('removing parent membership regroups children without removing them', async ({ page }) => {
   const fixture = await setup(page);
@@ -109,11 +107,9 @@ test('individual removal preserves other Sprint values', async ({ page }) => {
   await expect(backlog(page, 6)).toHaveCount(0);
 });
 test('Show closed only controls Backlog parents, not member headings', async ({ page }) => {
-  // Visibility scope and closed work must have distinct visual affordances.
   const fixture = await setup(page); fixture.rows[0].status = { id: 5, name: 'Done', is_closed: true }; await refresh(page);
-  const scopeIcon = await page.getByRole('button', { name: 'Show all unplanned', exact: true }).locator('svg').innerHTML();
   const closed = page.getByRole('button', { name: 'Show closed', exact: true });
-  expect(await closed.locator('svg').innerHTML()).not.toBe(scopeIcon);
+  await expect(page.getByRole('button', { name: 'Show all unplanned', exact: true })).toHaveCount(0);
   await expect(closed.locator('svg')).toHaveAttribute('aria-hidden', 'true');
   await expect(closed).toHaveAttribute('aria-pressed', 'false');
   await expect(backlog(page, 1)).toHaveCount(0);

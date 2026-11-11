@@ -8,8 +8,6 @@ import { isSwimlane, loadAncestors, groupSwimlanes } from './swimlanes.js';
 
 const $ = id => document.getElementById(id);
 const storageKey = 'redmine-sprint-board.api-key';
-// Backlog Scope is a personal view preference, not a Filter and not deployment config.
-const scopeStorageKey = 'redmine-sprint-board.all-unplanned';
 const collapsedBacklogStorageKey = 'redmine-sprint-board.backlog-collapsed';
 let backlogCollapsed = false;
 let showClosedParents = false;
@@ -19,9 +17,6 @@ let sprint = null, projectId = '', blockedProjectId = '', busy = false, dragging
 let feed, queryLoading = false, queryTimer, queryRevision = 0, backlogFailed = false, searchFailed = false;
 const observedLists = new WeakSet();
 const mirroredStatusScrolls = new WeakMap();
-// Backlog Scope lives on the Backlog column header, so it is rebuilt with the board
-// rather than read from a persistent control.
-let allUnplannedScope = false;
 const filters = { query: '', tracker: '', assignee: '', tags: [] };
 const tagsMarkup = issue => (issue.tags || []).map(tag => `<span class="issue-tag">${e(tag)}</span>`).join('');
 let laneAncestors = [], laneMembers;
@@ -97,14 +92,6 @@ function clearBoardCards() {
 function cancelQuery() {
   clearTimeout(queryTimer); queryRevision++; feed?.cancel(); queryLoading = false;
 }
-function allUnplanned() { return allUnplannedScope; }
-// An eye: the Backlog Scope is about which unplanned issues are visible. Slashed while the
-// Backlog is narrowed to the New status, because open work in other statuses is hidden.
-const eyeIcon = open => `<svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M1.2 8S3.7 3.4 8 3.4 14.8 8 14.8 8 12.3 12.6 8 12.6 1.2 8 1.2 8Z"/><circle cx="8" cy="8" r="2.1"/>${open ? '' : '<path d="M2.6 13.4 13.4 2.6"/>'}</svg>`;
-function scopeToggle() {
-  const label = allUnplannedScope ? 'Showing every open issue without a sprint. Click to show only the New status.' : 'Showing only the New status without a sprint. Click to show every open unplanned issue.';
-  return `<button type="button" class="scope-toggle" data-backlog-scope aria-label="Show all unplanned" aria-pressed="${allUnplannedScope}" title="${e(label)}">${eyeIcon(allUnplannedScope)}</button>`;
-}
 const closedIssuesIcon = '<svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="5.6"/><path d="m5 8 2 2 4-4"/></svg>';
 function backlogToggle() {
   const label = backlogCollapsed ? 'Expand Backlog' : 'Collapse Backlog';
@@ -128,15 +115,9 @@ function toggleBacklog() {
   renderBoard();
   $('board').querySelector('[data-backlog-collapse]')?.focus({ preventScroll: true });
 }
-function toggleScope() {
-  allUnplannedScope = !allUnplannedScope;
-  try { localStorage.setItem(scopeStorageKey, allUnplannedScope ? '1' : '0'); } catch { /* Storage may be disabled. */ }
-  // Only the backlog query changes: sprints and memberships stay as they are.
-  if (api && feed && projectId) scheduleSearch(0);
-}
-function feedScope() { return { projectId, projectIds: projectScope(projects, projectId), sprintId: sprint?.id, sprintFieldId: config.sprintFieldId, backlogStatusId: config.backlogStatusId, allUnplanned: allUnplanned(), swimlaneTrackers: config.swimlaneTrackers, showClosedParents, parentTrackerIds: [...new Set(projects.flatMap(project => project.trackers || []).filter(tracker => config.swimlaneTrackers.includes(tracker.name)).map(tracker => tracker.id))] }; }
+function feedScope() { return { projectId, projectIds: projectScope(projects, projectId), sprintId: sprint?.id, sprintFieldId: config.sprintFieldId, swimlaneTrackers: config.swimlaneTrackers, showClosedParents, parentTrackerIds: [...new Set(projects.flatMap(project => project.trackers || []).filter(tracker => config.swimlaneTrackers.includes(tracker.name)).map(tracker => tracker.id))] }; }
 function backlogScope() {
-  return { sprintFieldId: config.sprintFieldId, backlogStatusId: config.backlogStatusId, allUnplanned: allUnplanned(), closedStatusIds: closedStatusIds() };
+  return { sprintFieldId: config.sprintFieldId, swimlaneTrackers: config.swimlaneTrackers, showClosedParents, closedStatusIds: closedStatusIds() };
 }
 async function syncFeed(snapshot) {
   const activeFeed = feed, currentApi = api, stamp = epoch, revision = queryRevision;
@@ -249,7 +230,7 @@ function renderBoard() {
     : '';
   const backlogIds = new Set(feed?.snapshot.backlog.map(issue => issue.id));
   const backlog = visible.filter(issue => backlogIds.has(issue.id));
-  const boards = [{ id: 'backlog', title: `${backlogToggle()}<span class="backlog-label">Backlog</span> <span class="count">${backlog.length} / ${feed?.snapshot.total ?? '?'}</span>${scopeToggle()}<button type="button" class="scope-toggle" data-closed-parents aria-label="Show closed" title="Show closed" aria-pressed="${showClosedParents}">${closedIssuesIcon}</button>`, class: 'backlog-board', item: backlog.map(card) }];
+  const boards = [{ id: 'backlog', title: `${backlogToggle()}<span class="backlog-label">Backlog</span> <span class="count">${backlog.length} / ${feed?.snapshot.total ?? '?'}</span><button type="button" class="scope-toggle" data-closed-parents aria-label="Show closed" title="Show closed" aria-pressed="${showClosedParents}">${closedIssuesIcon}</button>`, class: 'backlog-board', item: backlog.map(card) }];
   const lanes = config.swimlaneTrackers.length ? groupSwimlanes(feed?.snapshot.sprintAll || [], feed?.snapshot.sprintVisible || [], config.swimlaneTrackers, laneAncestors) : null;
   for (const [index, statusId] of config.columnStatusIds.entries()) {
     const items = lanes ? lanes.flatMap(lane => lane.visible.filter(issue => issue.status.id === statusId).map(issue => ({ ...card(issue), lane: lane.id })))
@@ -476,7 +457,7 @@ async function mutate(id, patch) {
     if (!writeConfirmed) throw new Error('Redmine did not retain all requested changes. Showing its confirmed values; check field permissions and workflow rules.');
     $('editor').close(); editing = null;
     notify(patch.custom_fields && !sprintValues(confirmed, config.sprintFieldId).includes(sprint.id) && !isBacklog(confirmed, backlogScope())
-      ? `Issue #${id} removed from sprint. ${sprintValues(confirmed, config.sprintFieldId).length ? 'It still belongs to other Sprints' : allUnplanned() ? 'Its status is closed' : 'Its status is not the backlog status'}, so it is no longer shown here.`
+      ? `Issue #${id} removed from sprint. ${sprintValues(confirmed, config.sprintFieldId).length ? 'It still belongs to other Sprints' : !isSwimlane(confirmed, config.swimlaneTrackers) ? 'It is not Swimlane-capable' : 'Its status is closed'}, so it is no longer shown here.`
       : `Issue #${id} saved in Redmine.`);
   } catch (error) {
     if (stamp === epoch) notify(writeConfirmed ? `Issue #${id} was saved, but reloading the board failed: ${error.message} Use Refresh; do not repeat the write.` : `Save not confirmed: ${error.message} Refresh before retrying if the connection failed.`, true);
@@ -616,7 +597,6 @@ $('board').addEventListener('click', event => {
 }, { capture: true });
 $('board').addEventListener('click', event => {
   if (event.target.closest('[data-backlog-collapse]')) { toggleBacklog(); return; }
-  if (event.target.closest('[data-backlog-scope]')) { toggleScope(); return; }
   if (event.target.closest('[data-closed-parents]')) {
     showClosedParents = !showClosedParents;
     try { localStorage.setItem(closedParentsStorageKey, showClosedParents ? '1' : '0'); } catch { /* Optional preference. */ }
@@ -636,10 +616,9 @@ $('edit-form').addEventListener('submit', event => {
 });
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') void refresh(); });
 try {
-  allUnplannedScope = localStorage.getItem(scopeStorageKey) === '1';
   backlogCollapsed = localStorage.getItem(collapsedBacklogStorageKey) === '1';
   showClosedParents = localStorage.getItem(closedParentsStorageKey) === '1';
-} catch { /* Default to the narrow backlog without local storage. */ }
+} catch { /* Default view preferences without local storage. */ }
 try {
   const remembered = localStorage.getItem(storageKey);
   if (remembered) { $('forget-saved').hidden = false; $('remember').checked = true; void connect(remembered, true); }

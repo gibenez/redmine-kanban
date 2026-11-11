@@ -2,6 +2,8 @@
 
 Status: accepted; implemented.
 
+Backlog amendment: show only Swimlane-capable issues whose own Sprint field is empty. Issues assigned to any Sprint and ordinary issues are excluded from Backlog. Retain all open statuses and the optional Show closed control for eligible issues. This supersedes the other-Sprint shortcut rules below; Sprint headings and independent issue membership are unchanged.
+
 Latest amendment: every issue's own Sprint field is the sole inclusion rule, including Swimlane parents. A planned qualifying parent renders a heading even without planned children; an unplanned parent never creates a heading from its children. Group Cards under the nearest planned qualifying ancestor, otherwise Ungrouped. Dragging/planning a parent changes only that issue; retire all descendant-planning operations. This supersedes context-only membership and descendant shortcut behavior described historically below.
 
 Amendment: membership now supports a multiple-value Version custom field. Adding appends the selected version and removing deletes only that version, preserving all other memberships. The descendant shortcut also appends for issues already in other Sprints. This supersedes the single-value and Unplanned-only restrictions below; module release separation and context-only parents remain unchanged.

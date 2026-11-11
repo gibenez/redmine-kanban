@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { PlanningFeed, matchesTags } from '../src/planning-feed.js';
 
-const scope = { projectId: '1', sprintId: 10, sprintFieldId: 7, backlogStatusId: 1 };
+const scope = { projectId: '1', sprintId: 10, sprintFieldId: 7, parentTrackerIds: [2] };
 const issue = (id, tags) => ({ id, tags, custom_fields: [{ id: 7, value: id === 90 ? '10' : '' }], project: { id: 1 }, tracker: { id: 2 } });
 
 describe('Backlog tags', () => {
