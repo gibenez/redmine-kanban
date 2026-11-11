@@ -252,6 +252,9 @@ input::placeholder { color: var(--secondary); opacity: 1; }
 .swimlane-actions button { display: inline-grid; place-items: center; width: 24px; height: 24px; min-height: 24px; padding: 0; border-color: transparent; background: transparent; color: var(--secondary); }
 .swimlane-actions button:hover:not(:disabled) { background: var(--tag); color: var(--text); }
 .swimlane-actions svg { display: block; pointer-events: none; }
+.swimlane-actions .add-subtasks { width: 28px; height: 28px; }
+.swimlane-actions .add-subtasks.requires-attention { color: var(--accent); border: 1px solid currentColor; font-weight: 600; }
+.swimlane-actions .add-subtasks.planning-unknown { opacity: 1; border: 1px dashed currentColor; }
 .swimlane-cards { display: flex; flex-direction: column; gap: 8px; padding: 8px; box-sizing: border-box; }
 .swimlane-cards .kanban-item { flex: none; }
 .unmapped-notice { font-size: 11px; font-weight: 400; line-height: 16px; margin-top: 6px; }

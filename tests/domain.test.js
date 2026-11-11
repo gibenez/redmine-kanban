@@ -7,7 +7,7 @@ const issue = { id: 8, custom_fields: [{ id: 7, value: '' }], subject: 'Ship a f
 const backlogScope = { sprintFieldId: 7, swimlaneTrackers: ['Feature'], closedStatusIds: [5] };
 
 describe('deployment configuration', () => {
-  const config = { sprintFieldId: 7, backlogStatusId: 1, columnStatusIds: [1, 2, 5], redminePublicUrl: 'https://redmine.example.test/subpath' };
+  const config = { openedStatusId: 2, sprintFieldId: 7, backlogStatusId: 1, columnStatusIds: [1, 2, 5], redminePublicUrl: 'https://redmine.example.test/subpath' };
   it('validates IDs against actual statuses and preserves deployment paths', () => {
     expect(validateConfig(config, statuses)).toMatchObject({ backlogStatusId: 1, refreshSeconds: 60, redminePublicUrl: config.redminePublicUrl });
   });
@@ -27,6 +27,7 @@ describe('deployment configuration', () => {
     { columnStatusIds: [] }, { columnStatusIds: [1, 1] }, { backlogStatusId: 5 }, { columnStatusIds: [999] },
     { backlogStatusId: -1 }, { redminePublicUrl: 'javascript:alert(1)' }, { redminePublicUrl: 'https://secret@redmine.test' },
     { sprintFieldId: null }, { sprintFieldId: -1 }, { sprintFieldId: 1.5 },
+    { openedStatusId: null }, { openedStatusId: 5 }, { openedStatusId: 999 }, { openedStatusId: 1.5 },
   ])('rejects unsafe or invalid mappings: %j', overrides => expect(() => validateConfig({ ...config, ...overrides }, statuses)).toThrow());
 });
 

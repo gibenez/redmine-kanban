@@ -6,7 +6,7 @@ test('Backlog only shows Swimlane-capable issues with no Sprint, including after
   const issue = (id, tracker, value, status = statuses[0]) => ({ id, subject: `Issue ${id}`, tracker, status, project: { id: 1 }, priority: { id: 1, name: 'Normal' }, custom_fields: [{ id: 7, value }] });
   const issues = [issue(1, trackers[0], ''), issue(2, trackers[0], [], statuses[1]), issue(3, trackers[1], ''), issue(4, trackers[0], ['20']), issue(5, trackers[0], ['10', '20']), issue(6, trackers[0], '', statuses[2]), { ...issue(7, trackers[0], ''), custom_fields: [] }];
   const backlogQueries = [];
-  await page.route('**/config.json', route => route.fulfill({ json: { redminePublicUrl: 'https://redmine.example.test', sprintFieldId: 7, backlogStatusId: 1, columnStatusIds: [1, 2, 5], swimlaneTrackers: ['Feature'], refreshSeconds: 60 } }));
+  await page.route('**/config.json', route => route.fulfill({ json: { openedStatusId: 2, redminePublicUrl: 'https://redmine.example.test', sprintFieldId: 7, backlogStatusId: 1, columnStatusIds: [1, 2, 5], swimlaneTrackers: ['Feature'], refreshSeconds: 60 } }));
   await page.route('**/redmine/**', route => {
     const url = new URL(route.request().url()), path = url.pathname.replace('/redmine', '');
     const send = json => route.fulfill({ json });
@@ -29,6 +29,7 @@ test('Backlog only shows Swimlane-capable issues with no Sprint, including after
       const offset = Number(url.searchParams.get('offset') || 0), limit = Number(url.searchParams.get('limit'));
       return send({ issues: rows.slice(offset, offset + limit), total_count: rows.length, offset });
     }
+    if (/^\/issues\/\d+\.json$/.test(path)) return send({ issue: issues.find(issue => issue.id === Number(path.match(/\d+/)[0])) });
     throw new Error(`Unexpected API path ${path}`);
   });
   await page.goto('/');

@@ -2,6 +2,8 @@
 
 Status: implemented
 
+Superseding implemented design: [Add missing subtasks to a Sprint](../swimlane-add-missing-subtasks/spec.md) replaces the parent-only dragging/no-descendant-operations rule with explicit header collection and cascading Backlog drag behavior. Other independent membership and grouping rules remain in effect. The implementation history below describes the earlier runtime.
+
 ## Latest confirmed revision: independent membership for all issues
 
 Startup performance follow-up: removed the eager full-list fetch of Swimlane-capable Backlog issues. Parents and ordinary issues now share a viewport-sized page budget with separate lazy cursors preserving their predicates. Removed automatic post-render page filling; subsequent pages load on user scroll. A regression with 1,400 parents reproduced the former eager load and now verifies one initial page, followed by one scroll-triggered page. Combined totals remain unknown until both streams provide counts.

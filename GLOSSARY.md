@@ -34,7 +34,7 @@ A horizontal grouping headed by a Swimlane-capable issue belonging to the select
 _Avoid_: Column, bucket
 
 **Swimlane-capable Issue**:
-An issue of a configured tracker type, rendered as a Swimlane heading rather than a Card when it belongs to the selected Sprint. Planning it changes only its own membership, never that of its descendants.
+An issue of a configured tracker type, rendered as a Swimlane heading rather than a Card when it belongs to the selected Sprint. Its membership is distinct from its descendants' memberships; a planning action may explicitly add several issues to a Sprint together.
 
 **Ungrouped**:
 The section of a Sprint containing Cards that do not belong to a Swimlane.

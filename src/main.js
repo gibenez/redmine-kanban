@@ -5,6 +5,7 @@ import { RedmineClient, RedmineError } from './api.js';
 import { validateConfig, isBacklog, effort, movePatch, parseEstimate, assertTransition, matchesPatch, sprintValues, membershipPatch, hasSprintField, projectScope, escapeHtml as e } from './domain.js';
 import { PlanningFeed } from './planning-feed.js';
 import { isSwimlane, loadAncestors, groupSwimlanes } from './swimlanes.js';
+import { collectMissingSubtasks, planDescendants } from './descendant-planning.js';
 
 const $ = id => document.getElementById(id);
 const storageKey = 'redmine-sprint-board.api-key';
@@ -26,6 +27,7 @@ function resetFilters() {
 }
 const tagsMarkup = issue => (issue.tags || []).map(tag => `<span class="issue-tag">${e(tag)}</span>`).join('');
 let laneAncestors = [], laneMembers;
+let lanePlanning = new Map();
 let laneResizeObserver;
 const newFeed = () => new PlanningFeed(api);
 const closedStatusIds = () => statuses.filter(status => status.is_closed).map(status => status.id);
@@ -79,6 +81,7 @@ function lock() {
   document.querySelectorAll('#workspace select, #workspace input, #workspace button, #edit-form input, #edit-form select, #edit-form button[type="submit"]').forEach(el => { el.disabled = busy || loading; });
   document.querySelectorAll('.plan, .scope-toggle').forEach(el => { el.disabled = busy || loading || (el.closest('[data-id="backlog"]') && (queryLoading || feed?.loadingMore)); });
   $('tracker').disabled = busy || loading || !eligibleTrackers().length;
+  document.querySelectorAll('[data-add-descendants]').forEach(el => { el.disabled = busy || loading || sprint?.status !== 'open' || !lanePlanning.get(Number(el.dataset.addDescendants))?.count; });
   if ($('backlog-more')) $('backlog-more').disabled = busy || loading || queryLoading || feed?.loadingMore;
   $('workspace').setAttribute('aria-busy', String(busy || loading));
   $('board').setAttribute('aria-busy', String(loading));
@@ -146,9 +149,24 @@ function backlogScope() {
 }
 async function syncFeed(snapshot) {
   const activeFeed = feed, currentApi = api, stamp = epoch, revision = queryRevision;
+  const scope = feedScope();
   const ancestors = !config.swimlaneTrackers.length ? [] : laneMembers === snapshot.sprintAll ? laneAncestors : await loadAncestors(currentApi, snapshot.sprintAll);
   if (activeFeed !== feed || stamp !== epoch || revision !== queryRevision || activeFeed.snapshot !== snapshot) return false;
-  laneAncestors = ancestors; laneMembers = snapshot.sprintAll;
+  const planning = laneMembers === snapshot.sprintAll ? lanePlanning : new Map();
+  if (laneMembers !== snapshot.sprintAll) {
+    const reads = new Map();
+    const hierarchy = { hierarchyIssue(id) {
+      if (!reads.has(id)) reads.set(id, currentApi.hierarchyIssue(id));
+      return reads.get(id);
+    } };
+    for (const parent of snapshot.sprintAll.filter(issue => isSwimlane(issue, config.swimlaneTrackers))) {
+      if (activeFeed !== feed || stamp !== epoch || revision !== queryRevision) return false;
+      try { planning.set(parent.id, { count: (await collectMissingSubtasks(hierarchy, parent.id, scope)).length }); }
+      catch (error) { planning.set(parent.id, { error: error.message }); }
+    }
+  }
+  if (activeFeed !== feed || stamp !== epoch || revision !== queryRevision || activeFeed.snapshot !== snapshot) return false;
+  laneAncestors = ancestors; laneMembers = snapshot.sprintAll; lanePlanning = planning;
   issues = [...new Map([...snapshot.backlog, ...snapshot.sprintVisible].map(issue => [issue.id, issue])).values()];
   return true;
 }
@@ -237,7 +255,11 @@ function laneHeading(lane) {
   const id = Number(lane.parent?.id);
   const title = lane.parent ? `<a href="${e(linkToIssue(id))}" target="_blank" rel="noopener noreferrer">#${id} — ${e(lane.parent.subject)}</a>` : 'Ungrouped';
   const metadata = lane.parent ? `<span class="lane-tracker">${e(lane.parent.tracker?.name || '')}</span><span class="lane-priority ${priorityClass(lane.parent.priority?.name || '')}"><span class="card-field">${e(lane.parent.priority?.name || '')}</span></span><span class="lane-tags">${tagsMarkup(lane.parent)}</span>` : '';
-  return `<div class="swimlane-title-row"><strong>${title}</strong>${metadata}</div>${unmappedNotice(lane.visible.filter(issue => !config.columnStatusIds.includes(issue.status.id)))}`;
+  const state = lanePlanning.get(id);
+  const hint = state?.error ? `Missing subtasks unknown: ${state.error} Use Refresh to retry.` : `Add missing subtasks to ${sprint?.name || 'this Sprint'} (${state?.count || 0} missing). Includes closed subtasks and those assigned elsewhere; preserves statuses and other Sprints. Cards group under their nearest planned Swimlane.`;
+  const icon = `<svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3 3v10h3M3 6h3M9 6h7M9 13h2M15 11v6M12 14h6"/>${state?.error ? '<circle cx="16" cy="3" r="2"/>' : ''}</svg>`;
+  const action = lane.parent ? `<span class="swimlane-actions" title="${e(hint)}"><button type="button" class="add-subtasks${state?.count ? ' requires-attention' : ''}${state?.error ? ' planning-unknown' : ''}" data-add-descendants="${id}" aria-label="Add missing subtasks for #${id}" title="${e(hint)}"${state?.error ? ' aria-invalid="true"' : ''}>${icon}</button></span>` : '';
+  return `<div class="swimlane-title-row"><strong>${title}</strong>${metadata}${action}</div>${unmappedNotice(lane.visible.filter(issue => !config.columnStatusIds.includes(issue.status.id)))}`;
 }
 
 function renderBoard() {
@@ -274,7 +296,11 @@ function renderBoard() {
         dragging = false;
         try {
           if (backlogCollapsed && target.parentElement.dataset.id === 'backlog') throw new Error('Expand Backlog before moving issues into it.');
-           const patch = movePatch(issue, target.parentElement.dataset.id, sprint, config.sprintFieldId); void mutate(issue.id, patch);
+           if (target.parentElement.dataset.id !== 'backlog' && isSwimlane(issue, config.swimlaneTrackers) && !selectedMember(issue)) {
+             void addMissingSubtasks(issue.id, true);
+           } else {
+             const patch = movePatch(issue, target.parentElement.dataset.id, sprint, config.sprintFieldId); void mutate(issue.id, patch);
+           }
         }
         catch (error) { notify(error.message, true); renderBoard(); }
       });
@@ -443,6 +469,35 @@ async function refresh(projectChanged = false, retryDenied = false) {
       }
     }
   } finally { if (stamp === epoch) { loading = false; lock(); renderBacklogFooter(); } }
+}
+
+async function addMissingSubtasks(id, includeParent = false) {
+  if (busy || loading || !api || sprint?.status !== 'open') return;
+  cancelQuery(); busy = true; lock();
+  const stamp = epoch, currentApi = api;
+  notify('Checking hierarchy and planning Sprint membership…');
+  try {
+    const report = await planDescendants(currentApi, id, feedScope(), { includeParent, openedStatusId: config.openedStatusId });
+    if (stamp !== epoch) return;
+    const list = ids => ids.length ? ids.map(id => `#${id}`).join(', ') : 'none';
+    let message = `Added/confirmed: ${list(report.added)}. Failed/unconfirmed: ${list(report.failed)}. Not attempted: ${list(report.notAttempted)}.${report.error ? ` ${report.error}` : ''}`;
+    let refreshFailed = false;
+    try {
+      feed.pageSize = backlogPageSize(); backlogFailed = false;
+      const snapshot = await feed.load(feedScope(), filters);
+      if (stamp !== epoch) return;
+      if (!snapshot || !await syncFeed(snapshot)) throw new Error('Refresh was superseded.');
+      $('updated').textContent = `Updated ${new Date().toLocaleTimeString()}`;
+    } catch (error) {
+      refreshFailed = true; lanePlanning = new Map([...lanePlanning.keys()].map(id => [id, { error: 'Refresh failed; state may be stale.' }]));
+      message += ` Refresh failed: ${error.message} Displayed state may be stale; use Refresh, do not repeat an uncertain write.`;
+    }
+    if (stamp === epoch) notify(message, Boolean(report.error) || refreshFailed);
+  } catch (error) {
+    if (stamp === epoch) notify(`Planning failed: ${error.message}. Refresh before retrying.`, true);
+  } finally {
+    if (stamp === epoch) { busy = false; renderFilters(); renderBoard(); }
+  }
 }
 
 async function mutate(id, patch) {
@@ -625,6 +680,8 @@ $('board').addEventListener('click', event => {
 }, { capture: true });
 $('board').addEventListener('click', event => {
   if (event.target.closest('[data-backlog-collapse]')) { toggleBacklog(); return; }
+  const add = event.target.closest('[data-add-descendants]');
+  if (add && !add.disabled) { void addMissingSubtasks(Number(add.dataset.addDescendants)); return; }
   const button = event.target.closest('[data-edit]'); if (button) void openEditor(Number(button.dataset.edit));
 });
 $('close-editor').addEventListener('click', () => { if (!busy) { $('editor').close(); editing = null; } });

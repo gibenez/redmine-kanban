@@ -26,12 +26,14 @@ describe('legacy Sprint configuration', () => {
 describe('Vite Swimlane configuration', () => {
   it('serves the explicit Sprint custom-field ID without inferring it from other IDs', async () => {
     vi.stubEnv('SPRINT_FIELD_ID', '42');
+    vi.stubEnv('OPENED_STATUS_ID', '3');
     const config = await resolveConfig({ configFile: 'vite.config.js' }, 'serve');
     const use = vi.fn();
     config.plugins.find(plugin => plugin.name === 'board-development-config').configureServer({ middlewares: { use } });
     const response = { setHeader: vi.fn(), end: vi.fn() };
     use.mock.calls[0][1]({ method: 'GET' }, response, vi.fn());
     expect(JSON.parse(response.end.mock.calls[0][0]).sprintFieldId).toBe(42);
+    expect(JSON.parse(response.end.mock.calls[0][0]).openedStatusId).toBe(3);
   });
   it.each([
     [' Feature, Bug ,Improvement ', ['Feature', 'Bug', 'Improvement']],

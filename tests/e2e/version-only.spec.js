@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 
 test('missing Sprint field configuration fails explicitly without falling back to Target version', async ({ page }) => {
   await page.route('**/config.json', route => route.fulfill({ json: {
-    redminePublicUrl: 'https://redmine.example.test', backlogStatusId: 1, columnStatusIds: [1],
+    redminePublicUrl: 'https://redmine.example.test', openedStatusId: 1, backlogStatusId: 1, columnStatusIds: [1],
   } }));
   const requests = [];
   await page.route('**/redmine/**', route => {
@@ -21,7 +21,7 @@ test('missing Sprint field configuration fails explicitly without falling back t
 
 test('legacy browser configuration blocks connection without reading or changing Sprint membership', async ({ page }) => {
   await page.route('**/config.json', route => route.fulfill({ json: {
-    redminePublicUrl: 'https://redmine.example.test', backlogStatusId: 1, columnStatusIds: [1],
+    redminePublicUrl: 'https://redmine.example.test', openedStatusId: 1, backlogStatusId: 1, columnStatusIds: [1],
     sprintSource: 'build', buildTrackerId: 9,
   } }));
   const requests = [];

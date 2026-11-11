@@ -1,5 +1,8 @@
 export function validateConfig(raw, statuses) {
   const backlogStatusId = Number(raw.backlogStatusId);
+  const openedStatusId = Number(raw.openedStatusId);
+  if (!Number.isSafeInteger(openedStatusId) || openedStatusId <= 0) throw new Error('Configure openedStatusId / OPENED_STATUS_ID with the opened status ID.');
+  if (!statuses.some(status => status.id === openedStatusId && !status.is_closed)) throw new Error('The opened status must exist and must not be closed.');
   const columnStatusIds = raw.columnStatusIds?.map(Number);
   if (!Number.isInteger(backlogStatusId) || backlogStatusId <= 0 || !Array.isArray(columnStatusIds) || !columnStatusIds.length || columnStatusIds.some(id => !Number.isInteger(id) || id <= 0) || new Set(columnStatusIds).size !== columnStatusIds.length) {
     throw new Error('Configure a positive backlogStatusId and a nonempty, unique columnStatusIds list in config.json.');
@@ -16,7 +19,7 @@ export function validateConfig(raw, statuses) {
   if (!Array.isArray(swimlaneTrackers) || swimlaneTrackers.some(name => typeof name !== 'string' || !name.trim())) throw new Error('swimlaneTrackers must be a list of nonempty tracker names.');
   const publicUrl = new URL(raw.redminePublicUrl, window.location.origin);
   if (!['http:', 'https:'].includes(publicUrl.protocol) || publicUrl.username || publicUrl.password || publicUrl.search || publicUrl.hash) throw new Error('redminePublicUrl must be an HTTP(S) URL without credentials, a query, or a fragment.');
-  return { ...current, sprintFieldId, swimlaneTrackers: [...new Set(swimlaneTrackers.map(name => name.trim()))], backlogStatusId, columnStatusIds, redminePublicUrl: publicUrl.href.replace(/\/$/, ''), refreshSeconds: Math.max(15, Number(raw.refreshSeconds) || 60) };
+  return { ...current, openedStatusId, sprintFieldId, swimlaneTrackers: [...new Set(swimlaneTrackers.map(name => name.trim()))], backlogStatusId, columnStatusIds, redminePublicUrl: publicUrl.href.replace(/\/$/, ''), refreshSeconds: Math.max(15, Number(raw.refreshSeconds) || 60) };
 }
 
 export const hasSprintField = (issue, fieldId) => Boolean(issue.custom_fields?.some(field => Number(field.id) === Number(fieldId)));

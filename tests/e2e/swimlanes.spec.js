@@ -6,7 +6,7 @@ async function setup(page) {
   const make = (id, parent, tracker = 'Task', values = []) => ({ id, subject: `Issue ${id}`, tracker: { id: tracker === 'Feature' ? 1 : 2, name: tracker }, project: { id: 1 }, status: statuses[0], priority: { id: 2, name: 'Normal' }, allowed_statuses: statuses, fixed_version: { id: 300 }, custom_fields: [{ id: 7, multiple: true, value: values }], ...(parent ? { parent: { id: parent } } : {}) });
   const rows = [make(1, null, 'Feature'), make(2, 1, 'Task', ['100']), make(3, 1), make(4, null, 'Feature', ['100']), make(5, null, 'Feature', ['99']), make(6, null, 'Task', ['99', '100'])];
   const writes = [];
-  await page.route('**/config.json', route => route.fulfill({ json: { sprintFieldId: 7, redminePublicUrl: 'https://redmine.example.test', backlogStatusId: 1, columnStatusIds: [1, 2, 5], swimlaneTrackers: ['Feature'] } }));
+  await page.route('**/config.json', route => route.fulfill({ json: { openedStatusId: 2, sprintFieldId: 7, redminePublicUrl: 'https://redmine.example.test', backlogStatusId: 1, columnStatusIds: [1, 2, 5], swimlaneTrackers: ['Feature'] } }));
   await page.route('**/redmine/**', async route => {
     const request = route.request(), url = new URL(request.url()), path = url.pathname.replace('/redmine', ''), params = url.searchParams;
     const send = json => route.fulfill({ json });
@@ -28,7 +28,7 @@ async function setup(page) {
     }
     if (/^\/issues\/\d+\.json$/.test(path)) {
       const id = Number(path.match(/\d+/)[0]), issue = rows.find(row => row.id === id);
-      if (request.method() === 'GET') return send({ issue });
+       if (request.method() === 'GET') return send({ issue: { ...issue, children: rows.filter(row => row.parent?.id === id).map(row => ({ id: row.id })) } });
       const patch = request.postDataJSON().issue; writes.push({ id, patch });
       if (patch.custom_fields) issue.custom_fields = patch.custom_fields;
       if (patch.status_id) issue.status = statuses.find(row => row.id === patch.status_id);
@@ -73,14 +73,14 @@ test('thousands of Backlog parents load only one visible page, then append on sc
   await expect.poll(() => list.locator('.kanban-item').count()).toBeGreaterThan(initial);
   expect(requests).toHaveLength(2);
 });
-test('dragging a parent plans only that parent, preserving child memberships', async ({ page }) => {
+test('dragging a parent opens it regardless of drop column and plans missing children', async ({ page }) => {
   const fixture = await setup(page);
   await backlog(page, 1).locator('h3').dragTo(page.locator('[data-id="status-1"] .swimlane-cards').first());
   await expect(heading(page, 1)).toBeVisible();
   await expect(laneCard(page, 1, 2)).toBeVisible();
   await expect(backlog(page, 1)).toHaveCount(0); await expect(backlog(page, 3)).toHaveCount(0);
-  expect(fixture.writes).toEqual([{ id: 1, patch: { custom_fields: [{ id: 7, value: ['100'] }] } }]);
-  expect(fixture.rows.find(row => row.id === 3).custom_fields[0].value).toEqual([]);
+  expect(fixture.writes).toEqual([{ id: 1, patch: { custom_fields: [{ id: 7, value: ['100'] }], status_id: 2 } }, { id: 3, patch: { custom_fields: [{ id: 7, value: ['100'] }] } }]);
+  expect(fixture.rows.find(row => row.id === 3).status.id).toBe(1);
 });
 test('parents belonging to another Sprint are excluded from Backlog without writes', async ({ page }) => {
   const fixture = await setup(page);
@@ -88,6 +88,63 @@ test('parents belonging to another Sprint are excluded from Backlog without writ
   await expect(page.getByRole('button', { name: 'Plan #5', exact: true })).toHaveCount(0);
   expect(fixture.rows.find(row => row.id === 5).custom_fields[0].value).toEqual(['99']);
   expect(fixture.writes).toEqual([]);
+});
+
+test('header action highlights all missing descendants and adds closed and other-Sprint subtasks without confirmation', async ({ page }) => {
+  const fixture = await setup(page);
+  fixture.rows[0].custom_fields[0].value = ['100'];
+  fixture.rows[2].custom_fields[0].value = ['99'];
+  fixture.rows[2].status = { id: 5, name: 'Done', is_closed: true };
+  const nested = structuredClone(fixture.rows[4]); nested.id = 7; nested.parent = { id: 1 }; fixture.rows.push(nested);
+  const grandchild = structuredClone(fixture.rows[2]); grandchild.id = 8; grandchild.parent = { id: 7 }; fixture.rows.push(grandchild);
+  await refresh(page);
+  const add = heading(page, 1).getByRole('button', { name: 'Add missing subtasks for #1' });
+  await expect(add).toHaveClass(/requires-attention/);
+  await expect(add).toHaveAttribute('title', /Add missing subtasks.*\(2 missing\)/);
+  await expect(add).toHaveText('');
+  await expect(add.locator('svg')).toBeVisible();
+  await page.getByLabel('Search backlog').fill('absent');
+  await expect(page.locator('[data-id="backlog"] footer')).toContainText('No backlog issues match');
+  await add.focus(); await page.keyboard.press('Enter');
+  await expect(page.locator('#notice')).toContainText('Added/confirmed: #3, #8');
+  expect(fixture.writes).toEqual([3, 8].map(id => ({ id, patch: { custom_fields: [{ id: 7, value: ['99', '100'] }] } })));
+  expect(fixture.rows.find(row => row.id === 7).custom_fields[0].value).toEqual(['99']);
+  expect(fixture.rows[2].status.id).toBe(5); expect(fixture.rows[2].fixed_version.id).toBe(300);
+  await expect(add).toBeDisabled();
+  await expect(add).not.toHaveClass(/requires-attention/);
+  const positions = await add.evaluate(button => ({ button: button.getBoundingClientRect().right, header: button.closest('.swimlane-heading').getBoundingClientRect().right }));
+  expect(positions.header - positions.button).toBeLessThan(20);
+});
+
+test('forbidden opened transition aborts the complete Backlog operation', async ({ page }) => {
+  const fixture = await setup(page); fixture.rows[0].allowed_statuses = [];
+  await backlog(page, 1).locator('h3').dragTo(page.locator('[data-id="status-5"] .swimlane-cards').first());
+  await expect(page.locator('#notice')).toContainText('Preflight failed');
+  expect(fixture.writes).toEqual([]);
+  await expect(backlog(page, 1)).toBeVisible();
+});
+
+test('unreadable hierarchy shows unknown state instead of an all-clear', async ({ page }) => {
+  await setup(page);
+  await page.route('**/redmine/issues/4.json?**', route => route.fulfill({ status: 403, json: {} }));
+  await refresh(page);
+  const add = heading(page, 4).getByRole('button', { name: 'Add missing subtasks for #4' });
+  await expect(add).toHaveClass(/planning-unknown/);
+  await expect(add).toHaveAttribute('title', /unknown.*Refresh/);
+  await expect(add).toBeDisabled();
+});
+
+test('header reports partial writes and stops before remaining subtasks', async ({ page }) => {
+  const fixture = await setup(page); fixture.rows[0].custom_fields[0].value = ['100'];
+  for (const id of [7, 8]) fixture.rows.push({ ...structuredClone(fixture.rows[2]), id });
+  await refresh(page);
+  await page.route('**/redmine/issues/7.json**', route => route.request().method() === 'PUT'
+    ? route.fulfill({ status: 403, json: {} }) : route.fallback());
+  await heading(page, 1).getByRole('button', { name: 'Add missing subtasks for #1' }).click();
+  await expect(page.locator('#notice')).toContainText('Added/confirmed: #3. Failed/unconfirmed: #7. Not attempted: #8.');
+  expect(fixture.writes.map(write => write.id)).toEqual([3]);
+  expect(fixture.rows.find(row => row.id === 8).custom_fields[0].value).toEqual([]);
+  await expect(heading(page, 1).getByRole('button')).toHaveAttribute('title', /\(2 missing\)/);
 });
 test('removing parent membership regroups children without removing them', async ({ page }) => {
   const fixture = await setup(page);
@@ -120,9 +177,10 @@ test('Show closed only controls Backlog parents, not member headings', async ({ 
   await expect(heading(page, 1)).toBeVisible();
   await closed.uncheck(); await expect(heading(page, 1)).toBeVisible();
 });
-test('filters retain planned empty headings and no hierarchy controls remain', async ({ page }) => {
+test('filters retain planned empty headings and disabled add action', async ({ page }) => {
   await setup(page); await page.getByLabel('Search backlog').fill('absent');
   await expect(page.locator('[data-id="backlog"] footer')).toContainText('No backlog issues match these filters');
   await expect(heading(page, 4)).toBeVisible();
-  await expect(page.locator('[data-add-descendants], [data-remove-lane]')).toHaveCount(0);
+  await expect(heading(page, 4).getByRole('button', { name: 'Add missing subtasks for #4' })).toBeDisabled();
+  await expect(page.locator('[data-remove-lane]')).toHaveCount(0);
 });

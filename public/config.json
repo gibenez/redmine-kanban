@@ -1,6 +1,7 @@
 {
   "redminePublicUrl": "http://localhost:3000",
   "backlogStatusId": 1,
+  "openedStatusId": null,
   "sprintFieldId": null,
   "columnStatusIds": [1, 2, 3, 5],
   "refreshSeconds": 60,

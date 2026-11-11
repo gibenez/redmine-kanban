@@ -4,7 +4,7 @@ import { test, expect } from '@playwright/test';
 test.beforeEach(async ({ page }) => {
   await page.route('**/config.json', async route => {
     const response = await route.fetch();
-    await route.fulfill({ json: { ...await response.json(), sprintFieldId: 7, swimlaneTrackers: ['Feature'] } });
+    await route.fulfill({ json: { ...await response.json(), openedStatusId: 2, sprintFieldId: 7, swimlaneTrackers: ['Feature'] } });
   });
 });
 
@@ -95,7 +95,7 @@ for (const activation of ['click', 'keyboard']) {
   test(`issue ID opens Redmine in a new tab via ${activation}`, async ({ page }) => {
     const fixture = await setup(page);
     await page.route('**/config.json', route => route.fulfill({ json: {
-      redminePublicUrl: 'https://redmine.example.test', backlogStatusId: 1, sprintFieldId: 7, swimlaneTrackers: ['Feature'],
+      redminePublicUrl: 'https://redmine.example.test', openedStatusId: 2, backlogStatusId: 1, sprintFieldId: 7, swimlaneTrackers: ['Feature'],
       columnStatusIds: [1, 2, 3, 5], refreshSeconds: 60,
     } }));
     let navigationHeaders;
@@ -214,7 +214,7 @@ test('filters survive refresh and Sprint switches, but reset on project change a
 test('Tracker choices include eligible Module metadata but exclude unrelated projects and ordinary trackers', async ({ page }) => {
   await setup(page);
   await page.route('**/config.json', route => route.fulfill({ json: {
-    redminePublicUrl: 'https://redmine.example.test', sprintFieldId: 7, backlogStatusId: 1,
+    redminePublicUrl: 'https://redmine.example.test', openedStatusId: 2, sprintFieldId: 7, backlogStatusId: 1,
     columnStatusIds: [1, 2, 3, 5], swimlaneTrackers: ['Feature', 'Improvement', 'Bug'], refreshSeconds: 60,
   } }));
   await page.route('**/redmine/projects.json?**', route => route.fulfill({ json: { projects: [
@@ -234,7 +234,7 @@ test('Tracker choices include eligible Module metadata but exclude unrelated pro
 test('Tracker is disabled when no configured Swimlane-capable trackers are available', async ({ page }) => {
   await setup(page);
   await page.route('**/config.json', route => route.fulfill({ json: {
-    redminePublicUrl: 'https://redmine.example.test', sprintFieldId: 7, backlogStatusId: 1,
+    redminePublicUrl: 'https://redmine.example.test', openedStatusId: 2, sprintFieldId: 7, backlogStatusId: 1,
     columnStatusIds: [1, 2, 3, 5], swimlaneTrackers: [], refreshSeconds: 60,
   } }));
   await login(page);
@@ -456,7 +456,7 @@ for (const theme of ['light', 'dark']) {
     await expect(help).toBeInViewport(); await help.click();
     const guide = page.getByRole('dialog', { name: 'Sprint board · Quick guide' });
     await expect(guide).toBeVisible(); await expect(guide).toBeInViewport();
-    await expect(guide).toContainText('Drag a Card');
+    await expect(guide).toContainText('Drag a Backlog parent');
     await expect(page.locator('#build-help')).not.toBeVisible();
     await expect(guide).toHaveCSS('background-color', theme === 'dark' ? 'rgb(30, 31, 34)' : 'rgb(255, 255, 255)');
     const geometry = await guide.boundingBox();
@@ -1042,7 +1042,7 @@ test('a successful planning move resets pagination before fetching the next page
   await expect.poll(() => count.count()).toBeGreaterThan(firstPage);
   await drag(page, 1, 'status-2');
   // The confirmation survives the reload that follows the write.
-  await expect(page.locator('#notice')).toContainText('Issue #1 saved');
+  await expect(page.locator('#notice')).toContainText('Added/confirmed: #1');
   // Back to a single column-sized page with the cursor reset. The page is measured again,
   // so it need not match the first exactly: the notice row costs the column some height.
   await expect.poll(() => count.count()).toBeLessThan(firstPage * 2);
@@ -1126,9 +1126,9 @@ for (const statusId of [1, 2]) {
   test(`drag from backlog into status ${statusId} commits work and only changes necessary fields`, async ({ page }) => {
     const { writes } = await setup(page); await login(page);
     await drag(page, 1, `status-${statusId}`);
-    await expect(page.locator('#notice')).toContainText('Issue #1 saved');
+    await expect(page.locator('#notice')).toContainText('Added/confirmed: #1');
     await expect(page.locator('.swimlane-headers > [data-lane="1"]')).toBeVisible();
-    expect(writes).toEqual([statusId === 1 ? { custom_fields: [{ id: 7, value: '10' }] } : { custom_fields: [{ id: 7, value: '10' }], status_id: 2 }]);
+    expect(writes).toEqual([{ custom_fields: [{ id: 7, value: '10' }], status_id: 2 }]);
   });
 }
 
@@ -1151,9 +1151,9 @@ for (const statusId of [1, 2]) {
   test(`detects silent permission-based field rejection moving backlog into status ${statusId}`, async ({ page }) => {
     const { writes } = await setup(page, { ignored: true }); await login(page);
     await drag(page, 1, `status-${statusId}`);
-    await expect(page.locator('#notice')).toContainText('did not retain all requested changes');
+    await expect(page.locator('#notice')).toContainText('did not retain the requested changes');
     await expect(page.locator('[data-id="backlog"] [data-eid="1"]')).toBeVisible();
-    expect(writes).toEqual([statusId === 1 ? { custom_fields: [{ id: 7, value: '10' }] } : { custom_fields: [{ id: 7, value: '10' }], status_id: 2 }]);
+    expect(writes).toEqual([{ custom_fields: [{ id: 7, value: '10' }], status_id: 2 }]);
   });
 }
 
