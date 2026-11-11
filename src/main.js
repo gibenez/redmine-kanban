@@ -30,6 +30,7 @@ function setAutorefresh(enabled) {
   $('refresh').title = `Autorefresh ${enabled ? 'on — disable' : 'off — enable'}`;
 }
 let feed, queryLoading = false, queryTimer, queryRevision = 0, backlogFailed = false, searchFailed = false;
+let expansionFailed = false;
 const observedLists = new WeakSet();
 const mirroredStatusScrolls = new WeakMap();
 const filters = { query: '', tracker: '', assignee: '', tags: [] };
@@ -97,6 +98,7 @@ function lock() {
   $('tracker').disabled = busy || loading || !eligibleTrackers().length;
   document.querySelectorAll('[data-add-descendants]').forEach(el => { el.disabled = busy || loading || sprint?.status !== 'open' || !lanePlanning.get(Number(el.dataset.addDescendants))?.count; });
   if ($('backlog-more')) $('backlog-more').disabled = busy || loading || queryLoading || feed?.loadingMore;
+  document.querySelectorAll('[data-backlog-collapse]').forEach(el => { el.disabled = busy || loading || dragging; });
   $('workspace').setAttribute('aria-busy', String(busy || loading));
   $('board').setAttribute('aria-busy', String(loading));
 }
@@ -145,10 +147,14 @@ function syncBacklogVisibility() {
   }
 }
 function toggleBacklog() {
-  if (busy || loading || queryLoading || feed?.loadingMore || dragging) return;
+  if (busy || loading || dragging) return;
   backlogCollapsed = !backlogCollapsed;
+  clearTimeout(queryTimer); queryRevision++; queryLoading = false;
+  feed.clearBacklog(); expansionFailed = searchFailed = backlogFailed = false;
   try { localStorage.setItem(collapsedBacklogStorageKey, backlogCollapsed ? '1' : '0'); } catch { /* Optional view preference. */ }
+  issues = issues.filter(issue => selectedMember(issue));
   renderBoard();
+  if (!backlogCollapsed) startBacklog();
   $('board').querySelector('[data-backlog-collapse]')?.focus({ preventScroll: true });
 }
 function eligibleTrackers() {
@@ -354,13 +360,20 @@ function renderBacklogFooter() {
   const footer = node.querySelector('footer');
   let text = footer.querySelector('span');
   if (!text) { text = document.createElement('span'); text.className = 'muted'; footer.append(text); }
-  const message = queryLoading ? 'Updating results…' : searchFailed ? 'Previous results · search failed'
+  const message = queryLoading ? 'Updating results…' : expansionFailed ? 'Could not load Backlog' : searchFailed ? 'Previous results · search failed'
     : !feed.snapshot.backlog.length && backlogFiltered() ? 'No backlog issues match these filters'
     : !feed.snapshot.backlog.length ? 'No backlog issues'
     : !feed.snapshot.hasMore ? 'All matching backlog issues loaded'
       : feed.loadingMore ? 'Loading…' : 'Scroll to load more';
   if (text.textContent !== message) text.textContent = message;
-  $('filtered').textContent = queryLoading ? 'Searching backlog…' : searchFailed ? 'Search unavailable · showing previous results' : '';
+  $('filtered').textContent = queryLoading ? 'Searching backlog…' : expansionFailed ? 'Backlog unavailable' : searchFailed ? 'Search unavailable · showing previous results' : '';
+  if (expansionFailed && !queryLoading) {
+    let retry = $('backlog-retry');
+    if (!retry) {
+      retry = document.createElement('button'); retry.type = 'button'; retry.id = 'backlog-retry'; retry.textContent = 'Retry';
+      retry.addEventListener('click', startBacklog); footer.append(retry);
+    }
+  } else $('backlog-retry')?.remove();
   $('clear-filters').hidden = !backlogFiltered();
   // A page that failed cannot rely on scrolling to retry: the column may already be at its
   // bottom, so no further scroll event would fire. Keep an explicit control for that case.
@@ -411,29 +424,37 @@ async function loadMoreBacklog({ silent = false } = {}) {
     }
   }
 }
-async function searchIssues(revision) {
-  if (revision !== queryRevision) return;
-  const finishLoading = beginLoading();
+function startBacklog() {
+  if (backlogCollapsed || !api || !board) return;
+  clearTimeout(queryTimer); queryRevision++;
+  feed.clearBacklog(); issues = issues.filter(issue => selectedMember(issue));
+  queryLoading = true; expansionFailed = searchFailed = backlogFailed = false;
+  renderBoard();
+  void searchIssues(queryRevision, true);
+}
+async function searchIssues(revision, fresh = false) {
+  if (revision !== queryRevision || backlogCollapsed) return;
   try {
     feed.pageSize = backlogPageSize();
-    const snapshot = await feed.load(feedScope(), filters, { refreshSprint: false });
+    const snapshot = await feed.loadBacklog(feedScope(), filters);
     if (!snapshot || revision !== queryRevision) return;
     if (!await syncFeed(snapshot)) return;
     searchFailed = false; renderFilters(); renderBoard();
   } catch (error) {
     if (revision === queryRevision) {
       searchFailed = true;
+      expansionFailed = fresh;
       $('filtered').textContent = 'Search unavailable · showing previous results';
       // Keep failure feedback inside Backlog; Sprint content and access are unaffected.
       $('filtered').title = error.message;
     }
   } finally {
     if (revision === queryRevision) { queryLoading = false; lock(); renderBacklogFooter(); }
-    finishLoading();
   }
 }
 function scheduleSearch(delay) {
-  cancelQuery(); queryLoading = true; searchFailed = false; notify('');
+  if (backlogCollapsed) return;
+  cancelQuery(); queryLoading = true; searchFailed = expansionFailed = false; notify('');
   // Keep the last confirmed view throughout debounce and the network request.
   $('filtered').removeAttribute('title'); lock(); renderBacklogFooter();
   const revision = queryRevision;
@@ -453,6 +474,7 @@ async function refresh(projectChanged = false, retryDenied = false) {
   loading = true; lock();
   const finishLoading = beginLoading();
   const stamp = epoch;
+  let refreshed = false;
   try {
     const project = projects.find(item => String(item.id) === projectId);
     const [newVersions, newMemberships] = await settledResults([
@@ -467,12 +489,13 @@ async function refresh(projectChanged = false, retryDenied = false) {
     chooseSprint(projectChanged || !sprint ? selectionPreferences?.sprint(projectId) : sprint.id);
     renderFilters();
     feed.pageSize = backlogPageSize(); backlogFailed = false;
-    const next = await feed.load(feedScope(), filters);
+    const next = await feed.load(feedScope(), filters, { includeBacklog: false });
     if (!next || stamp !== epoch) return;
     if (!await syncFeed(next)) return;
     searchFailed = false; blockedProjectId = '';
     renderFilters(); renderBoard();
     $('updated').textContent = `Updated ${new Date().toLocaleTimeString()}`;
+    refreshed = true;
     return true;
   } catch (error) {
     if (stamp === epoch) {
@@ -487,7 +510,7 @@ async function refresh(projectChanged = false, retryDenied = false) {
         $('totals').replaceChildren(); $('filtered').textContent = ''; $('updated').textContent = ''; $('empty').hidden = true;
       }
     }
-  } finally { if (stamp === epoch) { loading = false; lock(); renderBacklogFooter(); } finishLoading(); }
+  } finally { if (stamp === epoch) { loading = false; lock(); renderBacklogFooter(); if (refreshed) startBacklog(); } finishLoading(); }
 }
 
 async function addMissingSubtasks(id, includeParent = false) {
@@ -504,7 +527,7 @@ async function addMissingSubtasks(id, includeParent = false) {
     let refreshFailed = false;
     try {
       feed.pageSize = backlogPageSize(); backlogFailed = false;
-      const snapshot = await feed.load(feedScope(), filters);
+      const snapshot = await feed.load(feedScope(), filters, { includeBacklog: false });
       if (stamp !== epoch) return;
       if (!snapshot || !await syncFeed(snapshot)) throw new Error('Refresh was superseded.');
       $('updated').textContent = `Updated ${new Date().toLocaleTimeString()}`;
@@ -516,7 +539,7 @@ async function addMissingSubtasks(id, includeParent = false) {
   } catch (error) {
     if (stamp === epoch) notify(`Planning failed: ${error.message}. Refresh before retrying.`, true);
   } finally {
-    if (stamp === epoch) { busy = false; renderFilters(); renderBoard(); }
+    if (stamp === epoch) { busy = false; renderFilters(); renderBoard(); startBacklog(); }
     finishLoading();
   }
 }
@@ -552,7 +575,7 @@ async function mutate(id, patch) {
     writeConfirmed = matchesPatch(confirmed, patch);
     // Membership, filtering, ordering and page cursors may all change after a write.
     feed.pageSize = backlogPageSize(); backlogFailed = false;
-    const snapshot = await feed.load(feedScope(), filters);
+    const snapshot = await feed.load(feedScope(), filters, { includeBacklog: false });
     if (!snapshot || stamp !== epoch) return;
     if (!await syncFeed(snapshot)) return;
     if (!writeConfirmed) throw new Error('Redmine did not retain all requested changes. Showing its confirmed values; check field permissions and workflow rules.');
@@ -563,7 +586,7 @@ async function mutate(id, patch) {
   } catch (error) {
     if (stamp === epoch) notify(writeConfirmed ? `Issue #${id} was saved, but reloading the board failed: ${error.message} Use Refresh; do not repeat the write.` : `Save not confirmed: ${error.message} Refresh before retrying if the connection failed.`, true);
   }
-  finally { if (stamp === epoch) { busy = false; lock(); renderFilters(); renderBoard(); } finishLoading(); }
+  finally { if (stamp === epoch) { busy = false; lock(); renderFilters(); renderBoard(); startBacklog(); } finishLoading(); }
 }
 
 async function openEditor(id) {

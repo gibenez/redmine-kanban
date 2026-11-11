@@ -252,7 +252,7 @@ for (const control of ['query', 'tracker', 'assignee']) {
   });
 }
 
-test('Backlog search blocks Sprint interaction until loading finishes', async ({ page }) => {
+test('Backlog search keeps Sprint interaction and collapse available', async ({ page }) => {
   const fixture = await setup(page); await login(page);
   let release, started;
   const gate = new Promise(resolve => { release = resolve; });
@@ -265,9 +265,9 @@ test('Backlog search blocks Sprint interaction until loading finishes', async ({
   await page.getByLabel('Search backlog').fill('absent');
   await requestStarted;
   try {
-    await expect(page.locator('#loading-overlay')).toBeVisible();
+    await expect(page.locator('#loading-overlay')).not.toBeVisible();
     await page.keyboard.press('Escape');
-    await expect(page.locator('#loading-overlay')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Collapse Backlog', exact: true })).toBeEnabled();
     expect(fixture.writes).toEqual([]);
   } finally { release(); }
   await expect(page.locator('#loading-overlay')).not.toBeVisible();
@@ -1006,7 +1006,7 @@ test('phone layout keeps appearance, planning controls and board inside the view
 });
 
 for (const width of [1280, 390]) {
-  test(`Backlog collapses to a keyboard-accessible rail at ${width}px without writes or reloading`, async ({ page }) => {
+  test(`Backlog collapses to a keyboard-accessible rail at ${width}px and reloads on expansion`, async ({ page }) => {
     await page.setViewportSize({ width, height: 844 });
     const fixture = await setup(page); await login(page);
     const column = page.locator('[data-id="backlog"]');
@@ -1031,13 +1031,14 @@ for (const width of [1280, 390]) {
     expect(Math.abs(centers.label - centers.rail)).toBeLessThanOrEqual(1);
     expect(Math.abs(centers.toggle - centers.rail)).toBeLessThanOrEqual(1);
     if (width === 1280) expect((await page.locator('.kanban-board[data-id="status-2"]').boundingBox()).width).toBeGreaterThan(beforeWidth);
-    expect(await card.evaluate(node => node.isConnected)).toBe(true);
+    expect(await card.evaluate(node => node.isConnected)).toBe(false);
     expect(await page.evaluate(() => document.scrollingElement.scrollWidth)).toBe(width);
     expect(fixture.requests.length).toBe(requests);
     await page.keyboard.press('Enter');
     await expect(page.getByRole('button', { name: 'Collapse Backlog', exact: true })).toBeFocused();
     await expect(page.getByLabel('Backlog issues', { exact: true })).toBeVisible();
-    expect(await card.evaluate(node => node === document.querySelector('[data-id="backlog"] [data-eid="1"]'))).toBe(true);
+    await expect(column.locator('[data-eid="1"]')).toBeVisible();
+    expect(fixture.requests.length).toBe(requests + 1);
     expect(fixture.writes).toEqual([]);
   });
 }
@@ -1051,7 +1052,7 @@ test('collapsed Backlog survives refresh, filters and reconnecting without drain
   const before = backlogRequests();
   await page.getByRole('button', { name: 'Refresh now', exact: true }).click();
   await expect(page.locator('#workspace')).toHaveAttribute('aria-busy', 'false');
-  expect(backlogRequests()).toBe(before + 1);
+  expect(backlogRequests()).toBe(before);
   await expect(page.getByRole('button', { name: 'Expand Backlog', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Expand Backlog', exact: true }).click();
   await page.getByLabel('Search backlog').fill('Build backlog');
@@ -1061,15 +1062,70 @@ test('collapsed Backlog survives refresh, filters and reconnecting without drain
   await expect(page.locator('[data-id="backlog"] .backlog-filtered')).toHaveText('Filtered');
   await expect(page.getByLabel('Search backlog')).toBeHidden();
   await expect(page.getByLabel('Backlog issues', { exact: true })).toBeHidden();
+  const beforeReload = backlogRequests();
   await page.reload();
   await page.getByLabel('Personal API key').fill('test-personal-key');
   await page.getByRole('button', { name: 'Connect to Redmine' }).click();
   await expect(page.locator('#updated')).toContainText('Updated');
   await expect(page.getByRole('button', { name: 'Expand Backlog', exact: true })).toBeVisible();
   await expect(page.getByLabel('Backlog issues', { exact: true })).toBeHidden();
+  expect(backlogRequests()).toBe(beforeReload);
   await page.getByRole('button', { name: 'Expand Backlog', exact: true }).click();
   await expect(page.getByLabel('Backlog issues', { exact: true })).toBeVisible();
   expect(fixture.writes).toEqual([]);
+});
+
+test('expansion loading is local, cancellable, fresh and explicitly retryable', async ({ page }) => {
+  const fixture = await setup(page); await login(page);
+  await page.getByRole('button', { name: 'Collapse Backlog', exact: true }).click();
+  let release, started;
+  const gate = new Promise(resolve => { release = resolve; });
+  const requestStarted = new Promise(resolve => { started = resolve; });
+  let fail = false, hold = true;
+  await page.route('**/redmine/issues.json?**', async route => {
+    if (new URL(route.request().url()).searchParams.get('cf_7') !== '!*') return route.fallback();
+    if (hold) { hold = false; started(); await gate; }
+    if (fail) return route.fulfill({ status: 500, json: {} });
+    return route.fallback();
+  });
+  await page.getByRole('button', { name: 'Expand Backlog', exact: true }).click();
+  await requestStarted;
+  await expect(page.locator('#loading-overlay')).toBeHidden();
+  await expect(page.getByRole('button', { name: 'Plan #2', exact: true })).toBeEnabled();
+  await expect(page.locator('[data-id="backlog"] .kanban-item')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Collapse Backlog', exact: true }).click();
+  release();
+  fail = true;
+  await page.getByRole('button', { name: 'Expand Backlog', exact: true }).click();
+  await expect(page.locator('[data-id="backlog"] footer')).toContainText('Could not load Backlog');
+  await expect(page.locator('[data-id="backlog"] .kanban-item')).toHaveCount(0);
+  fail = false; fixture.issues[0].subject = 'Freshly changed feature';
+  await page.getByRole('button', { name: 'Retry', exact: true }).click();
+  await expect(page.locator('[data-id="backlog"]')).toContainText('Freshly changed feature');
+  await expect(page.getByRole('button', { name: 'Retry', exact: true })).toBeHidden();
+});
+
+test('collapsed Backlog skips polling, tab-return, scope changes and post-save loading', async ({ page }) => {
+  await page.clock.install();
+  const fixture = await setup(page); await login(page);
+  fixture.versions.push({ id: 12, name: 'Sprint 12', status: 'open', project: { id: 1 } });
+  const backlogRequests = () => fixture.requests.filter(request => new URL(request.url()).searchParams.get('cf_7') === '!*').length;
+  await page.getByRole('button', { name: 'Collapse Backlog', exact: true }).click();
+  const before = backlogRequests();
+  await page.getByRole('button', { name: 'Plan #2', exact: true }).click();
+  await page.getByLabel('Estimated hours').fill('4');
+  await page.getByRole('button', { name: 'Save changes' }).click();
+  await expect(page.locator('#editor')).toBeHidden();
+  await page.getByRole('button', { name: 'Autorefresh', exact: true }).click();
+  await page.clock.fastForward(60000);
+  await expect(page.locator('#workspace')).toHaveAttribute('aria-busy', 'false');
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+  await expect(page.locator('#workspace')).toHaveAttribute('aria-busy', 'false');
+  await page.locator('#sprint').selectOption('12');
+  await expect(page.locator('#workspace')).toHaveAttribute('aria-busy', 'false');
+  await page.locator('#project').selectOption('2');
+  await expect(page.locator('#workspace')).toHaveAttribute('aria-busy', 'false');
+  expect(backlogRequests()).toBe(before);
 });
 
 test('backlog requests one column-sized page, not every page', async ({ page }) => {

@@ -26,7 +26,28 @@ export class PlanningFeed {
     this.loading = false; this.loadingMore = false;
   }
   cancel() {
+    this.cancelBacklog();
     this.revision++; this.controller?.abort(); this.loading = false; this.loadingMore = false; this.nextPromise = null;
+  }
+  cancelBacklog() {
+    this.backlogRevision = (this.backlogRevision || 0) + 1;
+    this.backlogController?.abort(); this.loadingMore = false; this.nextPromise = null;
+  }
+  clearBacklog() {
+    this.cancelBacklog(); this.scope = null; this.cursor = null;
+    this.snapshot = { ...this.snapshot, backlog: [], total: null, nextOffset: 0, hasMore: false };
+  }
+  async loadBacklog(scope, filters) {
+    this.cancelBacklog();
+    const revision = this.backlogRevision;
+    const controller = this.backlogController = new AbortController();
+    try {
+      const page = await this.backlogPage(scope, filters, 0, controller.signal);
+      if (revision !== this.backlogRevision) return null;
+      this.scope = { ...scope }; this.filters = { ...filters }; this.cursor = page;
+      this.snapshot = { ...this.snapshot, backlog: page.items, total: filters.tags?.length && !page.hasMore ? page.items.length : page.total, nextOffset: page.nextOffset, hasMore: page.hasMore };
+      return this.snapshot;
+    } catch (error) { if (revision !== this.backlogRevision) return null; throw error; }
   }
   async backlogPage(scope, filters, offset, signal, cursor = {}) {
     const items = [], pending = [...(cursor.pending || [])];
@@ -50,7 +71,7 @@ export class PlanningFeed {
     }
     return { items, nextOffset: offset, pending, rawHasMore, rawTotal: total, total, hasMore: pending.length > 0 || rawHasMore };
   }
-  async load(scope, filters, { refreshSprint = true } = {}) {
+  async load(scope, filters, { refreshSprint = true, includeBacklog = true } = {}) {
     this.cancel();
     const revision = this.revision;
     const controller = this.controller = new AbortController();
@@ -61,7 +82,7 @@ export class PlanningFeed {
         : !refreshSprint && this.key === key ? Promise.resolve(this.snapshot.sprintAll)
           : this.api.list('/issues.json', 'issues', issueQuery(scope), { signal: controller.signal });
       const [backlog, rawSprintAll] = await settledResults([
-        this.backlogPage(scope, selectedFilters, 0, controller.signal),
+        includeBacklog ? this.backlogPage(scope, selectedFilters, 0, controller.signal) : Promise.resolve({ items: [], total: null, nextOffset: 0, hasMore: false }),
         unfilteredSprint,
       ]);
       const validateMembers = items => items.filter(issue => {
@@ -73,7 +94,7 @@ export class PlanningFeed {
       const sprintAll = !refreshSprint && this.key === key ? rawSprintAll : validateMembers(rawSprintAll);
       const sprintVisible = sprintAll;
       if (revision !== this.revision) return null;
-      this.key = key; this.scope = { ...scope }; this.filters = selectedFilters; this.cursor = backlog;
+      this.key = key; this.scope = includeBacklog ? { ...scope } : null; this.filters = selectedFilters; this.cursor = backlog;
       this.snapshot = { backlog: backlog.items, total: selectedFilters.tags?.length && !backlog.hasMore ? backlog.items.length : backlog.total, nextOffset: backlog.nextOffset, hasMore: backlog.hasMore, sprintAll, sprintVisible };
       return this.snapshot;
     } catch (error) {
@@ -85,13 +106,14 @@ export class PlanningFeed {
     if (this.nextPromise) return this.nextPromise;
     if (this.loading || !this.scope || !this.snapshot.hasMore) return Promise.resolve(null);
     const revision = this.revision;
-    if (this.controller.signal.aborted) this.controller = new AbortController();
-    const signal = this.controller.signal;
+    const backlogRevision = this.backlogRevision;
+    if (!this.backlogController || this.backlogController.signal.aborted) this.backlogController = new AbortController();
+    const signal = this.backlogController.signal;
     this.loadingMore = true;
     this.nextPromise = (async () => {
       try {
         const page = await this.backlogPage(this.scope, this.filters, this.snapshot.nextOffset, signal, this.cursor);
-        if (revision !== this.revision) return null;
+        if (revision !== this.revision || backlogRevision !== this.backlogRevision) return null;
         this.cursor = page;
         this.snapshot = {
           ...this.snapshot,
@@ -99,8 +121,8 @@ export class PlanningFeed {
           total: this.filters.tags?.length && !page.hasMore ? this.snapshot.backlog.length + page.items.length : page.total, nextOffset: page.nextOffset, hasMore: page.hasMore,
         };
         return this.snapshot;
-      } catch (error) { if (revision === this.revision) throw error; return null; }
-      finally { if (revision === this.revision) { this.loadingMore = false; this.nextPromise = null; } }
+      } catch (error) { if (revision === this.revision && backlogRevision === this.backlogRevision) throw error; return null; }
+      finally { if (revision === this.revision && backlogRevision === this.backlogRevision) { this.loadingMore = false; this.nextPromise = null; } }
     })();
     return this.nextPromise;
   }

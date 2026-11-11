@@ -24,6 +24,50 @@ describe('server-side issue queries', () => {
 });
 
 describe('bounded backlog feed', () => {
+  it('loads Sprint data without any Backlog requests or usable hidden cursor', async () => {
+    const api = { page: vi.fn().mockResolvedValue(page([1])), list: vi.fn().mockResolvedValue([row(20, '10')]) };
+    const feed = new PlanningFeed(api);
+    await feed.load(scope, filters, { includeBacklog: false });
+    expect(feed.snapshot).toMatchObject({ backlog: [], hasMore: false, sprintAll: [row(20, '10')] });
+    await feed.next();
+    expect(api.page).not.toHaveBeenCalled();
+    await feed.loadBacklog(scope, filters);
+    expect(feed.snapshot.backlog).toEqual([row(1)]);
+    expect(api.list).toHaveBeenCalledTimes(1);
+  });
+  it('cancels Backlog independently of a pending Sprint request and ignores late results', async () => {
+    const sprint = deferred(), backlog = deferred();
+    const api = { page: vi.fn().mockReturnValue(backlog.promise), list: vi.fn().mockReturnValue(sprint.promise) };
+    const feed = new PlanningFeed(api);
+    const sprintLoad = feed.load(scope, filters, { includeBacklog: false });
+    const backlogLoad = feed.loadBacklog(scope, filters);
+    feed.clearBacklog();
+    expect(api.page.mock.calls[0][3].signal.aborted).toBe(true);
+    expect(api.list.mock.calls[0][3].signal.aborted).toBe(false);
+    sprint.resolve([row(20, '10')]); await sprintLoad;
+    backlog.resolve(page([1])); expect(await backlogLoad).toBeNull();
+    expect(feed.snapshot).toMatchObject({ backlog: [], sprintAll: [row(20, '10')] });
+  });
+  it('does not scan subsequent tag-filtered pages after collapsing', async () => {
+    const slow = deferred();
+    const api = { page: vi.fn().mockReturnValue(slow.promise) };
+    const feed = new PlanningFeed(api);
+    const pending = feed.loadBacklog(scope, { ...filters, tags: ['needle'] });
+    feed.clearBacklog(); slow.resolve(page([1], 100));
+    expect(await pending).toBeNull();
+    expect(api.page).toHaveBeenCalledTimes(1);
+  });
+  it('ignores late pagination after collapsing and restarts expansion at offset zero', async () => {
+    const slow = deferred();
+    const api = { page: vi.fn().mockResolvedValueOnce(page([1], 2)).mockReturnValueOnce(slow.promise).mockResolvedValueOnce(page([9])), list: vi.fn().mockResolvedValue([]) };
+    const feed = new PlanningFeed(api, 1);
+    await feed.loadBacklog(scope, filters);
+    const pending = feed.next(); feed.clearBacklog();
+    await feed.loadBacklog(scope, filters);
+    slow.resolve(page([2], 2, 1)); expect(await pending).toBeNull();
+    expect(feed.snapshot.backlog).toEqual([row(9)]);
+    expect(api.page.mock.calls[2][2].offset).toBe(0);
+  });
   it('does not eagerly list Swimlane-capable Backlog issues on startup', async () => {
     const parents = Array.from({ length: 1400 }, (_, index) => ({ ...row(index + 1), tracker: { id: 3, name: 'Feature' } }));
     const api = {
