@@ -109,9 +109,16 @@ test('individual removal preserves other Sprint values', async ({ page }) => {
   await expect(backlog(page, 6)).toHaveCount(0);
 });
 test('Show closed only controls Backlog parents, not member headings', async ({ page }) => {
+  // Visibility scope and closed work must have distinct visual affordances.
   const fixture = await setup(page); fixture.rows[0].status = { id: 5, name: 'Done', is_closed: true }; await refresh(page);
+  const scopeIcon = await page.getByRole('button', { name: 'Show all unplanned', exact: true }).locator('svg').innerHTML();
+  const closed = page.getByRole('button', { name: 'Show closed', exact: true });
+  expect(await closed.locator('svg').innerHTML()).not.toBe(scopeIcon);
+  await expect(closed.locator('svg')).toHaveAttribute('aria-hidden', 'true');
+  await expect(closed).toHaveAttribute('aria-pressed', 'false');
   await expect(backlog(page, 1)).toHaveCount(0);
   await page.getByRole('button', { name: 'Show closed', exact: true }).click(); await expect(backlog(page, 1)).toBeVisible();
+  await expect(closed).toHaveAttribute('aria-pressed', 'true');
   fixture.rows[0].custom_fields[0].value = ['100']; await refresh(page);
   await expect(heading(page, 1)).toBeVisible();
   await page.getByRole('button', { name: 'Show closed', exact: true }).click(); await expect(heading(page, 1)).toBeVisible();

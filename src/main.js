@@ -105,6 +105,7 @@ function scopeToggle() {
   const label = allUnplannedScope ? 'Showing every open issue without a sprint. Click to show only the New status.' : 'Showing only the New status without a sprint. Click to show every open unplanned issue.';
   return `<button type="button" class="scope-toggle" data-backlog-scope aria-label="Show all unplanned" aria-pressed="${allUnplannedScope}" title="${e(label)}">${eyeIcon(allUnplannedScope)}</button>`;
 }
+const closedIssuesIcon = '<svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="5.6"/><path d="m5 8 2 2 4-4"/></svg>';
 function backlogToggle() {
   const label = backlogCollapsed ? 'Expand Backlog' : 'Collapse Backlog';
   return `<button type="button" class="scope-toggle backlog-toggle" data-backlog-collapse aria-label="${label}" title="${label}" aria-expanded="${!backlogCollapsed}" aria-controls="backlog-issues"><svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="${backlogCollapsed ? 'm6 3 5 5-5 5' : 'm10 3-5 5 5 5'}"/></svg></button>`;
@@ -248,7 +249,7 @@ function renderBoard() {
     : '';
   const backlogIds = new Set(feed?.snapshot.backlog.map(issue => issue.id));
   const backlog = visible.filter(issue => backlogIds.has(issue.id));
-  const boards = [{ id: 'backlog', title: `${backlogToggle()}<span class="backlog-label">Backlog</span> <span class="count">${backlog.length} / ${feed?.snapshot.total ?? '?'}</span>${scopeToggle()}<button type="button" class="scope-toggle" data-closed-parents aria-label="Show closed" title="Show closed" aria-pressed="${showClosedParents}">${eyeIcon(showClosedParents)}</button>`, class: 'backlog-board', item: backlog.map(card) }];
+  const boards = [{ id: 'backlog', title: `${backlogToggle()}<span class="backlog-label">Backlog</span> <span class="count">${backlog.length} / ${feed?.snapshot.total ?? '?'}</span>${scopeToggle()}<button type="button" class="scope-toggle" data-closed-parents aria-label="Show closed" title="Show closed" aria-pressed="${showClosedParents}">${closedIssuesIcon}</button>`, class: 'backlog-board', item: backlog.map(card) }];
   const lanes = config.swimlaneTrackers.length ? groupSwimlanes(feed?.snapshot.sprintAll || [], feed?.snapshot.sprintVisible || [], config.swimlaneTrackers, laneAncestors) : null;
   for (const [index, statusId] of config.columnStatusIds.entries()) {
     const items = lanes ? lanes.flatMap(lane => lane.visible.filter(issue => issue.status.id === statusId).map(issue => ({ ...card(issue), lane: lane.id })))
