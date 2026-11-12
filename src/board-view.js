@@ -43,7 +43,7 @@ export function reconcileBoard(board, definitions) {
     const ids = new Set(definition.item.map(item => item.id));
     for (const [id, node] of existing) if (!ids.has(id)) node.remove();
     const targets = new Map();
-    if (definition.lanes) {
+    if (definition.lanes?.length) {
       const wantedLanes = new Set(definition.lanes.map(lane => lane.id));
       for (const section of list.querySelectorAll('.swimlane-section')) if (!wantedLanes.has(section.dataset.lane)) section.remove();
       let nextSection = list.firstElementChild;

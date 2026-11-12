@@ -30,6 +30,17 @@ const lane = id => ({ id, title: id });
 beforeEach(() => document.body.replaceChildren());
 
 describe('Swimlane reconciliation', () => {
+  it('removes empty Ungrouped headings and sections but keeps empty Sprint Columns droppable', () => {
+    const board = boardFixture();
+    reconcileBoard(board, [definition([item(7, 'ungrouped')], [lane('ungrouped')])]);
+    reconcileBoard(board, [definition([], [])]);
+    expect(document.querySelector('.swimlane-headers')).toBeNull();
+    expect(board.container.querySelector('.swimlane-section')).toBeNull();
+    expect(board.boardContainer).toEqual([board.container.querySelector('.kanban-drag')]);
+    reconcileBoard(board, [definition([item(7, 'ungrouped')], [lane('ungrouped')])]);
+    expect(document.querySelector('.swimlane-headers [data-lane="ungrouped"]')).not.toBeNull();
+    expect(board.boardContainer).toEqual([board.container.querySelector('.swimlane-cards')]);
+  });
   it('renders one shared heading, preserves its controls and focus, and removes it when flattening', () => {
     const board = boardFixture();
     const lanes = [{ id: '1', title: '<strong>Parent</strong><button>Action</button>' }];

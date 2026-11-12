@@ -36,5 +36,5 @@ export function groupSwimlanes(members, visible, trackers, ancestors = members) 
     lane.all.push(issue);
     if (visibleIds.has(issue.id)) lane.visible.push(issue);
   }
-  return [...lanes, ungrouped];
+  return ungrouped.all.length ? [...lanes, ungrouped] : lanes;
 }

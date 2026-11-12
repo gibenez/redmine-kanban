@@ -102,6 +102,47 @@ test('own membership alone creates headings and includes children', async ({ pag
   await expect(backlog(page, 1)).toBeVisible();
   await expect(laneCard(page, 4, 3)).toHaveCount(0);
 });
+test('Ungrouped hides and reappears as the last issue is grouped or removed', async ({ page }) => {
+  const fixture = await setup(page);
+  fixture.rows.find(row => row.id === 6).custom_fields[0].value = ['99'];
+  fixture.rows[0].custom_fields[0].value = ['100'];
+  await refresh(page);
+  await expect(heading(page, 'ungrouped')).toHaveCount(0);
+  await expect(page.locator('.swimlane-section[data-lane="ungrouped"]')).toHaveCount(0);
+  await expect(laneCard(page, 1, 2)).toBeVisible();
+  await expect(heading(page, 4)).toBeVisible();
+  fixture.rows[0].custom_fields[0].value = [];
+  await refresh(page);
+  await expect(laneCard(page, 'ungrouped', 2)).toBeVisible();
+  await expect(page.locator('.swimlane-headers > .swimlane-heading').last()).toHaveAttribute('data-lane', 'ungrouped');
+  fixture.rows[1].custom_fields[0].value = [];
+  await refresh(page);
+  await expect(heading(page, 'ungrouped')).toHaveCount(0);
+  await expect(page.locator('.swimlane-section[data-lane="ungrouped"]')).toHaveCount(0);
+  await expect(heading(page, 4)).toBeVisible();
+});
+test('an Ungrouped issue outside displayed statuses keeps its heading notice accessible', async ({ page }) => {
+  const fixture = await setup(page);
+  fixture.rows.find(row => row.id === 6).custom_fields[0].value = ['99'];
+  fixture.rows[1].status = { id: 99, name: 'Other' };
+  await refresh(page);
+  const ungrouped = heading(page, 'ungrouped');
+  await expect(ungrouped).toBeVisible();
+  await ungrouped.locator('summary').click();
+  await expect(ungrouped.getByRole('link', { name: '#2 — Issue 2' })).toBeVisible();
+  await expect(page.locator('.swimlane-section[data-lane="ungrouped"] .kanban-item')).toHaveCount(0);
+});
+test('an empty Sprint hides Ungrouped and still accepts Backlog drops', async ({ page }) => {
+  const fixture = await setup(page);
+  for (const row of fixture.rows) row.custom_fields[0].value = row.custom_fields[0].value.filter(value => value !== '100');
+  await refresh(page);
+  await expect(page.locator('.swimlane-headers')).toHaveCount(0);
+  await expect(page.locator('.swimlane-section')).toHaveCount(0);
+  await backlog(page, 1).locator('h3').dragTo(page.locator('[data-id="status-1"] .kanban-drag'));
+  await expect(heading(page, 1)).toBeVisible();
+  await expect(laneCard(page, 1, 2)).toBeVisible();
+  await expect(heading(page, 'ungrouped')).toHaveCount(0);
+});
 test('thousands of Backlog parents load only one visible page, then append on scroll', async ({ page }) => {
   const fixture = await setup(page);
   const base = fixture.rows[0];
