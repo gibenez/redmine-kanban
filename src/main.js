@@ -5,7 +5,7 @@ import { RedmineClient, RedmineError } from './api.js';
 import { validateConfig, isBacklog, effort, movePatch, parseEstimate, assertTransition, matchesPatch, sprintValues, membershipPatch, hasSprintField, projectScope, escapeHtml as e } from './domain.js';
 import { PlanningFeed } from './planning-feed.js';
 import { isSwimlane, loadAncestors, groupSwimlanes } from './swimlanes.js';
-import { collectMissingSubtasks, planDescendants } from './descendant-planning.js';
+import { collectMissingSubtasks, createHierarchyReader, planDescendants } from './descendant-planning.js';
 import { createLoadingOverlay } from './loading-overlay.js';
 import { settledResults } from './settled-results.js';
 import { createSelectionPreferences } from './selection-preferences.js';
@@ -42,6 +42,7 @@ function resetFilters() {
 const tagsMarkup = issue => (issue.tags || []).map(tag => `<span class="issue-tag">${e(tag)}</span>`).join('');
 let laneAncestors = [], laneMembers;
 let lanePlanning = new Map();
+let lanePlanningController;
 let laneResizeObserver;
 const newFeed = () => new PlanningFeed(api);
 const closedStatusIds = () => statuses.filter(status => status.is_closed).map(status => status.id);
@@ -172,25 +173,32 @@ async function syncFeed(snapshot) {
   const scope = feedScope();
   const ancestors = !config.swimlaneTrackers.length ? [] : laneMembers === snapshot.sprintAll ? laneAncestors : await loadAncestors(currentApi, snapshot.sprintAll);
   if (activeFeed !== feed || stamp !== epoch || revision !== queryRevision || activeFeed.snapshot !== snapshot) return false;
-  const planning = laneMembers === snapshot.sprintAll ? lanePlanning : new Map();
-  if (laneMembers !== snapshot.sprintAll) {
-    const reads = new Map();
-    const hierarchy = { hierarchyIssue(id) {
-      if (!reads.has(id)) reads.set(id, currentApi.hierarchyIssue(id));
-      return reads.get(id);
-    } };
-    for (const parent of snapshot.sprintAll.filter(issue => isSwimlane(issue, config.swimlaneTrackers))) {
-      if (activeFeed !== feed || stamp !== epoch || revision !== queryRevision) return false;
-      try { planning.set(parent.id, { count: (await collectMissingSubtasks(hierarchy, parent.id, scope)).length }); }
-      catch (error) { planning.set(parent.id, { error: error.message }); }
-    }
-  }
+  const changed = laneMembers !== snapshot.sprintAll || lanePlanningController?.signal.aborted;
+  const planning = changed ? new Map() : lanePlanning;
   if (activeFeed !== feed || stamp !== epoch || revision !== queryRevision || activeFeed.snapshot !== snapshot) return false;
   laneAncestors = ancestors; laneMembers = snapshot.sprintAll; lanePlanning = planning;
   issues = [...new Map([...snapshot.backlog, ...snapshot.sprintVisible].map(issue => [issue.id, issue])).values()];
+  if (changed) {
+    lanePlanningController?.abort();
+    const signal = (lanePlanningController = new AbortController()).signal;
+    const hierarchy = createHierarchyReader(currentApi, { signal, cache: true });
+    const current = () => !signal.aborted && activeFeed === feed && stamp === epoch && laneMembers === snapshot.sprintAll;
+    for (const parent of snapshot.sprintAll.filter(issue => isSwimlane(issue, config.swimlaneTrackers))) {
+      planning.set(parent.id, { pending: true });
+      void (async () => {
+        let state;
+        try { state = { count: (await collectMissingSubtasks(hierarchy, parent.id, scope)).length }; }
+        catch (error) { state = { error: error.message }; }
+        if (!current()) return;
+        planning.set(parent.id, state);
+        renderBoard();
+      })();
+    }
+  }
   return true;
 }
 function forget() {
+  lanePlanningController?.abort();
   selectionPreferences = null;
   cancelQuery(); feed = null;
   epoch++; setAutorefresh(false); api?.dispose(); api = null; busy = loading = dragging = false;
@@ -277,7 +285,7 @@ function laneHeading(lane) {
   const title = lane.parent ? `<a href="${e(linkToIssue(id))}" target="_blank" rel="noopener noreferrer">#${id} — ${e(lane.parent.subject)}</a>` : 'Ungrouped';
   const metadata = lane.parent ? `<span class="lane-tracker">${e(lane.parent.tracker?.name || '')}</span><span class="lane-priority ${priorityClass(lane.parent.priority?.name || '')}"><span class="card-field">${e(lane.parent.priority?.name || '')}</span></span><span class="lane-tags">${tagsMarkup(lane.parent)}</span>` : '';
   const state = lanePlanning.get(id);
-  const hint = state?.error ? `Missing subtasks unknown: ${state.error} Use Refresh to retry.` : `Add missing subtasks to ${sprint?.name || 'this Sprint'} (${state?.count || 0} missing). Includes closed subtasks and those assigned elsewhere; preserves statuses and other Sprints. Cards group under their nearest planned Swimlane.`;
+  const hint = !state || state.pending ? 'Checking missing subtasks…' : state.error ? `Missing subtasks unknown: ${state.error} Use Refresh to retry.` : `Add missing subtasks to ${sprint?.name || 'this Sprint'} (${state.count || 0} missing). Includes closed subtasks and those assigned elsewhere; preserves statuses and other Sprints. Cards group under their nearest planned Swimlane.`;
   const icon = `<svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3 3v10h3M3 6h3M9 6h7M9 13h2M15 11v6M12 14h6"/>${state?.error ? '<circle cx="16" cy="3" r="2"/>' : ''}</svg>`;
   const action = lane.parent ? `<span class="swimlane-actions" title="${e(hint)}"><button type="button" class="add-subtasks${state?.count ? ' requires-attention' : ''}${state?.error ? ' planning-unknown' : ''}" data-add-descendants="${id}" aria-label="Add missing subtasks for #${id}" title="${e(hint)}"${state?.error ? ' aria-invalid="true"' : ''}>${icon}</button></span>` : '';
   return `<div class="swimlane-title-row"><strong>${title}</strong>${metadata}${action}</div>${unmappedNotice(lane.visible.filter(issue => !config.columnStatusIds.includes(issue.status.id)))}`;
@@ -469,6 +477,7 @@ function chooseSprint(previousId) {
 async function refresh(projectChanged = false, retryDenied = false) {
   if (!api || busy || loading || dragging || $('editor').open || (blockedProjectId === projectId && !projectChanged && !retryDenied)) return;
   if (!projectChanged && !retryDenied && (queryLoading || feed?.loadingMore || (!backlogCollapsed && board?.findBoard('backlog').querySelector('.kanban-drag').scrollTop > 0))) return;
+  lanePlanningController?.abort();
   cancelQuery();
   if (projectChanged || retryDenied) notify('');
   loading = true; lock();

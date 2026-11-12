@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { collectMissingSubtasks, planDescendants } from '../src/descendant-planning.js';
+import { collectMissingSubtasks, createHierarchyReader, planDescendants } from '../src/descendant-planning.js';
 
 const scope = { projectIds: [1, 2], sprintId: 100, sprintFieldId: 7, swimlaneTrackers: ['Feature'] };
 function fixture() {
@@ -20,6 +20,45 @@ function fixture() {
 }
 
 describe('descendant collection', () => {
+  it('shares a four-request limit and deduplicates reads across background scans', async () => {
+    let active = 0, peak = 0;
+    const api = { hierarchyIssue: vi.fn(async id => {
+      active++; peak = Math.max(peak, active);
+      await new Promise(resolve => setTimeout(resolve, 5));
+      active--;
+      return { id, project: { id: 1 }, tracker: { name: 'Feature' }, children: [] };
+    }) };
+    const reader = createHierarchyReader(api, { cache: true });
+    await Promise.all(Array.from({ length: 12 }, (_, i) => collectMissingSubtasks(reader, i % 6 + 1, scope)));
+    expect(api.hierarchyIssue).toHaveBeenCalledTimes(6);
+    expect(peak).toBe(4);
+  });
+  it('does not start queued reads after cancellation', async () => {
+    const controller = new AbortController();
+    let release;
+    const blocked = new Promise(resolve => { release = resolve; });
+    const api = { hierarchyIssue: vi.fn(async id => { await blocked; return { id }; }) };
+    const reader = createHierarchyReader(api, { signal: controller.signal });
+    const results = Promise.allSettled(Array.from({ length: 8 }, (_, i) => reader.hierarchyIssue(i + 1)));
+    await Promise.resolve();
+    controller.abort(); release();
+    expect((await results).filter(result => result.status === 'rejected')).toHaveLength(4);
+    expect(api.hierarchyIssue).toHaveBeenCalledTimes(4);
+  });
+  it('overlaps independent reads, caps concurrency at four and preserves traversal order', async () => {
+    let active = 0, peak = 0;
+    const api = { hierarchyIssue: vi.fn(async id => {
+      active++; peak = Math.max(peak, active);
+      await new Promise(resolve => setTimeout(resolve, 5));
+      active--;
+      return { id, project: { id: 1 }, tracker: { name: id === 1 ? 'Feature' : 'Task' },
+        ...(id === 1 ? { children: Array.from({ length: 12 }, (_, i) => ({ id: i + 2 })) } : { parent: { id: 1 } }),
+        custom_fields: [{ id: 7, value: [] }] };
+    }) };
+    expect((await collectMissingSubtasks(api, 1, scope)).map(issue => issue.id)).toEqual(Array.from({ length: 12 }, (_, i) => i + 2));
+    expect(peak).toBeGreaterThan(1);
+    expect(peak).toBeLessThanOrEqual(4);
+  });
   it('includes all depths, closed and other-Sprint issues, traverses excluded parents and skips current members', async () => {
     const { api } = fixture();
     expect((await collectMissingSubtasks(api, 1, scope)).map(row => row.id)).toEqual([2, 3, 5]);

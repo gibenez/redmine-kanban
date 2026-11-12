@@ -44,6 +44,51 @@ async function setup(page) {
 const heading = (page, id) => page.locator(`.swimlane-headers > [data-lane="${id}"]`);
 const backlog = (page, id) => page.locator(`[data-id="backlog"] [data-eid="${id}"]`);
 const laneCard = (page, lane, id) => page.locator(`[data-id="status-1"] [data-lane="${lane}"] [data-eid="${id}"]`);
+test('background indicators finish even when Backlog search changes during the scan', async ({ page }) => {
+  await setup(page);
+  let release;
+  const blocked = new Promise(resolve => { release = resolve; });
+  await page.route('**/redmine/issues/4.json?**', async route => {
+    await blocked;
+    await route.fallback();
+  });
+  try {
+    await refresh(page);
+    const add = heading(page, 4).getByRole('button', { name: 'Add missing subtasks for #4' });
+    await expect(add).toHaveAttribute('title', /Checking/);
+    await page.getByLabel('Search backlog').fill('absent');
+    await expect(page.locator('[data-id="backlog"] footer')).toContainText('No backlog issues match');
+    release();
+    await expect(add).toHaveAttribute('title', /\(0 missing\)/);
+    await expect(add).toBeDisabled();
+  } finally { release(); }
+});
+test('renders and unlocks the board before hierarchy checks finish, ignoring stale results', async ({ page }) => {
+  await setup(page);
+  let release;
+  const blocked = new Promise(resolve => { release = resolve; });
+  let started;
+  const requested = new Promise(resolve => { started = resolve; });
+  await page.route('**/redmine/issues/4.json?**', async route => {
+    started();
+    await blocked;
+    await route.fulfill({ status: 403, json: {} }).catch(() => {});
+  });
+  try {
+    await page.getByRole('button', { name: 'Refresh now', exact: true }).click();
+    await requested;
+    await expect(page.locator('#workspace')).toHaveAttribute('aria-busy', 'false');
+    await expect(heading(page, 4)).toBeVisible();
+    const add = heading(page, 4).getByRole('button', { name: 'Add missing subtasks for #4' });
+    await expect(add).toBeDisabled();
+    await expect(add).toHaveAttribute('title', /Checking/);
+    await page.locator('#sprint').selectOption('99');
+    await expect(heading(page, 5)).toBeVisible();
+    release();
+    await expect(heading(page, 4)).toHaveCount(0);
+    await expect(heading(page, 5).getByRole('button')).not.toHaveAttribute('title', /unknown/);
+  } finally { release(); }
+});
 async function refresh(page) {
   await page.getByRole('button', { name: 'Refresh now', exact: true }).click();
   await expect(page.locator('#workspace')).toHaveAttribute('aria-busy', 'false');

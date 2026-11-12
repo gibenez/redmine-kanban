@@ -1,29 +1,51 @@
 import { assertTransition, matchesPatch, membershipPatch, sprintValues } from './domain.js';
 import { isSwimlane } from './swimlanes.js';
 
+// Limit network reads, not recursive visits: holding a slot while awaiting
+// children would deadlock on a deep hierarchy. Background scans share a reader.
+export function createHierarchyReader(api, { signal, cache = false } = {}) {
+  let active = 0;
+  const queue = [], reads = new Map();
+  function drain() {
+    while (active < 4 && queue.length) {
+      const { id, resolve, reject } = queue.shift();
+      if (signal?.aborted) { reject(signal.reason); continue; }
+      active++;
+      Promise.resolve().then(() => api.hierarchyIssue(id, { signal })).then(resolve, reject).finally(() => { active--; drain(); });
+    }
+  }
+  return { hierarchyIssue(id) {
+    if (cache && reads.has(id)) return reads.get(id);
+    const read = new Promise((resolve, reject) => { queue.push({ id, resolve, reject }); drain(); });
+    if (cache) reads.set(id, read);
+    return read;
+  } };
+}
+
 // Read each node, not just the abbreviated children embedded in Redmine responses.
 export async function collectMissingSubtasks(api, parentId, scope) {
-  const seen = new Set(), missing = [];
+  const seen = new Set(), reader = createHierarchyReader(api);
   async function visit(id, parentId = null) {
     if (!Number.isSafeInteger(id) || id <= 0 || seen.has(id)) throw new Error('Invalid or cyclic issue hierarchy.');
     seen.add(id);
-    const issue = await api.hierarchyIssue(id);
+    const issue = await reader.hierarchyIssue(id);
     if (issue?.id !== id || !issue.project || !issue.tracker) throw new Error(`Unreadable hierarchy on #${id}.`);
     if (!scope.projectIds.includes(issue.project.id)) {
       if (parentId === null) throw new Error('Parent moved outside the product hierarchy.');
-      return;
+      return [];
     }
     if (parentId !== null && issue.parent?.id !== parentId) throw new Error(`Hierarchy changed on #${id}. Refresh before planning.`);
+    const missing = [];
     if (parentId !== null && !isSwimlane(issue, scope.swimlaneTrackers)) {
       if (!sprintValues(issue, scope.sprintFieldId).includes(scope.sprintId)) {
         missing.push(issue);
       }
     }
     if (issue.children != null && !Array.isArray(issue.children)) throw new Error(`Unreadable children on #${id}.`);
-    for (const child of issue.children || []) await visit(child.id, id);
+    const descendants = await Promise.all((issue.children || []).map(child => visit(child.id, id)));
+    return [...missing, ...descendants.flat()];
   }
-  await visit(parentId);
-  return missing;
+  return visit(parentId);
 }
 
 // Preflight all reads before any writes. A failed/uncertain write ends the batch.
