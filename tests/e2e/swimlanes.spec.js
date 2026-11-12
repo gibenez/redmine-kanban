@@ -44,6 +44,143 @@ async function setup(page) {
 const heading = (page, id) => page.locator(`.swimlane-headers > [data-lane="${id}"]`);
 const backlog = (page, id) => page.locator(`[data-id="backlog"] [data-eid="${id}"]`);
 const laneCard = (page, lane, id) => page.locator(`[data-id="status-1"] [data-lane="${lane}"] [data-eid="${id}"]`);
+test('Sprint search matches Cards only, hides empty lanes, preserves totals and Backlog, and restores headings', async ({ page }) => {
+  const fixture = await setup(page);
+  fixture.rows[0].custom_fields[0].value = ['100'];
+  fixture.rows.push({ ...fixture.rows[0], id: 8, subject: 'Backlog parent', custom_fields: [{ id: 7, multiple: true, value: [] }] });
+  await refresh(page);
+  const bar = page.getByRole('region', { name: 'Sprint Card filters' });
+  const totals = await page.locator('#totals').textContent();
+  await expect(bar).toContainText('Showing 2 of 2 Cards');
+  await expect(backlog(page, 8)).toBeVisible();
+  await page.getByLabel('Search Sprint Cards').fill('#2');
+  await expect(heading(page, 1)).toBeVisible();
+  await expect(laneCard(page, 1, 2)).toBeVisible();
+  await expect(heading(page, 4)).toHaveCount(0);
+  await expect(heading(page, 'ungrouped')).toHaveCount(0);
+  await expect(bar).toContainText('Showing 1 of 2 Cards');
+  await expect(page.locator('#totals')).toHaveText(totals);
+  await expect(backlog(page, 8)).toBeVisible();
+  await page.getByLabel('Search Sprint Cards').fill('#1');
+  await expect(page.locator('.swimlane-headers')).toHaveCount(0);
+  await expect(bar).toContainText('No Cards match these filters');
+  await bar.getByRole('button', { name: 'Clear filters' }).click();
+  await expect(heading(page, 4)).toBeVisible();
+  await expect(heading(page, 'ungrouped')).toBeVisible();
+  await expect(page.getByLabel('Search Sprint Cards')).toBeFocused();
+});
+
+test('Sprint dropdowns combine selections, retain stable options, persist and expose absent saved values', async ({ page }) => {
+  const fixture = await setup(page);
+  fixture.rows[1].assigned_to = { id: 7, name: 'Alice' };
+  fixture.rows[1].priority = { id: 3, name: 'High' };
+  await refresh(page);
+  const bar = page.getByRole('region', { name: 'Sprint Card filters' });
+  const assignees = bar.locator('[data-filter="assignee"]');
+  await assignees.locator('summary').click();
+  await assignees.getByLabel('Alice', { exact: true }).check();
+  await expect(bar).toContainText('Showing 1 of 2 Cards');
+  await expect(assignees.getByLabel('Unassigned', { exact: true })).toBeVisible();
+  await assignees.getByLabel('Unassigned', { exact: true }).check();
+  await expect(bar).toContainText('Showing 2 of 2 Cards');
+  const priorities = bar.locator('[data-filter="priority"]');
+  await priorities.locator('summary').click();
+  await priorities.getByLabel('High', { exact: true }).check();
+  await expect(bar).toContainText('Showing 1 of 2 Cards');
+  await page.getByLabel('Search Sprint Cards').fill('issue');
+  await page.reload();
+  await page.getByLabel('Personal API key').fill('test-key');
+  await page.getByRole('button', { name: 'Connect to Redmine' }).click();
+  await expect(page.locator('#updated')).toContainText('Updated');
+  await expect(page.getByLabel('Search Sprint Cards')).toHaveValue('issue');
+  await expect(bar).toContainText('Showing 1 of 2 Cards');
+  await page.locator('#sprint').selectOption('99');
+  await expect(bar).toContainText('Showing 0 of 1 Cards');
+  await priorities.locator('summary').click();
+  const absent = priorities.getByLabel('priority #3 (not in this Sprint)', { exact: true });
+  await expect(absent).toBeChecked();
+  await absent.uncheck();
+  await expect(bar).toContainText('Showing 1 of 1 Cards');
+  await bar.getByRole('button', { name: 'Clear filters' }).click();
+  await expect(page.getByLabel('Search Sprint Cards')).toHaveValue('');
+});
+
+test('matching outside-status children keep their heading, and updates reapply Sprint search', async ({ page }) => {
+  const fixture = await setup(page);
+  fixture.rows[0].custom_fields[0].value = ['100'];
+  fixture.rows[1].status = { id: 99, name: 'Other' };
+  await refresh(page);
+  await page.getByLabel('Search Sprint Cards').fill('#2');
+  await expect(heading(page, 1)).toBeVisible();
+  await heading(page, 1).locator('summary').click();
+  await expect(heading(page, 1).getByRole('link', { name: '#2 — Issue 2' })).toBeVisible();
+  await expect(page.locator('[data-sprint-count]')).toHaveText('Showing 1 of 2 Cards');
+  fixture.rows[1].custom_fields[0].value = [];
+  await refresh(page);
+  await expect(heading(page, 1)).toHaveCount(0);
+  await expect(page.locator('[data-sprint-empty]')).toBeVisible();
+});
+
+test('missing-subtask planning includes descendants hidden by Sprint search', async ({ page }) => {
+  const fixture = await setup(page);
+  fixture.rows[0].custom_fields[0].value = ['100'];
+  await refresh(page);
+  await page.getByLabel('Search Sprint Cards').fill('#2');
+  await heading(page, 1).getByRole('button', { name: 'Add missing subtasks for #1' }).click();
+  await expect(page.locator('#workspace')).toHaveAttribute('aria-busy', 'false');
+  expect(fixture.rows.find(row => row.id === 3).custom_fields[0].value).toEqual(['100']);
+  await expect(laneCard(page, 1, 3)).toHaveCount(0);
+  await expect(laneCard(page, 1, 2)).toBeVisible();
+  await expect(page.locator('[data-sprint-count]')).toHaveText('Showing 1 of 3 Cards');
+});
+
+test('Sprint Tag filters use Swimlane tags, combine with search, and clear independently', async ({ page }) => {
+  const fixture = await setup(page);
+  fixture.rows[0].custom_fields[0].value = ['100'];
+  fixture.rows[0].tags = ['release', 'UI'];
+  fixture.rows[3].tags = ['empty'];
+  fixture.rows[5].tags = ['release'];
+  await refresh(page);
+  const bar = page.getByRole('region', { name: 'Sprint Card filters' });
+  const tags = bar.locator('[data-filter="tag"]');
+  await tags.locator('summary').click();
+  await tags.getByLabel('release', { exact: true }).check();
+  await expect(laneCard(page, 1, 2)).toBeVisible();
+  await expect(heading(page, 'ungrouped')).toHaveCount(0);
+  await expect(heading(page, 4)).toHaveCount(0);
+  await expect(bar).toContainText('Showing 1 of 2 Cards');
+  await expect(tags.getByLabel('empty', { exact: true })).toBeVisible();
+  await page.getByLabel('Search Sprint Cards').fill('#6');
+  await expect(bar).toContainText('No Cards match these filters');
+  await page.getByLabel('Search Sprint Cards').fill('');
+  await page.locator('#sprint').selectOption('99');
+  await expect(bar).toContainText('Showing 0 of 1 Cards');
+  await tags.locator('summary').click();
+  await expect(tags.getByLabel('release (not in this Sprint)', { exact: true })).toBeChecked();
+  await bar.getByRole('button', { name: 'Clear filters' }).click();
+  await expect(bar).toContainText('Showing 1 of 1 Cards');
+  await expect(tags.locator('summary')).toHaveText('Tag: All');
+});
+
+test('Sprint dropdowns fit narrow viewports and support keyboard dismissal', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 720 });
+  await setup(page);
+  const bar = page.getByRole('region', { name: 'Sprint Card filters' });
+  const details = bar.locator('[data-filter="priority"]');
+  await details.locator('summary').focus();
+  await page.keyboard.press('Enter');
+  await expect(details).toHaveAttribute('open', '');
+  const bounds = await details.locator('.sprint-filter-options').boundingBox();
+  expect(bounds.x).toBeGreaterThanOrEqual(0);
+  expect(bounds.x + bounds.width).toBeLessThanOrEqual(390);
+  await details.getByLabel('Normal', { exact: true }).focus();
+  await page.keyboard.press('Space');
+  await expect(details.getByLabel('Normal', { exact: true })).toBeChecked();
+  await page.keyboard.press('Escape');
+  await expect(details).not.toHaveAttribute('open');
+  await expect(details.locator('summary')).toBeFocused();
+});
+
 test('background indicators finish even when Backlog search changes during the scan', async ({ page }) => {
   await setup(page);
   let release;

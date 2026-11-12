@@ -80,6 +80,72 @@ async function signOut(page) {
   await page.getByRole('button', { name: 'Sign out', exact: true }).click();
 }
 
+test('Sprint filters restore per project and remain independent of Backlog controls', async ({ page }) => {
+  const fixture = await setup(page);
+  fixture.versions.push({ id: 20, name: 'Other Sprint', status: 'open', project: { id: 2 } });
+  fixture.issues.push({ ...fixture.issues[1], id: 20, project: { id: 2, name: 'Other project' }, custom_fields: [{ id: 7, value: '20' }] });
+  await login(page);
+  const bar = page.getByRole('region', { name: 'Sprint Card filters' });
+  await page.getByLabel('Search Sprint Cards').fill('#2');
+  const project = bar.locator('[data-filter="project"]');
+  await project.locator('summary').click();
+  await project.getByLabel('Team', { exact: true }).check();
+  await expect(bar).toContainText('Showing 1 of 2 Cards');
+  await expect(project.getByRole('checkbox')).toHaveCount(1);
+  await page.getByLabel('Search backlog').fill('absent');
+  await expect(page.locator('[data-id="backlog"] footer')).toContainText('No backlog issues match');
+  await expect(page.locator('[data-eid="2"]')).toBeVisible();
+  await bar.getByRole('button', { name: 'Clear filters' }).click();
+  await expect(page.getByLabel('Search backlog')).toHaveValue('absent');
+  await page.getByLabel('Search Sprint Cards').fill('#2');
+  await page.locator('#project').selectOption('2');
+  await expect(page.getByLabel('Search Sprint Cards')).toHaveValue('');
+  await expect(bar).toContainText('Showing 1 of 1 Cards');
+  await page.getByLabel('Search Sprint Cards').fill('#20');
+  await page.locator('#project').selectOption('1');
+  await expect(page.getByLabel('Search Sprint Cards')).toHaveValue('#2');
+  await expect(bar).toContainText('Showing 1 of 2 Cards');
+});
+
+test('flat Sprint search preserves surviving nodes and focus without network searches', async ({ page }) => {
+  const fixture = await setup(page);
+  await page.route('**/config.json', route => route.fulfill({ json: {
+    redminePublicUrl: 'https://redmine.example.test', openedStatusId: 2, sprintFieldId: 7,
+    backlogStatusId: 1, columnStatusIds: [1, 2, 3, 5], swimlaneTrackers: [], refreshSeconds: 60,
+  } }));
+  await login(page);
+  await expect(page.locator('[data-id="backlog"] .kanban-drag')).toHaveAttribute('aria-busy', 'false');
+  await page.locator('[data-eid="2"]').evaluate(node => { window.survivingCard = node; });
+  const before = fixture.requests.length;
+  const query = page.getByLabel('Search Sprint Cards');
+  await query.fill('ALREADY');
+  await expect(query).toBeFocused();
+  await expect(page.locator('[data-eid="2"]')).toBeVisible();
+  expect(await page.locator('[data-eid="2"]').evaluate(node => node === window.survivingCard)).toBe(true);
+  await expect(page.locator('.swimlane-headers')).toHaveCount(0);
+  await expect(page.locator('[data-sprint-count]')).toHaveText('Showing 1 of 2 Cards');
+  expect(fixture.requests.length).toBe(before);
+  await query.fill('missing');
+  await expect(page.locator('[data-eid="2"]')).toHaveCount(0);
+  await expect(page.locator('[data-sprint-empty]')).toBeVisible();
+});
+
+test('Sprint filters occupy a full-width panel with right-aligned results', async ({ page }) => {
+  await setup(page);
+  await login(page);
+  const geometry = await page.locator('#sprint-filters').evaluate(panel => {
+    const bounds = panel.getBoundingClientRect(), workspace = panel.parentElement.getBoundingClientRect();
+    const count = panel.querySelector('[data-sprint-count]').getBoundingClientRect();
+    const style = getComputedStyle(panel);
+    return { left: bounds.left, right: bounds.right, workspaceLeft: workspace.left, workspaceRight: workspace.right,
+      countRight: count.right, padding: parseFloat(style.paddingRight), border: parseFloat(style.borderRightWidth) };
+  });
+  expect(geometry.left).toBe(geometry.workspaceLeft);
+  expect(geometry.right).toBe(geometry.workspaceRight);
+  expect(geometry.border).toBe(1);
+  expect(geometry.countRight).toBeCloseTo(geometry.right - geometry.padding - geometry.border, 0);
+});
+
 test('keeps planning controls and commitment in one compact line', async ({ page }) => {
   await setup(page);
   await login(page);

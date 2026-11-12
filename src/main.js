@@ -4,7 +4,9 @@ import { reconcileBoard, alignSwimlanes, positionSwimlaneHeaders } from './board
 import { RedmineClient, RedmineError } from './api.js';
 import { validateConfig, isBacklog, effort, movePatch, parseEstimate, assertTransition, matchesPatch, sprintValues, membershipPatch, hasSprintField, projectScope, escapeHtml as e } from './domain.js';
 import { PlanningFeed } from './planning-feed.js';
-import { isSwimlane, loadAncestors, groupSwimlanes } from './swimlanes.js';
+import { isSwimlane, loadAncestors } from './swimlanes.js';
+import { emptySprintFilters, filteredSprint, createSprintFilterPreferences } from './sprint-filters.js';
+import { createSprintFilterControls } from './sprint-filter-controls.js';
 import { collectMissingSubtasks, createHierarchyReader, planDescendants } from './descendant-planning.js';
 import { createLoadingOverlay } from './loading-overlay.js';
 import { settledResults } from './settled-results.js';
@@ -34,6 +36,13 @@ let expansionFailed = false;
 const observedLists = new WeakSet();
 const mirroredStatusScrolls = new WeakMap();
 const filters = { query: '', tracker: '', assignee: '', tags: [] };
+let sprintFilters = emptySprintFilters(), sprintFilterPreferences;
+const renderSprintFilters = createSprintFilterControls($('sprint-filters'), () => {
+  sprintFilterPreferences?.write(projectId, sprintFilters);
+  if (config && feed && sprint) renderBoard();
+  else renderSprintFilters(sprintFilters, [], []);
+});
+renderSprintFilters(sprintFilters, [], []);
 const backlogFiltered = () => Boolean(filters.query.trim() || filters.tracker || filters.assignee || filters.tags.length);
 function resetFilters() {
   Object.assign(filters, { query: '', tracker: '', assignee: '', tags: [] });
@@ -91,6 +100,7 @@ function options(select, rows, selected = '') {
   select.value = String(selected);
 }
 function lock() {
+  for (const details of $('sprint-filters').querySelectorAll('details')) details.inert = busy || loading;
   $('refresh').disabled = !api;
   $('refresh-now').disabled = busy || loading || !api;
   $('refresh-now').setAttribute('aria-busy', String(loading));
@@ -110,6 +120,7 @@ function destroyBoard() {
   board?.drake?.destroy(); board?.drakeBoard?.destroy(); board = null; $('board').replaceChildren();
 }
 function clearBoardCards() {
+  renderSprintFilters(sprintFilters, [], []);
   if (!board) return;
   const emptyColumns = board.options.boards.map(column => {
     const title = document.createElement('div'); title.innerHTML = column.title;
@@ -200,6 +211,7 @@ async function syncFeed(snapshot) {
 function forget() {
   lanePlanningController?.abort();
   selectionPreferences = null;
+  sprintFilterPreferences = null; sprintFilters = emptySprintFilters();
   cancelQuery(); feed = null;
   epoch++; setAutorefresh(false); api?.dispose(); api = null; busy = loading = dragging = false;
   resetFilters();
@@ -302,16 +314,17 @@ function renderBoard() {
   const backlogIds = new Set(feed?.snapshot.backlog.map(issue => issue.id));
   const backlog = visible.filter(issue => backlogIds.has(issue.id));
   const boards = [{ id: 'backlog', title: `${backlogToggle()}<span class="backlog-label">Backlog</span> <span class="count">${backlog.length} / ${feed?.snapshot.total ?? '?'}</span>${backlogCollapsed && backlogFiltered() ? '<span class="backlog-filtered muted">Filtered</span>' : ''}`, class: 'backlog-board', item: backlog.map(card) }];
-  const lanes = config.swimlaneTrackers.length ? groupSwimlanes(feed?.snapshot.sprintAll || [], feed?.snapshot.sprintVisible || [], config.swimlaneTrackers, laneAncestors) : null;
+  const { cards, visible: sprintVisible, lanes, tagChoices } = filteredSprint(feed?.snapshot.sprintAll || [], config.swimlaneTrackers, laneAncestors, sprintFilters);
+  renderSprintFilters(sprintFilters, cards, sprintVisible, tagChoices);
   for (const [index, statusId] of config.columnStatusIds.entries()) {
     const items = lanes ? lanes.flatMap(lane => lane.visible.filter(issue => issue.status.id === statusId).map(issue => ({ ...card(issue), lane: lane.id })))
-      : visible.filter(issue => selectedMember(issue) && issue.status.id === statusId).map(card);
+      : sprintVisible.filter(issue => issue.status.id === statusId).map(card);
     boards.push({ id: `status-${statusId}`, title: `${e(statuses.find(status => status.id === statusId).name)} <span class="count">${items.length}</span>`, item: items,
       lanes: lanes?.map(lane => ({ id: lane.id, title: index === 0 ? laneHeading(lane) : '' })),
     });
   }
   if (!lanes) {
-    const other = visible.filter(issue => selectedMember(issue) && !config.columnStatusIds.includes(issue.status.id));
+    const other = sprintVisible.filter(issue => !config.columnStatusIds.includes(issue.status.id));
     if (other.length) boards[1].title += unmappedNotice(other);
   }
   if (!board) board = new jKanban({
@@ -655,8 +668,10 @@ async function connect(key, remember) {
     $('refresh').hidden = false; $('refresh-now').hidden = false; $('statusbar').hidden = false;
     renderIdentity(userData.user);
     selectionPreferences = createSelectionPreferences(config.redminePublicUrl, userData.user.id);
+    sprintFilterPreferences = createSprintFilterPreferences(config.redminePublicUrl, userData.user.id);
     const savedProjectId = selectionPreferences.project();
     projectId = String((projects.find(project => String(project.id) === savedProjectId) || projects[0]).id);
+    sprintFilters = sprintFilterPreferences.read(projectId);
     options($('project'), projects.map(project => [project.id, project.name]), projectId);
     notify('Connected.'); loading = false; await refresh(true);
     if (stamp !== epoch) return;
@@ -682,6 +697,7 @@ $('login-form').addEventListener('submit', event => { event.preventDefault(); vo
 $('project').addEventListener('change', () => {
   cancelQuery(); feed = newFeed();
   projectId = $('project').value; issues = []; sprint = null; versions = []; memberships = [];
+  sprintFilters = sprintFilterPreferences?.read(projectId) || emptySprintFilters();
   selectionPreferences?.selectProject(projectId);
   resetFilters(); renderFilters();
   clearBoardCards(); void refresh(true);

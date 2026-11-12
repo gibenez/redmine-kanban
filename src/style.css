@@ -356,6 +356,16 @@ body.board-active { height: 100dvh; overflow: hidden; display: flex; flex-direct
 /* Keep planning on one line; narrow windows scroll this strip rather than
    taking vertical space away from the board. */
 .planning-row { display: flex; align-items: stretch; gap: 8px; flex-wrap: nowrap; overflow-x: auto; min-height: 42px; margin-bottom: 8px; }
+#sprint-filters { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 8px; margin-bottom: 8px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--sidebar); font-size: 12px; }
+#sprint-filters [data-sprint-count] { order: 1; margin-left: auto; white-space: nowrap; }
+#sprint-query { width: 224px; min-height: 30px; padding: 4px 8px; }
+#sprint-filters details { position: relative; }
+#sprint-filters summary { cursor: pointer; padding: 4px 8px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--sidebar); min-height: 30px; }
+#sprint-filters summary:focus-visible { outline: 2px solid var(--link); outline-offset: 2px; }
+.sprint-filter-options { position: fixed; z-index: 20; width: max-content; min-width: 176px; max-width: min(320px, 80vw); max-height: min(320px, 45dvh); overflow: auto; padding: 8px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--content); box-shadow: var(--shadow); }
+.sprint-filter-options label { display: flex; flex-direction: row; align-items: center; gap: 8px; padding: 4px; overflow-wrap: anywhere; cursor: pointer; }
+.sprint-filter-options input { margin: 0; flex: none; }
+#sprint-filters button { padding: 4px 8px; font-size: 12px; }
 #workspace .summary { flex: 1 0 auto; flex-wrap: nowrap; min-width: 0; padding: 4px 12px; gap: 16px; }
 #workspace .summary > div:first-child { display: flex; align-items: center; gap: 12px; white-space: nowrap; }
 #workspace .summary h2 { font-size: 13px; line-height: 20px; margin: 0; }
