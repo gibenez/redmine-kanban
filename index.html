@@ -43,11 +43,12 @@
       <div class="toolbar panel">
         <label>Project<select id="project" aria-label="Project"></select></label>
         <div class="sprint-control">
-          <div class="sprint-control-heading"><label for="sprint">Sprint</label><label class="checkbox" title="Include closed sprints in the Sprint list."><input id="closed" type="checkbox" aria-label="Include closed sprints"> Show closed</label></div>
+          <label for="sprint">Sprint</label>
           <select id="sprint" aria-label="Sprint"></select>
         </div>
+        <label class="checkbox" title="Include closed sprints in the Sprint list."><input id="closed" type="checkbox" aria-label="Include closed sprints"> Show closed</label>
       </div>
-      <section class="summary panel" aria-label="Sprint commitment"><div><span class="eyebrow">SPRINT COMMITMENT</span><h2 id="sprint-name">Select a sprint</h2><p id="sprint-state" class="muted"></p></div><div id="totals" class="totals"></div></section>
+      <section class="summary panel" aria-label="Sprint commitment"><div><h2 id="sprint-name">Select a sprint</h2><p id="sprint-state" class="muted"></p></div><div id="totals" class="totals"></div></section>
       </div>
       <div id="backlog-search" hidden><input id="query" type="search" aria-label="Search backlog" placeholder="Search"><button id="toggle-backlog-filters" type="button" aria-label="Backlog filters" title="Backlog filters" aria-expanded="false" aria-controls="filter-controls"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg></button></div>
       <section id="filter-controls" aria-label="Backlog filters" hidden>

@@ -80,6 +80,38 @@ async function signOut(page) {
   await page.getByRole('button', { name: 'Sign out', exact: true }).click();
 }
 
+test('keeps planning controls and commitment in one compact line', async ({ page }) => {
+  await setup(page);
+  await login(page);
+  await expect(page.locator('.planning-prototype-switcher')).toHaveCount(0);
+  const sprintLabelGap = await page.locator('.sprint-control').evaluate(control => {
+    const label = control.querySelector('label').getBoundingClientRect();
+    const select = control.querySelector('select').getBoundingClientRect();
+    return select.left - label.right;
+  });
+  expect(sprintLabelGap).toBe(8);
+  const sprintLabelWidth = await page.locator('.sprint-control > label').evaluate(label => label.getBoundingClientRect().width);
+  expect(sprintLabelWidth).toBeLessThan(50);
+  for (const width of [1527, 1024, 600]) {
+    await page.setViewportSize({ width, height: 1000 });
+    const geometry = await page.locator('.planning-row').evaluate(row => ({
+      height: row.getBoundingClientRect().height,
+      width: row.clientWidth,
+      contentWidth: row.scrollWidth,
+      pageOverflow: document.documentElement.scrollWidth > innerWidth,
+      centers: [...row.querySelectorAll('#project, #sprint, #closed, #sprint-name, #sprint-state, #totals')]
+        .map(element => { const rect = element.getBoundingClientRect(); return rect.top + rect.height / 2; }),
+    }));
+    expect(geometry.height).toBeLessThanOrEqual(44);
+    expect(Math.max(...geometry.centers) - Math.min(...geometry.centers)).toBeLessThanOrEqual(2);
+    expect(geometry.pageOverflow).toBe(false);
+    if (width === 1527) expect(geometry.contentWidth).toBe(geometry.width);
+    if (width === 600) expect(geometry.contentWidth).toBeGreaterThan(geometry.width);
+  }
+  await page.getByLabel('Include closed sprints').check();
+  await expect(page.locator('#sprint option', { hasText: 'Sprint 9' })).toHaveCount(1);
+});
+
 test('remembers the project and an explicit Sprint per project across visits', async ({ page }) => {
   const { versions } = await setup(page);
   versions.push(
@@ -990,12 +1022,15 @@ test('compact board exposes filters and allows board-only horizontal scrolling',
   await expect(page.locator('[data-id="backlog"] #filter-controls')).toBeVisible();
 });
 
-test('phone layout keeps appearance, planning controls and board inside the viewport', async ({ page }) => {
+test('phone layout keeps the board in the viewport and planning controls reachable by scrolling', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await setup(page); await login(page);
   await expect(page.getByRole('button', { name: /^Appearance:/ })).toBeInViewport();
   await expect(page.getByLabel('Project', { exact: true })).toBeInViewport();
+  await page.getByLabel('Sprint', { exact: true }).scrollIntoViewIfNeeded();
   await expect(page.getByLabel('Sprint', { exact: true })).toBeInViewport();
+  await page.getByLabel('Include closed sprints').scrollIntoViewIfNeeded();
+  await expect(page.getByLabel('Include closed sprints')).toBeInViewport();
   const geometry = await page.evaluate(() => ({
     pageWidth: document.scrollingElement.scrollWidth, pageHeight: document.scrollingElement.scrollHeight,
     boardHeight: document.getElementById('board').clientHeight,

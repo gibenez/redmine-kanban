@@ -147,12 +147,6 @@ input::placeholder { color: var(--secondary); opacity: 1; }
 }
 #notice.error { border-color: var(--error-border); background: var(--error-bg); color: var(--error); }
 .toolbar { display: flex; align-items: end; flex-wrap: wrap; padding: 8px; gap: 16px; }
-.toolbar label:not(.checkbox) { min-width: 180px; }
-.sprint-control { display: flex; flex-direction: column; gap: 4px; }
-.sprint-control-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-#workspace .sprint-control-heading label { flex: none; min-width: 0; }
-.sprint-control-heading .checkbox { gap: 4px; white-space: nowrap; }
-.sprint-control-heading input { margin: 0; }
 .statusbar { display: flex; align-items: center; justify-content: flex-end; flex: none; height: 24px; padding: 3px 16px; border-top: 1px solid var(--line); background: var(--sidebar); }
 #updated { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .summary { display: flex; justify-content: space-between; align-items: center; padding: 16px 0; gap: 24px; }
@@ -352,29 +346,32 @@ body.board-active { height: 100dvh; overflow: hidden; display: flex; flex-direct
 #notice-dialog { max-height: calc(100dvh - 32px); overflow: auto; }
 #workspace { position: relative; flex: 1; min-height: 0; min-width: 0; display: flex; flex-direction: column; }
 #workspace > :not(#board) { flex: none; min-width: 0; }
-#workspace .toolbar { gap: 8px; padding: 8px; }
-#workspace .toolbar > label:not(.checkbox), #workspace .sprint-control { flex: 1 1 140px; min-width: 0; max-width: 224px; }
-#workspace .sprint-control { flex-basis: 180px; }
+#workspace .toolbar { flex: 0 0 auto; align-items: center; flex-wrap: nowrap; gap: 12px; padding: 4px 8px; }
+#workspace .toolbar > label:not(.checkbox), #workspace .sprint-control { display: flex; flex-direction: row; align-items: center; gap: 8px; flex: none; min-width: 0; white-space: nowrap; }
+#workspace .toolbar .checkbox { gap: 4px; white-space: nowrap; }
+#workspace .toolbar .checkbox input { margin: 0; }
+#workspace .toolbar select { width: 176px; min-height: 30px; height: 30px; padding-block: 3px; }
+#workspace .toolbar #project { width: 144px; }
 #workspace select { max-width: 100%; }
-.planning-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
-.planning-row > .toolbar { flex: 1 1 650px; min-width: 0; }
-#workspace .summary { flex: 1 1 400px; min-width: 0; padding: 8px 12px; gap: 16px; }
-#workspace .summary > div:first-child { min-width: 0; overflow-wrap: anywhere; }
-#workspace .summary h2 { font-size: 16px; line-height: 24px; margin: 2px 0; }
-#sprint-state { margin: 2px 0; }
+/* Keep planning on one line; narrow windows scroll this strip rather than
+   taking vertical space away from the board. */
+.planning-row { display: flex; align-items: stretch; gap: 8px; flex-wrap: nowrap; overflow-x: auto; min-height: 42px; margin-bottom: 8px; }
+#workspace .summary { flex: 1 0 auto; flex-wrap: nowrap; min-width: 0; padding: 4px 12px; gap: 16px; }
+#workspace .summary > div:first-child { display: flex; align-items: center; gap: 12px; white-space: nowrap; }
+#workspace .summary h2 { font-size: 13px; line-height: 20px; margin: 0; }
+#sprint-state { margin: 0; }
 #sprint-name a { color: var(--link); text-decoration: none; }
 #sprint-name a:hover { color: var(--link-hover); text-decoration: underline; }
-#workspace .totals { gap: 16px; flex-shrink: 0; border-left: 1px solid var(--line); padding-left: 16px; }
-#workspace .totals div { min-width: 40px; }
+#workspace .totals { align-items: center; gap: 16px; flex-shrink: 0; border-left: 1px solid var(--line); padding-left: 12px; }
+#workspace .totals div { flex-direction: row; align-items: baseline; gap: 4px; min-width: 0; white-space: nowrap; }
 #workspace .totals strong { color: var(--text); }
-#workspace .summary .eyebrow { font-size: 10px; font-weight: 600; letter-spacing: .06em; }
 #workspace .toolbar { background: var(--sidebar); }
 #workspace #query { padding-left: 28px; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='none' stroke='%236c707e' stroke-width='1.5'%3E%3Ccircle cx='6.5' cy='6.5' r='4.5'/%3E%3Cpath d='m10 10 4 4'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: 8px center; }
 #editor-subject { line-height: 22px; overflow-wrap: anywhere; }
 #editor-notice { padding: 8px 12px; border-radius: var(--radius); }
 #editor-notice.error { color: var(--error); background: var(--error-bg); }
 #editor-notice.success { color: var(--success); background: var(--success-bg); }
-#workspace .totals strong { font-size: 16px; line-height: 24px; }
+#workspace .totals strong { font-size: 14px; line-height: 20px; }
 #filter-controls { flex: none; padding: 8px; border-bottom: 1px solid var(--line); min-width: 0; }
 .backlog-filter-footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; }
 .closed-backlog-filter { min-width: 0; gap: 2px; }
@@ -397,11 +394,8 @@ summary { cursor: pointer; }
   #board { overflow-x: auto; }
   .kanban-board { flex: 1 0 220px; }
   .kanban-container { min-width: 100%; width: max-content !important; }
-  #workspace .toolbar { gap: 8px; padding: 8px; }
-  #workspace .toolbar > label:not(.checkbox) { flex: 1 1 140px; }
   #workspace .filters { flex-wrap: wrap; }
   #workspace .filters .search { flex: 1 1 180px; }
-  #workspace .summary { padding: 8px; }
 }
 @media (max-width: 850px) {
   main { padding: 8px; }
@@ -464,6 +458,4 @@ summary { cursor: pointer; }
   .masthead { gap: 8px; align-items: flex-start; }
   .masthead-actions { gap: 8px; flex-wrap: wrap; }
   .brand .eyebrow { font-size: 10px; }
-  #workspace .summary { flex-wrap: wrap; gap: 8px; }
-  #workspace .totals { flex: 1; border-left: 0; padding-left: 0; justify-content: space-between; }
 }
