@@ -305,7 +305,8 @@ function unmappedNotice(items) {
 }
 function laneHeading(lane) {
   const id = Number(lane.parent?.id);
-  const title = lane.parent ? `<a href="${e(linkToIssue(id))}" target="_blank" rel="noopener noreferrer">#${id}</a> ${e(lane.parent.subject)}` : 'Ungrouped';
+  const closed = statuses.some(status => status.id === lane.parent?.status.id && status.is_closed);
+  const title = lane.parent ? `<a href="${e(linkToIssue(id))}" target="_blank" rel="noopener noreferrer">#${id}</a>&ensp;${e(lane.parent.subject)}` : 'Ungrouped';
   const priority = lane.parent ? `Priority: ${lane.parent.priority?.name || 'Unknown'}` : '';
   const bar = lane.parent ? `<span class="lane-priority-bar ${priorityClass(lane.parent.priority?.name)}" role="img" aria-label="${e(priority)}" title="${e(priority)}"></span>` : '';
   const metadata = lane.parent ? `<span class="lane-tags">${tagsMarkup(lane.parent)}</span>` : '';
@@ -314,7 +315,7 @@ function laneHeading(lane) {
   const hint = !state || state.pending ? 'Checking missing subtasks…' : state.error ? `Missing subtasks unknown: ${state.error} Use Refresh to retry.` : `Add missing subtasks to ${sprint?.name || 'this Sprint'} (${state.count || 0} missing). Includes closed subtasks and those assigned elsewhere; preserves statuses and other Sprints. Cards group under their nearest planned Swimlane.`;
   const icon = `<svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3 3v10h3M3 6h3M9 6h7M9 13h2M15 11v6M12 14h6"/>${state?.error ? '<circle cx="16" cy="3" r="2"/>' : ''}</svg>`;
   const action = lane.parent ? `<span class="swimlane-actions" title="${e(hint)}">${tracker}<button type="button" class="add-subtasks${state?.count ? ' requires-attention' : ''}${state?.error ? ' planning-unknown' : ''}" data-add-descendants="${id}" aria-label="Add missing subtasks for #${id}" title="${e(hint)}"${state?.error ? ' aria-invalid="true"' : ''}>${icon}</button></span>` : '';
-  return `${bar}<div class="swimlane-title-row"><strong>${title}</strong>${metadata}${action}</div>${unmappedNotice(lane.visible.filter(issue => !config.columnStatusIds.includes(issue.status.id)))}${lane.parent ? relatedIssues.markup(id) : ''}`;
+  return `${bar}<div class="swimlane-title-row"><strong${closed ? ' class="closed"' : ''}>${title}</strong>${metadata}${action}</div>${unmappedNotice(lane.visible.filter(issue => !config.columnStatusIds.includes(issue.status.id)))}${lane.parent ? relatedIssues.markup(id) : ''}`;
 }
 
 function renderBoard() {

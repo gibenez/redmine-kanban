@@ -48,6 +48,29 @@ async function setup(page) {
 const heading = (page, id) => page.locator(`.swimlane-headers > [data-lane="${id}"]`);
 const backlog = (page, id) => page.locator(`[data-id="backlog"] [data-eid="${id}"]`);
 const laneCard = (page, lane, id) => page.locator(`[data-id="status-1"] [data-lane="${lane}"] [data-eid="${id}"]`);
+test('closed Swimlanes strike through only the issue title and clear it when reopened', async ({ page }) => {
+  const fixture = await setup(page);
+  const lane = heading(page, 4);
+  const title = lane.locator('.swimlane-title-row strong');
+  await expect(title).toHaveCSS('text-decoration-line', 'none');
+  // Issue responses may omit is_closed; the status catalogue is authoritative.
+  fixture.rows[3].status = { id: 5, name: 'Done' };
+  await page.getByRole('button', { name: 'Refresh now', exact: true }).click();
+  await expect(title).toHaveCSS('text-decoration-line', 'line-through');
+  const link = title.getByRole('link', { name: '#4', exact: true });
+  await expect(link).toBeVisible();
+  await expect(link).toHaveCSS('margin-right', '0px');
+  // Text spacing participates in the strikethrough; a margin leaves a gap.
+  expect(await link.evaluate(node => node.nextSibling.textContent)).toBe('\u2002Issue 4');
+  await expect(lane.locator('.lane-tracker')).toHaveCSS('text-decoration-line', 'none');
+  await expect(lane.locator('.swimlane-actions')).toHaveCSS('text-decoration-line', 'none');
+  await expect(heading(page, 'ungrouped').locator('strong')).toHaveCSS('text-decoration-line', 'none');
+  fixture.rows[3].status = { id: 1, name: 'New' };
+  await page.getByRole('button', { name: 'Refresh now', exact: true }).click();
+  await expect(title).toHaveCSS('text-decoration-line', 'none');
+  expect(fixture.writes).toEqual([]);
+});
+
 test('Swimlane issue text matches Card size without increasing header height', async ({ page }) => {
   await setup(page);
   const title = heading(page, 4).locator('.swimlane-title-row strong');

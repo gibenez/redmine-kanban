@@ -260,7 +260,8 @@ input::placeholder { color: var(--secondary); opacity: 1; }
   min-width: 0; padding: 3px 0; font-size: 14px; font-weight: 600;
   display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden;
 }
-.swimlane-title-row strong a { margin-right: 4px; text-decoration: none; }
+.swimlane-title-row strong a { text-decoration: none; }
+.swimlane-title-row strong.closed { text-decoration: line-through; }
 .lane-tags { min-width: 0; }
 .swimlane-heading a { color: var(--link); }
 .swimlane-actions { display: flex; align-items: center; flex: none; gap: 8px; margin-left: auto; }
