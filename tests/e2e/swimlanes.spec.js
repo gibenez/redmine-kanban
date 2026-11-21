@@ -76,6 +76,43 @@ for (const activation of ['click', 'keyboard']) {
 }
 
 for (const mode of ['light', 'dark']) {
+  test(`Swimlane tracker is a right-aligned badge before the add button in ${mode} mode`, async ({ page }) => {
+    await page.emulateMedia({ colorScheme: mode });
+    const fixture = await setup(page);
+    fixture.rows[3].subject = 'A long Swimlane title that should leave room for the tracker badge and action button '.repeat(4);
+    fixture.rows[3].tags = ['Module tag'];
+    await page.getByRole('button', { name: 'Refresh now', exact: true }).click();
+    const lane = heading(page, 4);
+    const badge = lane.locator('.swimlane-actions > .lane-tracker');
+    await expect(badge).toHaveText('Feature');
+    await expect(badge).toHaveAttribute('title', 'Tracker: Feature');
+    await expect(lane.locator('.lane-tags')).toHaveText('Module tag');
+    await expect(lane.locator('.lane-tracker + .add-subtasks')).toHaveCount(1);
+    await expect(badge).toHaveCSS('border-radius', '3px');
+    await expect(badge).not.toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+    await expect(heading(page, 'ungrouped').locator('.lane-tracker')).toHaveCount(0);
+    for (const width of [1440, 390]) {
+      await page.setViewportSize({ width, height: 1000 });
+      await expect(badge).toBeVisible();
+      const geometry = await lane.evaluate(node => {
+        const bounds = node.getBoundingClientRect();
+        const row = node.querySelector('.swimlane-title-row').getBoundingClientRect();
+        const badge = node.querySelector('.lane-tracker').getBoundingClientRect();
+        const button = node.querySelector('.add-subtasks').getBoundingClientRect();
+        const tags = node.querySelector('.lane-tags').getBoundingClientRect();
+        return { right: bounds.right, rowRight: row.right, badgeRight: badge.right, badgeLeft: badge.left,
+          buttonLeft: button.left, buttonRight: button.right, tagsRight: tags.right,
+          badgeCenter: badge.top + badge.height / 2, buttonCenter: button.top + button.height / 2 };
+      });
+      expect(geometry.buttonLeft - geometry.badgeRight).toBe(8);
+      expect(geometry.buttonRight).toBe(geometry.rowRight);
+      expect(geometry.buttonRight).toBeLessThan(geometry.right);
+      expect(geometry.tagsRight).toBeLessThanOrEqual(geometry.badgeLeft);
+      expect(Math.abs(geometry.badgeCenter - geometry.buttonCenter)).toBeLessThanOrEqual(1);
+    }
+    expect(fixture.writes).toEqual([]);
+  });
+
   test(`Swimlane priority uses one full-height bar, including empty rows, in ${mode} mode`, async ({ page }) => {
     await page.emulateMedia({ colorScheme: mode });
     const fixture = await setup(page);
