@@ -305,7 +305,7 @@ function unmappedNotice(items) {
 }
 function laneHeading(lane) {
   const id = Number(lane.parent?.id);
-  const title = lane.parent ? `<a href="${e(linkToIssue(id))}" target="_blank" rel="noopener noreferrer">#${id}</a> — ${e(lane.parent.subject)}` : 'Ungrouped';
+  const title = lane.parent ? `<a href="${e(linkToIssue(id))}" target="_blank" rel="noopener noreferrer">#${id}</a> ${e(lane.parent.subject)}` : 'Ungrouped';
   const priority = lane.parent ? `Priority: ${lane.parent.priority?.name || 'Unknown'}` : '';
   const bar = lane.parent ? `<span class="lane-priority-bar ${priorityClass(lane.parent.priority?.name)}" role="img" aria-label="${e(priority)}" title="${e(priority)}"></span>` : '';
   const metadata = lane.parent ? `<span class="lane-tags">${tagsMarkup(lane.parent)}</span>` : '';

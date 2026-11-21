@@ -48,12 +48,30 @@ async function setup(page) {
 const heading = (page, id) => page.locator(`.swimlane-headers > [data-lane="${id}"]`);
 const backlog = (page, id) => page.locator(`[data-id="backlog"] [data-eid="${id}"]`);
 const laneCard = (page, lane, id) => page.locator(`[data-id="status-1"] [data-lane="${lane}"] [data-eid="${id}"]`);
+test('Swimlane issue text matches Card size without increasing header height', async ({ page }) => {
+  await setup(page);
+  const title = heading(page, 4).locator('.swimlane-title-row strong');
+  const cardSize = await page.locator('.kanban-item h3').first().evaluate(node => getComputedStyle(node).fontSize);
+  await expect(title).toHaveCSS('font-size', cardSize);
+  await expect(title).toHaveCSS('font-size', '14px');
+  await expect(title).toHaveCSS('line-height', '18px');
+  const heights = await title.evaluate(node => {
+    const header = node.closest('.swimlane-heading');
+    const current = header.getBoundingClientRect().height;
+    node.style.fontSize = '12px';
+    const previous = header.getBoundingClientRect().height;
+    node.style.removeProperty('font-size');
+    return { current, previous };
+  });
+  expect(heights.current).toBe(heights.previous);
+});
+
 for (const activation of ['click', 'keyboard']) {
   test(`Swimlane links only its issue ID without underlining via ${activation}`, async ({ page }) => {
     const fixture = await setup(page);
     const title = heading(page, 4).locator('.swimlane-title-row strong');
     const link = title.getByRole('link', { name: '#4', exact: true });
-    await expect(title).toHaveText('#4 — Issue 4');
+    await expect(title).toHaveText('#4 Issue 4');
     await expect(title.locator('a')).toHaveCount(1);
     await expect(link).toHaveCSS('text-decoration-line', 'none');
     await expect(title).toHaveCSS('text-decoration-line', 'none');
