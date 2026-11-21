@@ -139,6 +139,9 @@ export function positionSwimlaneHeaders(container) {
 }
 
 export function alignSwimlanes(container) {
+  // Clearing row heights for measurement temporarily collapses empty Columns.
+  // Restore their offsets before queued scroll events can mirror a spurious 0.
+  const positions = [...container.querySelectorAll('.has-swimlanes')].map(list => [list, list.scrollTop]);
   positionSwimlaneHeaders(container);
   const headers = container.parentElement.querySelector(':scope > .swimlane-headers');
   const rows = new Map();
@@ -157,5 +160,6 @@ export function alignSwimlanes(container) {
       section.lastElementChild.style.minHeight = `${cardsHeight}px`;
     }
   }
+  for (const [list, top] of positions) list.scrollTop = top;
   positionSwimlaneHeaders(container);
 }

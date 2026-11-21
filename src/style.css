@@ -66,6 +66,11 @@ body { margin: 0; background: var(--sidebar); }
 .brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .brand-mark { display: grid; place-items: center; width: 32px; height: 32px; flex: none; }
 .brand-mark img { display: block; width: 32px; height: 32px; object-fit: contain; }
+.brand-mark.is-loading img { animation: brand-pulse 1s ease-in-out infinite; }
+@keyframes brand-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: .2; }
+}
 .masthead-actions { display: flex; align-items: center; justify-content: flex-end; gap: 16px; min-width: 0; }
 .theme-button, .refresh-button { display: inline-grid; place-items: center; flex: none; width: 32px; height: 32px; padding: 0; }
 .theme-button svg, .refresh-button svg { width: 18px; height: 18px; pointer-events: none; }

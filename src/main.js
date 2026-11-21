@@ -11,9 +11,16 @@ import { collectMissingSubtasks, createHierarchyReader, planDescendants } from '
 import { createLoadingOverlay } from './loading-overlay.js';
 import { settledResults } from './settled-results.js';
 import { createSelectionPreferences } from './selection-preferences.js';
+import { createBoardScroll } from './board-scroll.js';
 
 const $ = id => document.getElementById(id);
 const beginLoading = createLoadingOverlay($('loading-overlay'));
+const boardScroll = createBoardScroll($('board'));
+let scrollIdentity = '';
+$('board').addEventListener('scroll', event => {
+  if (event.target === $('board') || event.target.closest?.('[data-id^="status-"]')) boardScroll.save();
+}, { capture: true, passive: true });
+window.addEventListener('pagehide', () => boardScroll.save());
 const storageKey = 'redmine-sprint-board.api-key';
 const collapsedBacklogStorageKey = 'redmine-sprint-board.backlog-collapsed';
 let backlogCollapsed = false;
@@ -27,7 +34,7 @@ let selectionPreferences;
 function setAutorefresh(enabled) {
   autorefresh = enabled;
   clearInterval(timer);
-  if (enabled) timer = setInterval(() => { if (document.visibilityState === 'visible') void refresh(); }, config.refreshSeconds * 1000);
+  if (enabled) timer = setInterval(() => { if (document.visibilityState === 'visible') void refresh(false, false, true); }, config.refreshSeconds * 1000);
   $('refresh').setAttribute('aria-pressed', String(enabled));
   $('refresh').title = `Autorefresh ${enabled ? 'on — disable' : 'off — enable'}`;
 }
@@ -38,6 +45,7 @@ const mirroredStatusScrolls = new WeakMap();
 const filters = { query: '', tracker: '', assignee: '', tags: [] };
 let sprintFilters = emptySprintFilters(), sprintFilterPreferences;
 const renderSprintFilters = createSprintFilterControls($('sprint-filters'), () => {
+  boardScroll.reset();
   sprintFilterPreferences?.write(projectId, sprintFilters);
   if (config && feed && sprint) renderBoard();
   else renderSprintFilters(sprintFilters, [], []);
@@ -99,7 +107,15 @@ function options(select, rows, selected = '') {
   }));
   select.value = String(selected);
 }
+function updateLoadingIndicator() {
+  const active = Boolean(loading || busy || queryLoading || feed?.loadingMore);
+  const mark = document.querySelector('.brand-mark');
+  mark.classList.toggle('is-loading', active);
+  mark.setAttribute('aria-busy', String(active));
+  mark.title = active ? 'Loading…' : 'Redmine';
+}
 function lock() {
+  updateLoadingIndicator();
   for (const details of $('sprint-filters').querySelectorAll('details')) details.inert = busy || loading;
   $('refresh').disabled = !api;
   $('refresh-now').disabled = busy || loading || !api;
@@ -209,11 +225,13 @@ async function syncFeed(snapshot) {
   return true;
 }
 function forget() {
+  boardScroll.reset();
   lanePlanningController?.abort();
   selectionPreferences = null;
   sprintFilterPreferences = null; sprintFilters = emptySprintFilters();
   cancelQuery(); feed = null;
   epoch++; setAutorefresh(false); api?.dispose(); api = null; busy = loading = dragging = false;
+  updateLoadingIndicator();
   resetFilters();
   try { localStorage.removeItem(storageKey); } catch { /* Storage may be disabled. */ }
   $('api-key').value = ''; $('remember').checked = false;
@@ -305,6 +323,7 @@ function laneHeading(lane) {
 
 function renderBoard() {
   if (dragging) return;
+  const scrollPosition = boardScroll.beforeRender(JSON.stringify([scrollIdentity, projectId, sprint?.id, sprintFilters]));
   const visible = issues;
   const total = effort(feed?.snapshot.sprintAll || []);
   renderSprintHeading();
@@ -369,7 +388,8 @@ function renderBoard() {
       if (container.scrollTop > 0 && container.scrollTop + container.clientHeight >= container.scrollHeight - 64) void loadMoreBacklog();
     }, { passive: true });
   }
-  renderBacklogFooter(); syncBacklogVisibility(); alignSwimlanes(board.container); lock();
+  renderBacklogFooter(); syncBacklogVisibility(); alignSwimlanes(board.container);
+  boardScroll.afterRender(scrollPosition); positionSwimlaneHeaders(board.container); lock();
   $('empty').hidden = true;
 }
 
@@ -487,14 +507,16 @@ function chooseSprint(previousId) {
   sprint = available.find(version => version.id === Number(previousId)) || available.find(version => version.status === 'open') || available[0] || null;
   options($('sprint'), available.length ? available.map(version => [version.id, version.name + (version.status === 'closed' ? ' (closed)' : '')]) : [['', 'No open sprints']], sprint?.id || '');
 }
-async function refresh(projectChanged = false, retryDenied = false) {
+async function refresh(projectChanged = false, retryDenied = false, background = false) {
   if (!api || busy || loading || dragging || $('editor').open || (blockedProjectId === projectId && !projectChanged && !retryDenied)) return;
   if (!projectChanged && !retryDenied && (queryLoading || feed?.loadingMore || (!backlogCollapsed && board?.findBoard('backlog').querySelector('.kanban-drag').scrollTop > 0))) return;
   lanePlanningController?.abort();
   cancelQuery();
   if (projectChanged || retryDenied) notify('');
   loading = true; lock();
-  const finishLoading = beginLoading();
+  // Polling and tab return update the existing view without a modal flash or
+  // moving focus away from the scrolled Columns. Explicit operations still block.
+  const finishLoading = background && board ? () => {} : beginLoading();
   const stamp = epoch;
   let refreshed = false;
   try {
@@ -645,6 +667,7 @@ async function openEditor(id) {
 async function connect(key, remember) {
   if (loading) return;
   loading = true; const stamp = ++epoch;
+  updateLoadingIndicator();
   const finishLoading = beginLoading();
   $('login-form').querySelector('button').disabled = true;
   api = new RedmineClient(key); feed = new PlanningFeed(api);
@@ -667,6 +690,7 @@ async function connect(key, remember) {
     document.body.classList.add('board-active');
     $('refresh').hidden = false; $('refresh-now').hidden = false; $('statusbar').hidden = false;
     renderIdentity(userData.user);
+    scrollIdentity = JSON.stringify([config.redminePublicUrl, userData.user.id]);
     selectionPreferences = createSelectionPreferences(config.redminePublicUrl, userData.user.id);
     sprintFilterPreferences = createSprintFilterPreferences(config.redminePublicUrl, userData.user.id);
     const savedProjectId = selectionPreferences.project();
@@ -695,6 +719,7 @@ $('close-help').addEventListener('click', () => $('help-dialog').close());
 $('forget-saved').addEventListener('click', forget);
 $('login-form').addEventListener('submit', event => { event.preventDefault(); void connect($('api-key').value.trim(), $('remember').checked); });
 $('project').addEventListener('change', () => {
+  boardScroll.reset();
   cancelQuery(); feed = newFeed();
   projectId = $('project').value; issues = []; sprint = null; versions = []; memberships = [];
   sprintFilters = sprintFilterPreferences?.read(projectId) || emptySprintFilters();
@@ -703,6 +728,7 @@ $('project').addEventListener('change', () => {
   clearBoardCards(); void refresh(true);
 });
 $('sprint').addEventListener('change', () => {
+  boardScroll.reset();
   cancelQuery(); feed = newFeed();
   sprint = versions.find(version => version.id === Number($('sprint').value));
   if (sprint) {
@@ -776,7 +802,10 @@ $('edit-form').addEventListener('submit', event => {
     void mutate(editing.id, patch);
   } catch (error) { notify(error.message, true); }
 });
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') void refresh(); });
+document.addEventListener('visibilitychange', () => {
+  boardScroll.save();
+  if (document.visibilityState === 'visible') void refresh(false, false, true);
+});
 try {
   backlogCollapsed = localStorage.getItem(collapsedBacklogStorageKey) === '1';
   showClosedParents = localStorage.getItem(closedParentsStorageKey) === '1';

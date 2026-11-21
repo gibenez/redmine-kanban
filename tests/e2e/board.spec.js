@@ -454,6 +454,122 @@ test('Clear filters resets all four Backlog controls without changing Show close
   await expect(page.locator('[data-eid="2"]')).toBeVisible();
 });
 
+async function setupScrollableSprint(page, grouped = false) {
+  await page.setViewportSize({ width: 800, height: 650 });
+  const fixture = await setup(page);
+  await page.route('**/config.json', route => route.fulfill({ json: {
+    redminePublicUrl: 'https://redmine.example.test', openedStatusId: 2, sprintFieldId: 7,
+    backlogStatusId: 1, columnStatusIds: [1, 2, 3, 5], swimlaneTrackers: [], refreshSeconds: 60,
+  } }));
+  if (grouped) await page.route('**/config.json', route => route.fulfill({ json: {
+    redminePublicUrl: 'https://redmine.example.test', openedStatusId: 2, sprintFieldId: 7,
+    backlogStatusId: 1, columnStatusIds: [1, 2, 3, 5], swimlaneTrackers: ['Feature'], refreshSeconds: 60,
+  } }));
+  for (let id = 100; id < 130; id++) fixture.issues.push({ ...fixture.issues[1], id, subject: `Already underway ${id}` });
+  await login(page, true);
+  await expect(page.locator('#loading-overlay')).not.toBeVisible();
+  await page.evaluate(() => {
+    document.getElementById('board').scrollLeft = 300;
+    document.querySelector('[data-id="status-2"] .kanban-drag').scrollTop = 350;
+  });
+  await expect.poll(() => sprintPosition(page)).toEqual({ x: 300, y: 350 });
+  return fixture;
+}
+const visibleSprintAnchor = page => page.locator('[data-id="status-2"] .kanban-drag').evaluate(list => {
+  const top = list.getBoundingClientRect().top;
+  const card = [...list.querySelectorAll('.kanban-item')].find(card => card.getBoundingClientRect().bottom > top);
+  return { id: card.dataset.eid, offset: card.getBoundingClientRect().top - top };
+});
+const sprintPosition = page => page.evaluate(() => ({
+  x: document.getElementById('board').scrollLeft,
+  y: document.querySelector('[data-id="status-2"] .kanban-drag').scrollTop,
+}));
+
+test('current Sprint scroll survives a page reload', async ({ page }) => {
+  await setupScrollableSprint(page);
+  const anchor = await visibleSprintAnchor(page);
+  await page.reload();
+  await expect(page.locator('#updated')).toContainText('Updated');
+  await expect(page.locator('#loading-overlay')).not.toBeVisible();
+  // Column widths can change on reload (Backlog filters start closed), so the
+  // Card's position, rather than an exact pixel offset, is the invariant.
+  await expect.poll(() => visibleSprintAnchor(page)).toEqual(anchor);
+  expect((await sprintPosition(page)).x).toBe(300);
+});
+
+test('returning to the tab refreshes quietly and keeps the visible Card anchored', async ({ page }) => {
+  const fixture = await setupScrollableSprint(page);
+  const anchor = await visibleSprintAnchor(page);
+  // Remove content above the viewport: a pixel-only restore would show a different Card.
+  fixture.issues.splice(fixture.issues.findIndex(issue => issue.id === 2), 1);
+  await page.evaluate(() => {
+    window.overlayOpened = false;
+    const dialog = document.getElementById('loading-overlay');
+    new MutationObserver(() => { if (dialog.open) window.overlayOpened = true; }).observe(dialog, { attributes: true, attributeFilter: ['open'] });
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+  await expect(page.locator('[data-eid="2"]')).toHaveCount(0);
+  await expect(page.locator('#workspace')).toHaveAttribute('aria-busy', 'false');
+  expect(await page.evaluate(() => window.overlayOpened)).toBe(false);
+  await expect.poll(() => page.locator(`[data-eid="${anchor.id}"]`).evaluate(card =>
+    card.getBoundingClientRect().top - card.closest('.kanban-drag').getBoundingClientRect().top)).toBeCloseTo(anchor.offset, 0);
+  expect((await sprintPosition(page)).x).toBe(300);
+});
+
+test('Sprint filters and scope changes discard the current scroll position', async ({ page }) => {
+  await setupScrollableSprint(page);
+  await page.getByLabel('Search Sprint Cards').fill('Already');
+  await expect.poll(() => sprintPosition(page)).toEqual({ x: 0, y: 0 });
+  await page.evaluate(() => {
+    document.getElementById('board').scrollLeft = 300;
+    document.querySelector('[data-id="status-2"] .kanban-drag').scrollTop = 350;
+  });
+  await page.getByLabel('Include closed sprints').check();
+  await page.locator('#sprint').selectOption('11');
+  await expect(page.locator('#workspace')).toHaveAttribute('aria-busy', 'false');
+  await page.locator('#sprint').selectOption('10');
+  await expect(page.locator('[data-id="status-2"] .kanban-item')).toHaveCount(31);
+  await expect.poll(() => sprintPosition(page)).toEqual({ x: 0, y: 0 });
+});
+
+test('current-board scroll is discarded on project changes and sign-out', async ({ page }) => {
+  await setupScrollableSprint(page);
+  await page.locator('#project').selectOption('2');
+  await expect(page.locator('#updated')).toContainText('Updated');
+  await expect(page.locator('#workspace')).toHaveAttribute('aria-busy', 'false');
+  await page.locator('#project').selectOption('1');
+  await expect(page.locator('[data-id="status-2"] .kanban-item')).toHaveCount(31);
+  await expect.poll(() => sprintPosition(page)).toEqual({ x: 0, y: 0 });
+  await page.evaluate(() => { document.getElementById('board').scrollLeft = 300; });
+  await signOut(page);
+  expect(await page.evaluate(() => sessionStorage.getItem('redmine-sprint-board.scroll'))).toBeNull();
+});
+
+test('a missing anchor falls back to a bounded offset after refresh', async ({ page }) => {
+  const fixture = await setupScrollableSprint(page);
+  const anchor = await visibleSprintAnchor(page);
+  fixture.issues.splice(fixture.issues.findIndex(issue => String(issue.id) === anchor.id), 1);
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+  await expect(page.locator(`[data-eid="${anchor.id}"]`)).toHaveCount(0);
+  await expect.poll(() => sprintPosition(page)).toEqual({ x: 300, y: 350 });
+  fixture.issues.splice(4);
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+  await expect(page.locator('[data-id="status-2"] .kanban-item')).toHaveCount(1);
+  await expect.poll(() => sprintPosition(page)).toEqual({ x: 300, y: 0 });
+});
+
+test('Swimlane Columns restore a synchronized position after reload', async ({ page }) => {
+  await setupScrollableSprint(page, true);
+  const anchor = await visibleSprintAnchor(page);
+  await page.reload();
+  await expect(page.locator('#updated')).toContainText('Updated');
+  await expect(page.locator('#loading-overlay')).not.toBeVisible();
+  await expect.poll(() => visibleSprintAnchor(page)).toEqual(anchor);
+  const offsets = await page.locator('.has-swimlanes').evaluateAll(lists => lists.map(list => list.scrollTop));
+  expect(offsets.length).toBe(4);
+  expect(offsets.every(y => y === offsets[0] && y > 0)).toBe(true);
+});
+
 test('unchanged filters preserve column scroll, horizontal scroll, focus and card nodes', async ({ page }) => {
   await page.setViewportSize({ width: 800, height: 650 });
   const fixture = await setup(page);
@@ -787,6 +903,69 @@ test('autorefresh is opt-in, waits an interval, survives scope switches and rese
   await expect(page.locator('#refresh')).toHaveAttribute('aria-pressed', 'false');
 });
 
+for (const reducedMotion of ['no-preference', 'reduce']) {
+  test(`Redmine icon indicates tab-return loading and clears on success and failure (${reducedMotion})`, async ({ page }) => {
+    await page.emulateMedia({ reducedMotion });
+    await setup(page);
+    await login(page);
+    await expect(page.locator('[data-id="backlog"] .kanban-drag')).toHaveAttribute('aria-busy', 'false');
+    const mark = page.locator('.brand-mark'), icon = mark.locator('img');
+    await expect(mark).toHaveAttribute('aria-busy', 'false');
+    for (const failed of [false, true]) {
+      let release;
+      const gate = new Promise(resolve => { release = resolve; });
+      await page.route('**/redmine/projects/1/versions.json*', async route => {
+        await gate;
+        if (failed) await route.fulfill({ status: 500, json: {} });
+        else await route.fallback();
+      });
+      const requested = page.waitForRequest('**/redmine/projects/1/versions.json*');
+      await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+      await requested;
+      try {
+        await expect(mark).toHaveAttribute('aria-busy', 'true');
+        await expect(icon).toHaveCSS('animation-name', 'brand-pulse');
+        await expect(mark).toHaveCSS('outline-style', 'none');
+        await expect(icon).toHaveCSS('transform', 'none');
+        // Verify the actual fade, not merely the animation's presence. This
+        // opacity-only loading cue also runs with reduced motion enabled.
+        const opacities = await icon.evaluate(node => {
+          const animation = node.getAnimations()[0];
+          animation.pause();
+          const samples = [0, 500, 1000].map(time => {
+            animation.currentTime = time;
+            return Number(getComputedStyle(node).opacity);
+          });
+          animation.play();
+          return samples;
+        });
+        expect(opacities).toEqual([1, 0.2, 1]);
+        await expect(page.locator('#loading-overlay')).not.toBeVisible();
+      } finally { release(); }
+      await expect(mark).toHaveAttribute('aria-busy', 'false');
+      await expect(icon).toHaveCSS('animation-name', 'none');
+      await page.unroute('**/redmine/projects/1/versions.json*');
+    }
+  });
+}
+
+test('Redmine icon stays active through Backlog search and stops on completion', async ({ page }) => {
+  await setup(page);
+  await login(page);
+  const mark = page.locator('.brand-mark');
+  await expect(mark).toHaveAttribute('aria-busy', 'false');
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  await page.route('**/redmine/issues.json?**', async route => { await gate; await route.fallback(); });
+  await page.getByLabel('Search backlog').fill('Build');
+  try {
+    await expect(mark).toHaveAttribute('aria-busy', 'true');
+    await expect(mark.locator('img')).toHaveCSS('animation-name', 'brand-pulse');
+    await expect(page.locator('#loading-overlay')).not.toBeVisible();
+  } finally { release(); }
+  await expect(mark).toHaveAttribute('aria-busy', 'false');
+});
+
 test('loading overlay blocks login and keyboard interaction, cannot be escaped, and clears on failure', async ({ page }) => {
   await setup(page);
   let release;
@@ -800,6 +979,7 @@ test('loading overlay blocks login and keyboard interaction, cannot be escaped, 
   const overlay = page.locator('#loading-overlay');
   try {
     await expect(overlay).toBeVisible();
+    await expect(page.locator('.brand-mark')).toHaveAttribute('aria-busy', 'true');
     await page.keyboard.press('Escape');
     await expect(overlay).toBeVisible();
     await page.keyboard.press('Tab');
@@ -809,6 +989,7 @@ test('loading overlay blocks login and keyboard interaction, cannot be escaped, 
   } finally { release(); }
   await expect(overlay).not.toBeVisible();
   await expect(page.locator('#notice')).toContainText('Invalid or revoked API key');
+  await expect(page.locator('.brand-mark')).toHaveAttribute('aria-busy', 'false');
   await expect(page.getByRole('button', { name: 'Connect to Redmine' })).toBeEnabled();
 });
 
