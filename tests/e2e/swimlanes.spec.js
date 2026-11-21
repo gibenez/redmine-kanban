@@ -5,7 +5,7 @@ async function setup(page) {
   const versions = [{ id: 100, name: 'Product 100', status: 'open', project: { id: 1 }, sharing: 'descendants' }, { id: 99, name: 'Product 99', status: 'open', project: { id: 1 }, sharing: 'descendants' }];
   const make = (id, parent, tracker = 'Task', values = []) => ({ id, subject: `Issue ${id}`, tracker: { id: tracker === 'Feature' ? 1 : 2, name: tracker }, project: { id: 1 }, status: statuses[0], priority: { id: 2, name: 'Normal' }, allowed_statuses: statuses, fixed_version: { id: 300 }, custom_fields: [{ id: 7, multiple: true, value: values }], ...(parent ? { parent: { id: parent } } : {}) });
   const rows = [make(1, null, 'Feature'), make(2, 1, 'Task', ['100']), make(3, 1), make(4, null, 'Feature', ['100']), make(5, null, 'Feature', ['99']), make(6, null, 'Task', ['99', '100'])];
-  const writes = [];
+  const writes = [], relations = new Map(), relationRequests = [];
   await page.route('**/config.json', route => route.fulfill({ json: { openedStatusId: 2, sprintFieldId: 7, redminePublicUrl: 'https://redmine.example.test', backlogStatusId: 1, columnStatusIds: [1, 2, 5], swimlaneTrackers: ['Feature'] } }));
   await page.route('**/redmine/**', async route => {
     const request = route.request(), url = new URL(request.url()), path = url.pathname.replace('/redmine', ''), params = url.searchParams;
@@ -26,6 +26,10 @@ async function setup(page) {
       const offset = Number(params.get('offset') || 0), limit = Number(params.get('limit') || 100);
       return send({ issues: selected.slice(offset, offset + limit), total_count: selected.length, offset });
     }
+    if (/^\/issues\/\d+\/relations\.json$/.test(path)) {
+      const id = Number(path.match(/\d+/)[0]); relationRequests.push(id);
+      return send({ relations: relations.get(id) || [] });
+    }
     if (/^\/issues\/\d+\.json$/.test(path)) {
       const id = Number(path.match(/\d+/)[0]), issue = rows.find(row => row.id === id);
        if (request.method() === 'GET') return send({ issue: { ...issue, children: rows.filter(row => row.parent?.id === id).map(row => ({ id: row.id })) } });
@@ -39,7 +43,7 @@ async function setup(page) {
   await page.goto('/'); await page.getByLabel('Personal API key').fill('test-key');
   await page.getByRole('button', { name: 'Connect to Redmine' }).click();
   await expect(page.locator('#updated')).toContainText('Updated');
-  return { rows, writes };
+  return { rows, writes, relations, relationRequests };
 }
 const heading = (page, id) => page.locator(`.swimlane-headers > [data-lane="${id}"]`);
 const backlog = (page, id) => page.locator(`[data-id="backlog"] [data-eid="${id}"]`);
@@ -112,7 +116,7 @@ test('matching outside-status children keep their heading, and updates reapply S
   await refresh(page);
   await page.getByLabel('Search Sprint Cards').fill('#2');
   await expect(heading(page, 1)).toBeVisible();
-  await heading(page, 1).locator('summary').click();
+  await heading(page, 1).getByText('1 issues outside displayed statuses', { exact: true }).click();
   await expect(heading(page, 1).getByRole('link', { name: '#2 — Issue 2' })).toBeVisible();
   await expect(page.locator('[data-sprint-count]')).toHaveText('Showing 1 of 2 Cards');
   fixture.rows[1].custom_fields[0].value = [];
@@ -406,4 +410,44 @@ test('filters retain planned empty headings and disabled add action', async ({ p
   await expect(heading(page, 4)).toBeVisible();
   await expect(heading(page, 4).getByRole('button', { name: 'Add missing subtasks for #4' })).toBeDisabled();
   await expect(page.locator('[data-remove-lane]')).toHaveCount(0);
+});
+
+
+test('related disclosures load lazily, stay open across updates, and refresh independently of membership', async ({ page }) => {
+  const fixture = await setup(page);
+  await expect(heading(page, 4).locator('[data-related]')).toHaveCount(0);
+  fixture.relations.set(4, [
+    { issue_id: 4, issue_to_id: 5, relation_type: 'relates' },
+    { issue_id: 6, issue_to_id: 4, relation_type: 'blocks' },
+  ]);
+  fixture.relationRequests.length = 0;
+  await refresh(page);
+  const requests = () => fixture.relationRequests.filter(id => id === 4).length;
+  const lane = heading(page, 4), details = lane.locator('[data-related="4"]');
+  await expect(details).not.toHaveAttribute('open');
+  expect(requests()).toBe(1);
+  await expect(heading(page, 'ungrouped').locator('[data-related]')).toHaveCount(0);
+  await details.locator('summary').click();
+  await expect(details.locator('summary')).toHaveText('2 related issues');
+  await expect(details.getByRole('link', { name: '#5 — Issue 5' })).toBeVisible();
+  await expect(details.getByRole('link', { name: '#6 — Issue 6' })).toBeVisible();
+  await expect(details.locator('li').first()).toContainText('blocked by');
+  await expect(details.getByRole('link').first()).toHaveAttribute('target', '_blank');
+  await expect(details.getByRole('link').first()).toHaveAttribute('href', 'https://redmine.example.test/issues/6');
+  await details.locator('summary').click();
+  await details.locator('summary').click();
+  expect(requests()).toBe(1);
+  await refresh(page);
+  await expect(details).toHaveAttribute('open');
+  await expect.poll(requests).toBe(2);
+  await expect(details.locator('summary')).toHaveText('2 related issues');
+  await page.locator('#sprint').selectOption('99');
+  await expect(heading(page, 5)).toBeVisible();
+  await page.locator('#sprint').selectOption('100');
+  await expect(heading(page, 4)).toBeVisible();
+  await expect(details).not.toHaveAttribute('open');
+  expect(requests()).toBe(3);
+  fixture.relations.set(4, []);
+  await refresh(page);
+  await expect(details).toHaveCount(0);
 });

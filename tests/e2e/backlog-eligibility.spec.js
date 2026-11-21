@@ -29,6 +29,7 @@ test('Backlog only shows Swimlane-capable issues with no Sprint, including after
       const offset = Number(url.searchParams.get('offset') || 0), limit = Number(url.searchParams.get('limit'));
       return send({ issues: rows.slice(offset, offset + limit), total_count: rows.length, offset });
     }
+    if (path.endsWith('/relations.json')) return send({ relations: [] });
     if (/^\/issues\/\d+\.json$/.test(path)) return send({ issue: issues.find(issue => issue.id === Number(path.match(/\d+/)[0])) });
     throw new Error(`Unexpected API path ${path}`);
   });

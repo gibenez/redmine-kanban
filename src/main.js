@@ -12,6 +12,7 @@ import { createLoadingOverlay } from './loading-overlay.js';
 import { settledResults } from './settled-results.js';
 import { createSelectionPreferences } from './selection-preferences.js';
 import { createBoardScroll } from './board-scroll.js';
+import { createRelatedIssues } from './related-issues.js';
 
 const $ = id => document.getElementById(id);
 const beginLoading = createLoadingOverlay($('loading-overlay'));
@@ -61,6 +62,7 @@ let laneAncestors = [], laneMembers;
 let lanePlanning = new Map();
 let lanePlanningController;
 let laneResizeObserver;
+const relatedIssues = createRelatedIssues({ getApi: () => api, linkToIssue: id => linkToIssue(id), onChange: () => { if (board && api) renderBoard(); } });
 const newFeed = () => new PlanningFeed(api);
 const closedStatusIds = () => statuses.filter(status => status.is_closed).map(status => status.id);
 function selectedMember(issue) { return Boolean(sprint) && sprintValues(issue, config.sprintFieldId).includes(sprint.id); }
@@ -225,6 +227,7 @@ async function syncFeed(snapshot) {
   return true;
 }
 function forget() {
+  relatedIssues.reset();
   boardScroll.reset();
   lanePlanningController?.abort();
   selectionPreferences = null;
@@ -318,11 +321,12 @@ function laneHeading(lane) {
   const hint = !state || state.pending ? 'Checking missing subtasks…' : state.error ? `Missing subtasks unknown: ${state.error} Use Refresh to retry.` : `Add missing subtasks to ${sprint?.name || 'this Sprint'} (${state.count || 0} missing). Includes closed subtasks and those assigned elsewhere; preserves statuses and other Sprints. Cards group under their nearest planned Swimlane.`;
   const icon = `<svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3 3v10h3M3 6h3M9 6h7M9 13h2M15 11v6M12 14h6"/>${state?.error ? '<circle cx="16" cy="3" r="2"/>' : ''}</svg>`;
   const action = lane.parent ? `<span class="swimlane-actions" title="${e(hint)}"><button type="button" class="add-subtasks${state?.count ? ' requires-attention' : ''}${state?.error ? ' planning-unknown' : ''}" data-add-descendants="${id}" aria-label="Add missing subtasks for #${id}" title="${e(hint)}"${state?.error ? ' aria-invalid="true"' : ''}>${icon}</button></span>` : '';
-  return `<div class="swimlane-title-row"><strong>${title}</strong>${metadata}${action}</div>${unmappedNotice(lane.visible.filter(issue => !config.columnStatusIds.includes(issue.status.id)))}`;
+  return `<div class="swimlane-title-row"><strong>${title}</strong>${metadata}${action}</div>${unmappedNotice(lane.visible.filter(issue => !config.columnStatusIds.includes(issue.status.id)))}${lane.parent ? relatedIssues.markup(id) : ''}`;
 }
 
 function renderBoard() {
   if (dragging) return;
+  relatedIssues.setScope(JSON.stringify([projectId, sprint?.id]));
   const scrollPosition = boardScroll.beforeRender(JSON.stringify([scrollIdentity, projectId, sprint?.id, sprintFilters]));
   const visible = issues;
   const total = effort(feed?.snapshot.sprintAll || []);
@@ -371,6 +375,7 @@ function renderBoard() {
   // Headers and controls are never draggable; Cards remain jKanban/Dragula items.
   board.__getCanMove = handle => !handle.closest('a, button, input, select, summary') && Boolean(handle.closest('.kanban-item'));
   reconcileBoard(board, boards);
+  relatedIssues.loadOpen((lanes || []).filter(lane => lane.parent).map(lane => Number(lane.parent.id)));
   if (!laneResizeObserver) {
     laneResizeObserver = new ResizeObserver(() => { if (board && !dragging) alignSwimlanes(board.container); });
     laneResizeObserver.observe($('board'));
@@ -739,7 +744,7 @@ $('sprint').addEventListener('change', () => {
 });
 $('closed').addEventListener('change', () => { cancelQuery(); issues = []; void refresh(false, true); });
 $('refresh').addEventListener('click', () => setAutorefresh(!autorefresh));
-$('refresh-now').addEventListener('click', () => { notify(''); void refresh(false, true); });
+$('refresh-now').addEventListener('click', () => { relatedIssues.reset(undefined, true); notify(''); void refresh(false, true); });
 for (const [id, field, eventName] of [['query', 'query', 'input'], ['tracker', 'tracker', 'change'], ['assignee', 'assignee', 'change']]) {
   $(id).addEventListener(eventName, () => { filters[field] = $(id).value; scheduleSearch(field === 'query' ? 300 : 0); });
 }
@@ -757,7 +762,10 @@ $('backlog-closed').addEventListener('change', () => {
   try { localStorage.setItem(closedParentsStorageKey, showClosedParents ? '1' : '0'); } catch { /* Optional preference. */ }
   scheduleSearch(0);
 });
-$('board').addEventListener('toggle', () => { if (board) alignSwimlanes(board.container); }, { capture: true });
+$('board').addEventListener('toggle', event => {
+  if (event.target.matches?.('[data-related]') && event.target.isConnected) relatedIssues.toggle(Number(event.target.dataset.related), event.target.open);
+  if (board) alignSwimlanes(board.container);
+}, { capture: true });
 // Shared headers live outside the status scrollports; wheel over their links and
 // controls must still scroll the synchronized Sprint rows, not strand the pointer.
 $('board').addEventListener('wheel', event => {
@@ -787,6 +795,8 @@ $('board').addEventListener('click', event => {
   if (event.target.closest('.card-head a[href], .swimlane-heading a[href]')) event.stopPropagation();
 }, { capture: true });
 $('board').addEventListener('click', event => {
+  const retryRelated = event.target.closest('[data-retry-related]');
+  if (retryRelated) { relatedIssues.retry(Number(retryRelated.dataset.retryRelated)); return; }
   if (event.target.closest('[data-backlog-collapse]')) { toggleBacklog(); return; }
   const add = event.target.closest('[data-add-descendants]');
   if (add && !add.disabled) { void addMissingSubtasks(Number(add.dataset.addDescendants)); return; }

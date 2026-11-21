@@ -60,7 +60,11 @@ export class RedmineClient {
     }
     return results;
   }
-  issue(id) { return this.request(`/issues/${Number(id)}.json`, { params: { include: 'allowed_statuses' } }).then(data => data.issue); }
+  issue(id, { signal } = {}) { return this.request(`/issues/${Number(id)}.json`, { params: { include: 'allowed_statuses' }, signal }).then(data => data.issue); }
+  relations(id, { signal } = {}) { return this.request(`/issues/${Number(id)}/relations.json`, { signal }).then(data => {
+    if (!Array.isArray(data.relations)) throw new RedmineError('Invalid Redmine response: missing relations.');
+    return data.relations;
+  }); }
   hierarchyIssue(id, { signal } = {}) { return this.request(`/issues/${Number(id)}.json`, { params: { include: 'children,allowed_statuses' }, signal }).then(data => data.issue); }
   update(id, patch) { return this.request(`/issues/${Number(id)}.json`, { method: 'PUT', body: { issue: patch } }); }
 }

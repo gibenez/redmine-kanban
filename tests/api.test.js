@@ -36,6 +36,15 @@ describe('Redmine REST boundary', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json({ issue_statuses: [{ id: 1 }] })));
     expect(await new RedmineClient('key').list('/issue_statuses.json', 'issue_statuses')).toEqual([{ id: 1 }]);
   });
+  it('loads direct issue relations and rejects malformed relation responses', async () => {
+    const relations = [{ id: 1, issue_id: 8, issue_to_id: 9, relation_type: 'blocks' }];
+    const fetch = vi.fn().mockResolvedValueOnce(json({ relations })).mockResolvedValueOnce(json({}));
+    vi.stubGlobal('fetch', fetch);
+    const client = new RedmineClient('key');
+    expect(await client.relations(8)).toEqual(relations);
+    expect(fetch.mock.calls[0][0].pathname).toBe('/redmine/issues/8/relations.json');
+    await expect(client.relations(8)).rejects.toThrow('missing relations');
+  });
   it('supports empty successful PUT responses and JSON issue payloads', async () => {
     const fetch = vi.fn().mockResolvedValue(new Response(null, { status: 204 })); vi.stubGlobal('fetch', fetch);
     await new RedmineClient('key').update(8, { fixed_version_id: null });

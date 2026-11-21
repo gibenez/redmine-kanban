@@ -46,6 +46,7 @@ async function setup(page, { deny = false, ignored = false, denyVersions = false
       const offset = Number(url.searchParams.get('offset') || 0), limit = Number(url.searchParams.get('limit') || 25);
       return send({ issues: selected.slice(offset, offset + limit), total_count: selected.length, offset });
     }
+    if (path.endsWith('/relations.json')) return send({ relations: [] });
     if (path.startsWith('/issues/')) {
       const issue = issues.find(item => item.id === Number(path.match(/\d+/)[0]));
       if (request.method() === 'GET') return send({ issue });
