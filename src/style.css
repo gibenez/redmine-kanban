@@ -279,12 +279,14 @@ input::placeholder { color: var(--secondary); opacity: 1; }
 .kanban-title-board .unmapped-notice { position: relative; }
 .kanban-title-board .unmapped-notice[open] ul { position: absolute; top: 100%; right: 0; z-index: 2; width: 240px; padding: 12px 12px 12px 24px; background: var(--content); border: 1px solid var(--line); }
 
-/* Compact card: flat, neutral 1px hairline, no shadow. */
+/* Compact card: flat, neutral 1px hairline, no shadow. Project tint mixes
+   against the theme's Card surface; missing colours keep that surface intact. */
 .kanban-item {
   position: relative; background: var(--content); border: 1px solid var(--line);
   border-radius: var(--radius);
   padding: 8px; margin-bottom: 0; cursor: grab; overflow-wrap: anywhere; transition: none;
 }
+.kanban-item.project-colored { background: color-mix(in srgb, var(--project-color) 30%, var(--content)); }
 .kanban-item:hover { border-color: var(--secondary); cursor: grab; }
 .kanban-item:active:not(.not-draggable) { cursor: grabbing; }
 .lane-priority-bar.prio-none { --stripe: var(--priority-none); }

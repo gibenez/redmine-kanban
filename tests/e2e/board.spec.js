@@ -81,6 +81,35 @@ async function signOut(page) {
   await page.getByRole('button', { name: 'Sign out', exact: true }).click();
 }
 
+for (const theme of ['light', 'dark']) {
+  test(`project Colore tints only Cards in ${theme} mode`, async ({ page }) => {
+    await page.emulateMedia({ colorScheme: theme });
+    await setup(page);
+    await page.route('**/redmine/projects.json?**', route => route.fulfill({ json: { projects: [
+      { id: 1, name: 'Team', trackers: [{ id: 1, name: 'Feature' }, { id: 2, name: 'Bug' }], custom_fields: [{ id: 9, name: 'Colore', value: '#ffccff' }] },
+    ] } }));
+    await login(page);
+    for (const id of [1, 2]) {
+      const card = page.locator(`[data-eid="${id}"]`);
+      const colors = await card.evaluate(node => {
+        const style = getComputedStyle(node);
+        const sample = document.createElement('div');
+        sample.style.backgroundColor = `color-mix(in srgb, #ffccff 30%, ${style.getPropertyValue('--content')})`;
+        document.body.append(sample);
+        const expected = getComputedStyle(sample).backgroundColor;
+        sample.remove();
+        return { actual: style.backgroundColor, expected, project: style.getPropertyValue('--project-color'), neutral: style.getPropertyValue('--content').trim() };
+      });
+      expect(colors.project).toBe('#ffccff');
+      expect(colors.actual).toBe(colors.expected);
+      await expect(card).not.toHaveCSS('background-color', colors.neutral);
+    }
+    for (const heading of await page.locator('.swimlane-heading').all()) {
+      expect(await heading.evaluate(node => getComputedStyle(node).getPropertyValue('--project-color'))).toBe('');
+    }
+  });
+}
+
 test('Sprint filters restore per project and remain independent of Backlog controls', async ({ page }) => {
   const fixture = await setup(page);
   fixture.versions.push({ id: 20, name: 'Other Sprint', status: 'open', project: { id: 2 } });

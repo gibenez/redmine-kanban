@@ -81,8 +81,10 @@ export function reconcileBoard(board, definitions) {
       }
       if (node !== nextCard) target.insertBefore(node, nextCard);
       cursors.set(target, node.nextElementSibling);
-      const classes = ['kanban-item', ...item.class].join(' ');
+      const classes = ['kanban-item', ...item.class, ...(item.projectColor ? ['project-colored'] : [])].join(' ');
       if (node.className !== classes) node.className = classes;
+      if (item.projectColor) node.style.setProperty('--project-color', item.projectColor);
+      else node.style.removeProperty('--project-color');
       patchMarkup(node, item.title, renderedCards);
     }
   }

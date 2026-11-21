@@ -29,6 +29,24 @@ const definition = (items = [], lanes) => ({ id: 'status-1', title: 'New', item:
 const lane = id => ({ id, title: id });
 beforeEach(() => document.body.replaceChildren());
 
+describe('Card project colours', () => {
+  it('applies, updates and clears tint on retained Cards without tinting headings', () => {
+    const board = boardFixture();
+    const render = projectColor => reconcileBoard(board, [definition([{ ...item(7, '1'), projectColor }], [lane('1')])]);
+    render('#ffccff');
+    const card = board.container.querySelector('[data-eid="7"]');
+    expect(card.style.getPropertyValue('--project-color')).toBe('#ffccff');
+    render('#112233');
+    expect(board.container.querySelector('[data-eid="7"]')).toBe(card);
+    expect(card.style.getPropertyValue('--project-color')).toBe('#112233');
+    for (const heading of document.querySelectorAll('.swimlane-heading')) {
+      expect(heading.style.getPropertyValue('--project-color')).toBe('');
+    }
+    render('');
+    expect(card.style.getPropertyValue('--project-color')).toBe('');
+  });
+});
+
 describe('Swimlane reconciliation', () => {
   it('removes empty Ungrouped headings and sections but keeps empty Sprint Columns droppable', () => {
     const board = boardFixture();

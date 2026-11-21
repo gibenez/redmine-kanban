@@ -13,6 +13,7 @@ import { settledResults } from './settled-results.js';
 import { createSelectionPreferences } from './selection-preferences.js';
 import { createBoardScroll } from './board-scroll.js';
 import { createRelatedIssues } from './related-issues.js';
+import { projectColor } from './project-colors.js';
 
 const $ = id => document.getElementById(id);
 const beginLoading = createLoadingOverlay($('loading-overlay'));
@@ -289,6 +290,7 @@ function card(issue) {
   const initials = issue.assigned_to ? assignee.trim().split(/\s+/u).map(part => Array.from(part)[0]).filter(Boolean).slice(0, 2).join('') : '–';
   return {
     id: String(id), class: open ? [] : ['not-draggable'],
+    projectColor: projectColor(projects, issue.project?.id),
     // The summary is clamped to three lines in CSS; title and aria-label keep the full text
     // reachable for pointer and assistive technology alike.
     title: `<div class="card-head"><a href="${e(linkToIssue(issue.id))}" target="_blank" rel="noopener noreferrer">#${id}</a><h3 title="${subject}" aria-label="${subject}">${subject}</h3></div><div class="card-footer"><span class="card-assignee" title="Assignee: ${e(assignee)}"><span class="avatar${issue.assigned_to ? '' : ' unassigned'}" aria-hidden="true">${e(initials)}</span><span>${e(assignee)}</span></span><span class="card-tracker" title="Tracker: ${e(issue.tracker.name)}">${e(issue.tracker.name)}</span></div><button type="button" class="plan" data-edit="${id}" aria-label="${action}" title="${action}"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m10.5 2.5 3 3M3 10l7.5-7.5a2.1 2.1 0 0 1 3 3L6 13l-4 1 1-4Z"/></svg></button>`,
