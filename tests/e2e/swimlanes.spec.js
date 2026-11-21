@@ -48,6 +48,33 @@ async function setup(page) {
 const heading = (page, id) => page.locator(`.swimlane-headers > [data-lane="${id}"]`);
 const backlog = (page, id) => page.locator(`[data-id="backlog"] [data-eid="${id}"]`);
 const laneCard = (page, lane, id) => page.locator(`[data-id="status-1"] [data-lane="${lane}"] [data-eid="${id}"]`);
+for (const activation of ['click', 'keyboard']) {
+  test(`Swimlane links only its issue ID without underlining via ${activation}`, async ({ page }) => {
+    const fixture = await setup(page);
+    const title = heading(page, 4).locator('.swimlane-title-row strong');
+    const link = title.getByRole('link', { name: '#4', exact: true });
+    await expect(title).toHaveText('#4 — Issue 4');
+    await expect(title.locator('a')).toHaveCount(1);
+    await expect(link).toHaveCSS('text-decoration-line', 'none');
+    await expect(title).toHaveCSS('text-decoration-line', 'none');
+    await expect(link).toHaveAttribute('target', '_blank');
+    await expect(link).toHaveAttribute('rel', 'noopener noreferrer');
+    await page.context().route('https://redmine.example.test/issues/4', route =>
+      route.fulfill({ contentType: 'text/html', body: '<h1>Issue 4</h1>' }));
+    const boardUrl = page.url();
+    const [issuePage] = await Promise.all([
+      page.waitForEvent('popup'),
+      activation === 'click' ? link.click() : link.focus().then(() => page.keyboard.press('Enter')),
+    ]);
+    await issuePage.waitForLoadState();
+    expect(issuePage.url()).toBe('https://redmine.example.test/issues/4');
+    expect(await issuePage.evaluate(() => window.opener)).toBeNull();
+    expect(page.url()).toBe(boardUrl);
+    expect(fixture.writes).toEqual([]);
+    await issuePage.close();
+  });
+}
+
 for (const mode of ['light', 'dark']) {
   test(`Swimlane priority uses one full-height bar, including empty rows, in ${mode} mode`, async ({ page }) => {
     await page.emulateMedia({ colorScheme: mode });
