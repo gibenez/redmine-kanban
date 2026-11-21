@@ -178,7 +178,11 @@ input::placeholder { color: var(--secondary); opacity: 1; }
 .lane-tags, #editor-tags { display: flex; flex-wrap: wrap; gap: 4px; }
 #editor-tags { margin-bottom: 12px; }
 .lane-tracker { color: var(--secondary); }
-.lane-priority, .lane-tracker { flex: none; }
+.lane-tracker { flex: none; }
+.lane-priority-bar {
+  position: absolute; left: 0; top: 0; width: 3px; height: var(--swimlane-height, 100%);
+  background: var(--stripe, var(--priority-none)); pointer-events: auto;
+}
 
 /* Board: YouTrack separates columns with hairlines over a flat canvas rather than drawing
    each column as a rounded panel. jKanban writes pixel widths and margins inline; the
@@ -272,51 +276,36 @@ input::placeholder { color: var(--secondary); opacity: 1; }
 .kanban-title-board .unmapped-notice { position: relative; }
 .kanban-title-board .unmapped-notice[open] ul { position: absolute; top: 100%; right: 0; z-index: 2; width: 240px; padding: 12px 12px 12px 24px; background: var(--content); border: 1px solid var(--line); }
 
-/* Card: flat, 1px hairline, left priority stripe (~5px, measured from JetBrains' own
-   2026.2 board screenshots). No shadow. */
+/* Compact card: flat, neutral 1px hairline, no shadow. */
 .kanban-item {
   position: relative; background: var(--content); border: 1px solid var(--line);
-  border-left: 5px solid var(--stripe, var(--priority-none)); border-radius: var(--radius);
-  padding: 8px 8px 8px 7px; margin-bottom: 0; cursor: grab; overflow-wrap: anywhere; transition: none;
+  border-radius: var(--radius);
+  padding: 8px; margin-bottom: 0; cursor: grab; overflow-wrap: anywhere; transition: none;
 }
-.kanban-item:hover { border-color: var(--secondary); border-left-color: var(--stripe, var(--priority-none)); cursor: grab; }
+.kanban-item:hover { border-color: var(--secondary); cursor: grab; }
 .kanban-item:active:not(.not-draggable) { cursor: grabbing; }
-.kanban-item.prio-none, .lane-priority.prio-none { --stripe: var(--priority-none); --priority-ink: var(--text); --priority-fill: var(--tag); }
-.kanban-item.prio-low, .lane-priority.prio-low { --stripe: var(--priority-low); --priority-ink: var(--priority-low-ink); --priority-fill: var(--priority-low-fill); }
-.kanban-item.prio-normal, .lane-priority.prio-normal { --stripe: var(--priority-normal); --priority-ink: var(--priority-normal-ink); --priority-fill: var(--priority-normal-fill); }
-.kanban-item.prio-high, .lane-priority.prio-high { --stripe: var(--priority-high); --priority-ink: var(--priority-high-ink); --priority-fill: var(--priority-high-fill); }
-.kanban-item.prio-urgent, .lane-priority.prio-urgent { --stripe: var(--priority-urgent); --priority-ink: var(--priority-urgent-ink); --priority-fill: var(--priority-urgent-fill); }
-.kanban-item.prio-immediate, .lane-priority.prio-immediate { --stripe: var(--priority-immediate); --priority-ink: var(--priority-immediate-ink); --priority-fill: var(--priority-immediate-fill); }
+.lane-priority-bar.prio-none { --stripe: var(--priority-none); }
+.lane-priority-bar.prio-low { --stripe: var(--priority-low); }
+.lane-priority-bar.prio-normal { --stripe: var(--priority-normal); }
+.lane-priority-bar.prio-high { --stripe: var(--priority-high); }
+.lane-priority-bar.prio-urgent { --stripe: var(--priority-urgent); }
+.lane-priority-bar.prio-immediate { --stripe: var(--priority-immediate); }
 .kanban-item:focus-within { border-color: var(--accent); }
 .kanban-item.not-draggable, .kanban-item.not-draggable:hover { cursor: default; }
 /* ID and summary share the first line, as on a YouTrack card. */
 .card-head { display: flex; align-items: baseline; gap: 8px; font-size: 14px; line-height: 20px; }
 .card-head a { flex: none; color: var(--secondary); text-decoration: none; }
 .card-head a:hover { color: var(--link); text-decoration: underline; }
-.card-head a.resolved { text-decoration: line-through; }
 .kanban-item h3 {
   flex: 1; min-width: 0; font-size: 14px; line-height: 20px; font-weight: 400; margin: 0;
   display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; overflow: hidden;
 }
-/* A colored priority label anchors the metadata; secondary fields stay quiet. */
-.card-bottom {
-  display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; margin-top: 8px;
-  font-size: 12px; line-height: 16px; color: var(--secondary);
-}
-.card-field { display: inline-flex; align-items: center; gap: 4px; min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
-.card-field::before {
-  content: ''; width: 8px; height: 8px; border-radius: 50%; flex: none;
-  background: var(--stripe, var(--priority-none));
-}
-.card-field:not(.plain) { padding: 1px 5px; border-radius: 3px; font-weight: 500; color: var(--priority-ink); background: var(--priority-fill); }
-.card-field.plain::before { display: none; }
 .card-footer { display: flex; align-items: center; gap: 8px; margin-top: 6px; font-size: 12px; line-height: 16px; color: var(--secondary); }
-.card-assignee { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.card-assignee { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; }
+.card-tracker { flex: none; max-width: 50%; margin-left: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .card-assignee > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .avatar { display: grid; place-items: center; flex: none; width: 20px; height: 20px; border-radius: 50%; background: var(--selected-bg); color: var(--link); font-size: 9px; font-weight: 600; text-transform: uppercase; }
 .avatar.unassigned { background: var(--tag); color: var(--secondary); }
-.card-footer strong { margin-left: auto; font-weight: 500; color: var(--text); white-space: nowrap; }
-.card-footer strong.unestimated { color: var(--secondary); }
 .plan {
   position: absolute; top: 4px; right: 4px; width: 24px; height: 24px; padding: 0;
   display: flex; align-items: center; justify-content: center; border-color: transparent;

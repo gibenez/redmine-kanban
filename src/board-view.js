@@ -134,7 +134,13 @@ export function positionSwimlaneHeaders(container) {
   const sections = [...lists[0].querySelectorAll('.swimlane-section')];
   for (const heading of headers.children) {
     const section = sections.find(node => node.dataset.lane === heading.dataset.lane);
-    if (section) heading.style.top = `${section.getBoundingClientRect().top - first.top}px`;
+    if (section) {
+      const bounds = section.getBoundingClientRect();
+      heading.style.top = `${bounds.top - first.top}px`;
+      // The shared heading owns a single priority bar spanning the entire row,
+      // including the aligned Card area, without intercepting Card interactions.
+      heading.style.setProperty('--swimlane-height', `${bounds.height}px`);
+    }
   }
 }
 

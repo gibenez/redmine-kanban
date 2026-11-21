@@ -696,28 +696,28 @@ test('refresh patches changed fields without replacing cards or their controls',
   fixture.issues[1].subject = 'Updated on Redmine';
   fixture.issues[1].priority = { id: 5, name: 'Urgent' };
   fixture.issues[1].estimated_hours = 8;
+  fixture.issues[1].assigned_to = { id: 9, name: 'Updated Assignee' };
+  fixture.issues[1].tracker = { id: 1, name: 'Updated Tracker' };
   await page.getByRole('button', { name: 'Refresh now', exact: true }).click();
   await expect(page.locator('[data-eid="2"] h3')).toHaveText('Updated on Redmine');
-  await expect(page.locator('[data-eid="2"]')).toHaveClass(/prio-urgent/);
-  await expect(page.locator('[data-eid="2"] .card-footer strong')).toHaveText('8 h');
+  await expect(page.locator('[data-eid="2"] .card-assignee')).toHaveText('UAUpdated Assignee');
+  await expect(page.locator('[data-eid="2"] .card-tracker')).toHaveText('Updated Tracker');
+  await expect(page.locator('[data-eid="2"]')).not.toHaveClass(/prio-/);
+  await expect(page.locator('[data-eid="2"] .card-footer strong')).toHaveCount(0);
   expect(await page.evaluate(() => window.updatedCard === document.querySelector('[data-eid="2"]') && window.updatedTitle === window.updatedCard.querySelector('h3') && window.updatedButton === window.updatedCard.querySelector('.plan'))).toBe(true);
 });
 
 for (const name of ['High', 'Alta']) {
-  test(`priority ${name} has a visibly colored label, not just a muted stripe`, async ({ page }) => {
+  test(`priority ${name}, status and estimate are hidden on cards`, async ({ page }) => {
     const fixture = await setup(page);
     fixture.issues[0].priority = { id: 42, name };
     await login(page);
-    const priority = page.locator('[data-eid="1"] .card-field').first();
-    const colors = await priority.evaluate(node => ({
-      text: getComputedStyle(node).color, background: getComputedStyle(node).backgroundColor,
-      neutral: getComputedStyle(node.parentElement).color,
-      stripe: getComputedStyle(node.closest('.kanban-item')).borderLeftColor,
-      fallback: getComputedStyle(node.closest('.kanban-item')).getPropertyValue('--priority-none').trim(),
-    }));
-    expect(colors.text).not.toBe(colors.neutral);
-    expect(colors.background).not.toBe('rgba(0, 0, 0, 0)');
-    await expect(page.locator('[data-eid="1"]')).toHaveClass(/prio-high/);
+    const card = page.locator('[data-eid="1"]');
+    await expect(card).not.toHaveClass(/prio-/);
+    await expect(card.locator('.card-bottom, .card-field, .card-footer strong')).toHaveCount(0);
+    await expect(card.locator('[title^="Priority:"], [title^="Status:"], [title="Unestimated"], .resolved')).toHaveCount(0);
+    await expect(card.locator('.card-tracker')).toHaveText(fixture.issues[0].tracker.name);
+    await expect(card.locator('.plan')).toBeVisible();
   });
 }
 
@@ -1139,23 +1139,24 @@ for (const mode of ['light', 'dark']) {
     await page.getByRole('button', { name: 'Close editor' }).click();
   });
 
-  test(`Alta is red, Media yellow and Bassa green in ${mode} mode`, async ({ page }) => {
+  test(`cards have neutral borders regardless of priority in ${mode} mode`, async ({ page }) => {
     await page.emulateMedia({ colorScheme: mode });
     const fixture = await setup(page);
     ['Alta', 'Media', 'Bassa', 'Normale'].forEach((name, index) => { fixture.issues[index].priority = { id: index + 40, name }; });
     fixture.issues[3].status = fixture.issues[0].status; // Keep every priority sample in a configured Column.
     await login(page);
-    const colors = mode === 'light'
-      ? ['rgb(220, 71, 71)', 'rgb(224, 181, 27)', 'rgb(60, 155, 85)']
-      : ['rgb(239, 116, 116)', 'rgb(226, 195, 77)', 'rgb(106, 191, 123)'];
-    for (let index = 0; index < 3; index++) {
-      await expect(page.locator(`[data-eid="${index + 1}"]`)).toHaveCSS('border-left-color', colors[index]);
+    const borders = await page.locator('.kanban-item').evaluateAll(nodes => nodes.map(node => {
+      const css = getComputedStyle(node);
+      return { left: css.borderLeftColor, right: css.borderRightColor, width: css.borderLeftWidth };
+    }));
+    for (const border of borders) {
+      expect(border.left).toBe(border.right);
+      expect(border.width).toBe('1px');
     }
-    // Normal/Normale and Medium/Media represent the same middle tier.
-    await expect(page.locator('[data-eid="4"]')).toHaveCSS('border-left-color', colors[1]);
+    expect(new Set(borders.map(border => border.left)).size).toBe(1);
   });
 
-  test(`cards keep priority colors consistent and metadata aligned in ${mode} mode`, async ({ page }) => {
+  test(`cards keep assignee and tracker on one compact row in ${mode} mode`, async ({ page }) => {
     const fixture = await setup(page);
     const names = ['Low', 'Normal', 'High', 'Urgent', 'Immediate', 'Custom priority'];
     names.forEach((name, index) => fixture.issues.push({ ...fixture.issues[0], id: 100 + index,
@@ -1163,34 +1164,25 @@ for (const mode of ['light', 'dark']) {
       assigned_to: { id: 9, name: 'Alexandra Example With A Very Long Name' } }));
     await login(page);
     await setAppearance(page, mode);
-    const colors = [];
     for (let index = 0; index < names.length; index++) {
       const card = page.locator(`[data-eid="${100 + index}"]`);
       await expect(card).toBeVisible();
       const geometry = await card.evaluate(node => {
-        const field = node.querySelector('.card-field');
         const assignee = node.querySelector('.card-assignee').getBoundingClientRect();
-        const hours = node.querySelector('.card-footer strong').getBoundingClientRect();
+        const name = node.querySelector('.card-assignee > span:last-child');
+        const tracker = node.querySelector('.card-tracker').getBoundingClientRect();
         const bounds = node.getBoundingClientRect();
-        const luminance = color => color.match(/[\d.]+/g).slice(0, 3).map(Number).map(value => {
-          value /= 255; return value <= .04045 ? value / 12.92 : ((value + .055) / 1.055) ** 2.4;
-        }).reduce((sum, value, index) => sum + value * [.2126, .7152, .0722][index], 0);
-        const ink = luminance(getComputedStyle(field).color), fill = luminance(getComputedStyle(field).backgroundColor);
-        return { contrast: (Math.max(ink, fill) + .05) / (Math.min(ink, fill) + .05), stripe: getComputedStyle(node).borderLeftColor, dot: getComputedStyle(field, '::before').backgroundColor,
-          assigneeRight: assignee.right, hoursLeft: hours.left, hoursRight: hours.right, cardRight: bounds.right };
+        return { assigneeRight: assignee.right, assigneeCenter: assignee.top + assignee.height / 2,
+          trackerLeft: tracker.left, trackerRight: tracker.right, trackerCenter: tracker.top + tracker.height / 2,
+          cardRight: bounds.right, truncated: name.scrollWidth > name.clientWidth,
+          nameOverflow: getComputedStyle(name).textOverflow };
       });
-      expect(geometry.dot).toBe(geometry.stripe);
-      expect(geometry.contrast).toBeGreaterThanOrEqual(4.5);
-      expect(geometry.assigneeRight).toBeLessThanOrEqual(geometry.hoursLeft);
-      expect(geometry.hoursRight).toBeLessThan(geometry.cardRight);
-      colors.push(geometry.stripe);
+      expect(geometry.assigneeRight).toBeLessThanOrEqual(geometry.trackerLeft);
+      expect(geometry.trackerRight).toBeLessThan(geometry.cardRight);
+      expect(Math.abs(geometry.assigneeCenter - geometry.trackerCenter)).toBeLessThanOrEqual(1);
+      expect(geometry.truncated).toBe(true);
+      expect(geometry.nameOverflow).toBe('ellipsis');
     }
-    expect(new Set(colors.slice(0, 5)).size).toBe(5);
-    const fallback = await page.locator('html').evaluate(node => getComputedStyle(node).getPropertyValue('--priority-none').trim());
-    expect(colors[5]).toBe(await page.evaluate(color => {
-      const node = document.createElement('span'); node.style.color = color; document.body.append(node);
-      const value = getComputedStyle(node).color; node.remove(); return value;
-    }, fallback));
     await expect(page.locator('[data-id="status-2"] .kanban-title-board')).toHaveCSS('display', 'flex');
     expect(fixture.writes).toEqual([]);
     if (process.env.UI_SCREENSHOTS) await page.screenshot({ path: `/tmp/sprint-board-${mode}.png` });

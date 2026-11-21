@@ -283,25 +283,15 @@ function priorityClass(name) {
 function card(issue) {
   const id = Number(issue.id);
   const open = sprint?.status === 'open';
-  // Resolved issues strike through the ID, as on a YouTrack card.
-  const resolved = statuses.find(status => status.id === issue.status.id)?.is_closed;
   const subject = e(issue.subject);
   const action = `${open ? 'Plan' : 'View'} #${id}`;
   const assignee = issue.assigned_to?.name || 'Unassigned';
   const initials = issue.assigned_to ? assignee.trim().split(/\s+/u).map(part => Array.from(part)[0]).filter(Boolean).slice(0, 2).join('') : '–';
-  const fields = [
-    `<span class="card-field" title="Priority: ${e(issue.priority.name)}">${e(issue.priority.name)}</span>`,
-    `<span class="card-field plain" title="Tracker: ${e(issue.tracker.name)}">${e(issue.tracker.name)}</span>`,
-    `<span class="card-field plain" title="Status: ${e(issue.status.name)}">${e(issue.status.name)}</span>`,
-  ].join('');
-  const hours = issue.estimated_hours == null
-    ? '<strong class="unestimated" title="Unestimated">?</strong>'
-    : `<strong>${e(issue.estimated_hours)} h</strong>`;
   return {
-    id: String(id), class: [...(open ? [] : ['not-draggable']), priorityClass(issue.priority.name)],
+    id: String(id), class: open ? [] : ['not-draggable'],
     // The summary is clamped to three lines in CSS; title and aria-label keep the full text
     // reachable for pointer and assistive technology alike.
-    title: `<div class="card-head"><a class="${resolved ? 'resolved' : ''}" href="${e(linkToIssue(issue.id))}" target="_blank" rel="noopener noreferrer"${resolved ? ' title="Resolved"' : ''}>#${id}</a><h3 title="${subject}" aria-label="${subject}">${subject}</h3></div><div class="card-bottom">${fields}</div><div class="card-footer"><span class="card-assignee" title="Assignee: ${e(assignee)}"><span class="avatar${issue.assigned_to ? '' : ' unassigned'}" aria-hidden="true">${e(initials)}</span><span>${e(assignee)}</span></span>${hours}</div><button type="button" class="plan" data-edit="${id}" aria-label="${action}" title="${action}"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m10.5 2.5 3 3M3 10l7.5-7.5a2.1 2.1 0 0 1 3 3L6 13l-4 1 1-4Z"/></svg></button>`,
+    title: `<div class="card-head"><a href="${e(linkToIssue(issue.id))}" target="_blank" rel="noopener noreferrer">#${id}</a><h3 title="${subject}" aria-label="${subject}">${subject}</h3></div><div class="card-footer"><span class="card-assignee" title="Assignee: ${e(assignee)}"><span class="avatar${issue.assigned_to ? '' : ' unassigned'}" aria-hidden="true">${e(initials)}</span><span>${e(assignee)}</span></span><span class="card-tracker" title="Tracker: ${e(issue.tracker.name)}">${e(issue.tracker.name)}</span></div><button type="button" class="plan" data-edit="${id}" aria-label="${action}" title="${action}"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m10.5 2.5 3 3M3 10l7.5-7.5a2.1 2.1 0 0 1 3 3L6 13l-4 1 1-4Z"/></svg></button>`,
   };
 }
 function renderSprintHeading() {
@@ -316,12 +306,14 @@ function unmappedNotice(items) {
 function laneHeading(lane) {
   const id = Number(lane.parent?.id);
   const title = lane.parent ? `<a href="${e(linkToIssue(id))}" target="_blank" rel="noopener noreferrer">#${id} — ${e(lane.parent.subject)}</a>` : 'Ungrouped';
-  const metadata = lane.parent ? `<span class="lane-tracker">${e(lane.parent.tracker?.name || '')}</span><span class="lane-priority ${priorityClass(lane.parent.priority?.name || '')}"><span class="card-field">${e(lane.parent.priority?.name || '')}</span></span><span class="lane-tags">${tagsMarkup(lane.parent)}</span>` : '';
+  const priority = lane.parent ? `Priority: ${lane.parent.priority?.name || 'Unknown'}` : '';
+  const bar = lane.parent ? `<span class="lane-priority-bar ${priorityClass(lane.parent.priority?.name)}" role="img" aria-label="${e(priority)}" title="${e(priority)}"></span>` : '';
+  const metadata = lane.parent ? `<span class="lane-tracker">${e(lane.parent.tracker?.name || '')}</span><span class="lane-tags">${tagsMarkup(lane.parent)}</span>` : '';
   const state = lanePlanning.get(id);
   const hint = !state || state.pending ? 'Checking missing subtasks…' : state.error ? `Missing subtasks unknown: ${state.error} Use Refresh to retry.` : `Add missing subtasks to ${sprint?.name || 'this Sprint'} (${state.count || 0} missing). Includes closed subtasks and those assigned elsewhere; preserves statuses and other Sprints. Cards group under their nearest planned Swimlane.`;
   const icon = `<svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3 3v10h3M3 6h3M9 6h7M9 13h2M15 11v6M12 14h6"/>${state?.error ? '<circle cx="16" cy="3" r="2"/>' : ''}</svg>`;
   const action = lane.parent ? `<span class="swimlane-actions" title="${e(hint)}"><button type="button" class="add-subtasks${state?.count ? ' requires-attention' : ''}${state?.error ? ' planning-unknown' : ''}" data-add-descendants="${id}" aria-label="Add missing subtasks for #${id}" title="${e(hint)}"${state?.error ? ' aria-invalid="true"' : ''}>${icon}</button></span>` : '';
-  return `<div class="swimlane-title-row"><strong>${title}</strong>${metadata}${action}</div>${unmappedNotice(lane.visible.filter(issue => !config.columnStatusIds.includes(issue.status.id)))}${lane.parent ? relatedIssues.markup(id) : ''}`;
+  return `${bar}<div class="swimlane-title-row"><strong>${title}</strong>${metadata}${action}</div>${unmappedNotice(lane.visible.filter(issue => !config.columnStatusIds.includes(issue.status.id)))}${lane.parent ? relatedIssues.markup(id) : ''}`;
 }
 
 function renderBoard() {

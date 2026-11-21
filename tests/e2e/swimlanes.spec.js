@@ -48,6 +48,79 @@ async function setup(page) {
 const heading = (page, id) => page.locator(`.swimlane-headers > [data-lane="${id}"]`);
 const backlog = (page, id) => page.locator(`[data-id="backlog"] [data-eid="${id}"]`);
 const laneCard = (page, lane, id) => page.locator(`[data-id="status-1"] [data-lane="${lane}"] [data-eid="${id}"]`);
+for (const mode of ['light', 'dark']) {
+  test(`Swimlane priority uses one full-height bar, including empty rows, in ${mode} mode`, async ({ page }) => {
+    await page.emulateMedia({ colorScheme: mode });
+    const fixture = await setup(page);
+    fixture.rows[0].custom_fields[0].value = ['100'];
+    fixture.rows[0].priority = { id: 3, name: 'High' };
+    // A different child priority must not change the Swimlane's color.
+    fixture.rows[1].priority = { id: 1, name: 'Low' };
+    for (let index = 0; index < 16; index++) fixture.rows.push({ ...fixture.rows[1],
+      id: 100 + index, subject: `Child ${100 + index}`, status: { id: 2, name: 'Doing' } });
+    await page.getByRole('button', { name: 'Refresh now', exact: true }).click();
+    const bar = heading(page, 1).locator('.lane-priority-bar');
+    await expect(bar).toHaveAttribute('title', 'Priority: High');
+    await expect(bar).toHaveAttribute('aria-label', 'Priority: High');
+    await expect(bar).toHaveCSS('background-color', mode === 'light' ? 'rgb(220, 71, 71)' : 'rgb(239, 116, 116)');
+    await expect(page.locator('.lane-priority, .card-field')).toHaveCount(0);
+    await expect(heading(page, 'ungrouped').locator('.lane-priority-bar')).toHaveCount(0);
+    const assertFullHeight = async id => {
+      const geometry = await heading(page, id).locator('.lane-priority-bar').evaluate(node => {
+        const bar = node.getBoundingClientRect();
+        const header = node.parentElement.getBoundingClientRect();
+        const sections = [...document.querySelectorAll('.swimlane-section')]
+          .filter(section => section.dataset.lane === node.parentElement.dataset.lane)
+          .map(section => section.getBoundingClientRect());
+        return { width: bar.width, left: bar.left, top: bar.top, bottom: bar.bottom,
+          headerTop: header.top, headerHeight: header.height,
+          sections: sections.map(rect => ({ left: rect.left, top: rect.top, bottom: rect.bottom })) };
+      });
+      expect(geometry.width).toBe(3);
+      expect(geometry.left).toBe(geometry.sections[0].left);
+      expect(geometry.top).toBe(geometry.headerTop);
+      for (const section of geometry.sections) {
+        expect(Math.abs(geometry.top - section.top)).toBeLessThanOrEqual(1);
+        expect(Math.abs(geometry.bottom - section.bottom)).toBeLessThanOrEqual(1);
+      }
+      expect(geometry.bottom - geometry.top).toBeGreaterThan(geometry.headerHeight);
+    };
+    await assertFullHeight(1);
+    await assertFullHeight(4); // Planned Swimlane with no children still has a bar.
+    await page.locator('[data-id="status-2"] .has-swimlanes').evaluate(node => { node.scrollTop = 80; });
+    await expect.poll(() => page.locator('[data-id="status-1"] .has-swimlanes').evaluate(node => node.scrollTop)).toBe(80);
+    await assertFullHeight(1);
+    await page.locator('#sprint-query').fill('Issue 2');
+    await expect(page.locator('[data-eid="100"]')).toHaveCount(0);
+    await assertFullHeight(1); // Filtering shrinks the bar with its row.
+    await page.locator('#sprint-query').fill('');
+    await expect(page.locator('[data-eid="100"]')).toBeVisible();
+    await assertFullHeight(1);
+    expect(fixture.writes).toEqual([]);
+  });
+
+  test(`Swimlane priority bars retain stock colors and a neutral fallback in ${mode} mode`, async ({ page }) => {
+    await page.emulateMedia({ colorScheme: mode });
+    const fixture = await setup(page);
+    const names = ['Low', 'Normal', 'High', 'Urgent', 'Immediate', 'Bassa', 'Media', 'Alta', 'Custom priority'];
+    const tokens = ['low', 'normal', 'high', 'urgent', 'immediate', 'low', 'normal', 'high', 'none'];
+    names.forEach((name, index) => fixture.rows.push({ ...fixture.rows[3], id: 100 + index,
+      priority: { id: 100 + index, name } }));
+    await page.getByRole('button', { name: 'Refresh now', exact: true }).click();
+    for (let index = 0; index < names.length; index++) {
+      const bar = heading(page, 100 + index).locator('.lane-priority-bar');
+      await expect(bar).toHaveAttribute('title', `Priority: ${names[index]}`);
+      const expected = await page.locator('html').evaluate((node, token) => {
+        const sample = document.createElement('span');
+        sample.style.color = getComputedStyle(node).getPropertyValue(`--priority-${token}`);
+        document.body.append(sample);
+        const color = getComputedStyle(sample).color; sample.remove(); return color;
+      }, tokens[index]);
+      await expect(bar).toHaveCSS('background-color', expected);
+    }
+  });
+}
+
 test('Sprint search matches Cards only, hides empty lanes, preserves totals and Backlog, and restores headings', async ({ page }) => {
   const fixture = await setup(page);
   fixture.rows[0].custom_fields[0].value = ['100'];
