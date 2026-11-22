@@ -296,6 +296,11 @@ function card(issue) {
     title: `<div class="card-head"><a href="${e(linkToIssue(issue.id))}" target="_blank" rel="noopener noreferrer">#${id}</a><h3 title="${subject}" aria-label="${subject}">${subject}</h3></div><div class="card-footer"><span class="card-assignee" title="Assignee: ${e(assignee)}"><span class="avatar${issue.assigned_to ? '' : ' unassigned'}" aria-hidden="true">${e(initials)}</span><span>${e(assignee)}</span></span><span class="card-tracker" title="Tracker: ${e(issue.tracker.name)}">${e(issue.tracker.name)}</span></div><button type="button" class="plan" data-edit="${id}" aria-label="${action}" title="${action}"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m10.5 2.5 3 3M3 10l7.5-7.5a2.1 2.1 0 0 1 3 3L6 13l-4 1 1-4Z"/></svg></button>`,
   };
 }
+function backlogCard(issue) {
+  const item = card(issue);
+  item.class.push(priorityClass(issue.priority?.name));
+  return item;
+}
 function renderSprintHeading() {
   const heading = $('sprint-name'), name = sprint?.name || 'No sprint selected';
   if (heading.textContent !== name) heading.textContent = name;
@@ -332,7 +337,7 @@ function renderBoard() {
   if ($('totals').innerHTML !== totalsMarkup) $('totals').innerHTML = totalsMarkup;
   const backlogIds = new Set(feed?.snapshot.backlog.map(issue => issue.id));
   const backlog = visible.filter(issue => backlogIds.has(issue.id));
-  const boards = [{ id: 'backlog', title: `${backlogToggle()}<span class="backlog-label">Backlog</span> <span class="count">${backlog.length} / ${feed?.snapshot.total ?? '?'}</span>${backlogCollapsed && backlogFiltered() ? '<span class="backlog-filtered muted">Filtered</span>' : ''}`, class: 'backlog-board', item: backlog.map(card) }];
+  const boards = [{ id: 'backlog', title: `${backlogToggle()}<span class="backlog-label">Backlog</span> <span class="count">${backlog.length} / ${feed?.snapshot.total ?? '?'}</span>${backlogCollapsed && backlogFiltered() ? '<span class="backlog-filtered muted">Filtered</span>' : ''}`, class: 'backlog-board', item: backlog.map(backlogCard) }];
   const { cards, visible: sprintVisible, lanes, tagChoices } = filteredSprint(feed?.snapshot.sprintAll || [], config.swimlaneTrackers, laneAncestors, sprintFilters);
   renderSprintFilters(sprintFilters, cards, sprintVisible, tagChoices);
   for (const [index, statusId] of config.columnStatusIds.entries()) {
@@ -455,7 +460,7 @@ async function loadMoreBacklog({ silent = false } = {}) {
     renderFilters();
     if (board !== activeBoard) { renderBoard(); return; }
     // Append only newly loaded Backlog Cards, preserving existing DOM and scroll state.
-    for (const issue of snapshot.backlog) if (!board.findBoard('backlog').querySelector(`[data-eid="${Number(issue.id)}"]`)) board.addElement('backlog', card(issue));
+    for (const issue of snapshot.backlog) if (!board.findBoard('backlog').querySelector(`[data-eid="${Number(issue.id)}"]`)) board.addElement('backlog', backlogCard(issue));
     $('empty').hidden = issues.length > 0;
   } catch (error) {
     if (revision === queryRevision) { backlogFailed = true; notify(`Could not load more backlog issues: ${error.message} Use Retry loading issues, or scroll again.`, true); }

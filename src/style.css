@@ -289,12 +289,18 @@ input::placeholder { color: var(--secondary); opacity: 1; }
 .kanban-item.project-colored { background: color-mix(in srgb, var(--project-color) 30%, var(--content)); }
 .kanban-item:hover { border-color: var(--secondary); cursor: grab; }
 .kanban-item:active:not(.not-draggable) { cursor: grabbing; }
-.lane-priority-bar.prio-none { --stripe: var(--priority-none); }
-.lane-priority-bar.prio-low { --stripe: var(--priority-low); }
-.lane-priority-bar.prio-normal { --stripe: var(--priority-normal); }
-.lane-priority-bar.prio-high { --stripe: var(--priority-high); }
-.lane-priority-bar.prio-urgent { --stripe: var(--priority-urgent); }
-.lane-priority-bar.prio-immediate { --stripe: var(--priority-immediate); }
+[data-id="backlog"] .kanban-item {
+  border-left: 5px solid var(--stripe, var(--priority-none));
+}
+[data-id="backlog"] .kanban-item:hover, [data-id="backlog"] .kanban-item:focus-within {
+  border-left-color: var(--stripe, var(--priority-none));
+}
+.lane-priority-bar.prio-none, [data-id="backlog"] .prio-none { --stripe: var(--priority-none); }
+.lane-priority-bar.prio-low, [data-id="backlog"] .prio-low { --stripe: var(--priority-low); }
+.lane-priority-bar.prio-normal, [data-id="backlog"] .prio-normal { --stripe: var(--priority-normal); }
+.lane-priority-bar.prio-high, [data-id="backlog"] .prio-high { --stripe: var(--priority-high); }
+.lane-priority-bar.prio-urgent, [data-id="backlog"] .prio-urgent { --stripe: var(--priority-urgent); }
+.lane-priority-bar.prio-immediate, [data-id="backlog"] .prio-immediate { --stripe: var(--priority-immediate); }
 .kanban-item:focus-within { border-color: var(--accent); }
 .kanban-item.not-draggable, .kanban-item.not-draggable:hover { cursor: default; }
 /* ID and summary share the first line, as on a YouTrack card. */

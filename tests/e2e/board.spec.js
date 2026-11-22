@@ -737,12 +737,12 @@ test('refresh patches changed fields without replacing cards or their controls',
 });
 
 for (const name of ['High', 'Alta']) {
-  test(`priority ${name}, status and estimate are hidden on cards`, async ({ page }) => {
+  test(`priority ${name} label, status and estimate are hidden on cards`, async ({ page }) => {
     const fixture = await setup(page);
     fixture.issues[0].priority = { id: 42, name };
     await login(page);
     const card = page.locator('[data-eid="1"]');
-    await expect(card).not.toHaveClass(/prio-/);
+    await expect(card).toHaveClass(/prio-high/);
     await expect(card.locator('.card-bottom, .card-field, .card-footer strong')).toHaveCount(0);
     await expect(card.locator('[title^="Priority:"], [title^="Status:"], [title="Unestimated"], .resolved')).toHaveCount(0);
     await expect(card.locator('.card-tracker')).toHaveText(fixture.issues[0].tracker.name);
@@ -1168,13 +1168,13 @@ for (const mode of ['light', 'dark']) {
     await page.getByRole('button', { name: 'Close editor' }).click();
   });
 
-  test(`cards have neutral borders regardless of priority in ${mode} mode`, async ({ page }) => {
+  test(`Sprint Cards have neutral borders regardless of priority in ${mode} mode`, async ({ page }) => {
     await page.emulateMedia({ colorScheme: mode });
     const fixture = await setup(page);
     ['Alta', 'Media', 'Bassa', 'Normale'].forEach((name, index) => { fixture.issues[index].priority = { id: index + 40, name }; });
     fixture.issues[3].status = fixture.issues[0].status; // Keep every priority sample in a configured Column.
     await login(page);
-    const borders = await page.locator('.kanban-item').evaluateAll(nodes => nodes.map(node => {
+    const borders = await page.locator('[data-id^="status-"] .kanban-item').evaluateAll(nodes => nodes.map(node => {
       const css = getComputedStyle(node);
       return { left: css.borderLeftColor, right: css.borderRightColor, width: css.borderLeftWidth };
     }));
@@ -1183,6 +1183,38 @@ for (const mode of ['light', 'dark']) {
       expect(border.width).toBe('1px');
     }
     expect(new Set(borders.map(border => border.left)).size).toBe(1);
+  });
+
+  test(`only Backlog Cards show priority stripes in ${mode} mode`, async ({ page }) => {
+    await page.emulateMedia({ colorScheme: mode });
+    const fixture = await setup(page);
+    const priorities = [
+      ['Bassa', 'low'], ['Media', 'normal'], ['Alta', 'high'],
+      ['Urgente', 'urgent'], ['Immediata', 'immediate'], ['Custom priority', 'none'],
+    ];
+    priorities.forEach(([name], index) => fixture.issues.push({ ...fixture.issues[0], id: 100 + index,
+      priority: { id: 100 + index, name } }));
+    await login(page);
+    for (const [index, [, tier]] of priorities.entries()) {
+      const card = page.locator(`[data-id="backlog"] [data-eid="${100 + index}"]`);
+      await expect(card).toHaveClass(new RegExp(`prio-${tier}`));
+      const color = await card.evaluate((node, tier) => {
+        const probe = document.createElement('span');
+        probe.style.color = `var(--priority-${tier})`;
+        node.append(probe);
+        const color = getComputedStyle(probe).color;
+        probe.remove();
+        return color;
+      }, tier);
+      await expect(card).toHaveCSS('border-left-width', '5px');
+      await expect(card).toHaveCSS('border-left-color', color);
+      await card.hover();
+      await expect(card).toHaveCSS('border-left-color', color);
+      await card.locator('.plan').focus();
+      await expect(card).toHaveCSS('border-left-color', color);
+      await expect(card.locator('.card-field, .card-bottom')).toHaveCount(0);
+    }
+    await expect(page.locator('[data-id="status-2"] [data-eid="2"]')).toHaveCSS('border-left-width', '1px');
   });
 
   test(`cards keep assignee and tracker on one compact row in ${mode} mode`, async ({ page }) => {
