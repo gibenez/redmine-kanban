@@ -48,6 +48,45 @@ async function setup(page) {
 const heading = (page, id) => page.locator(`.swimlane-headers > [data-lane="${id}"]`);
 const backlog = (page, id) => page.locator(`[data-id="backlog"] [data-eid="${id}"]`);
 const laneCard = (page, lane, id) => page.locator(`[data-id="status-1"] [data-lane="${lane}"] [data-eid="${id}"]`);
+for (const mode of ['light', 'dark']) {
+  test(`due dates appear only on Backlog Cards and Swimlane headings in ${mode} mode`, async ({ page }) => {
+    await page.emulateMedia({ colorScheme: mode });
+    const fixture = await setup(page);
+    await expect(page.locator('.issue-due-date')).toHaveCount(0);
+    fixture.rows[0].due_date = '2026-12-15';
+    fixture.rows[1].due_date = '2026-12-16'; // Ordinary Sprint Card: do not display.
+    fixture.rows[3].due_date = '2026-12-20';
+    await page.getByRole('button', { name: 'Refresh now', exact: true }).click();
+    const backlogDate = backlog(page, 1).locator('.issue-due-date');
+    const laneDate = heading(page, 4).locator('.issue-due-date');
+    await expect(backlogDate).toBeVisible();
+    await expect(backlogDate).toHaveText('Due 2026-12-15');
+    await expect(backlogDate).toHaveAttribute('datetime', '2026-12-15');
+    await expect(backlogDate).toHaveAttribute('title', 'Due date: 2026-12-15');
+    await expect(laneDate).toBeVisible();
+    await expect(laneDate).toHaveText('Due 2026-12-20');
+    await expect(laneDate).toHaveAttribute('datetime', '2026-12-20');
+    await expect(heading(page, 4).locator('.swimlane-actions > .issue-due-date + .lane-tracker')).toHaveCount(1);
+    const positions = await heading(page, 4).evaluate(node => {
+      const date = node.querySelector('.issue-due-date').getBoundingClientRect();
+      const tracker = node.querySelector('.lane-tracker').getBoundingClientRect();
+      return { dateRight: date.right, trackerLeft: tracker.left,
+        dateCenter: date.top + date.height / 2, trackerCenter: tracker.top + tracker.height / 2 };
+    });
+    expect(positions.trackerLeft - positions.dateRight).toBe(8);
+    expect(Math.abs(positions.dateCenter - positions.trackerCenter)).toBeLessThanOrEqual(1);
+    await expect(page.locator('.issue-due-date')).toHaveCount(2);
+    await expect(page.locator('[data-eid="2"] .issue-due-date')).toHaveCount(0);
+    await expect(heading(page, 'ungrouped').locator('.issue-due-date')).toHaveCount(0);
+    fixture.rows[0].due_date = '2027-01-05';
+    fixture.rows[3].due_date = null;
+    await page.getByRole('button', { name: 'Refresh now', exact: true }).click();
+    await expect(backlogDate).toHaveText('Due 2027-01-05');
+    await expect(laneDate).toHaveCount(0);
+    expect(fixture.writes).toEqual([]);
+  });
+}
+
 test('closed Swimlanes strike through only the issue title and clear it when reopened', async ({ page }) => {
   const fixture = await setup(page);
   const lane = heading(page, 4);
