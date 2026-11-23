@@ -414,7 +414,6 @@ function renderBacklogFooter() {
   ].filter(Boolean);
   const filterToggle = $('toggle-backlog-filters');
   filterToggle.classList.toggle('has-selection', activeFilters.length > 0);
-  filterToggle.querySelector('[data-backlog-filter-label]').textContent = `Filters${activeFilters.length ? ` · ${activeFilters.length}` : ''}`;
   filterToggle.title = ['Backlog filters', ...activeFilters].join('\n');
   const node = board.findBoard('backlog');
   node.querySelector('.count').textContent = `${feed.snapshot.backlog.length} / ${feed.snapshot.total ?? '?'}`;

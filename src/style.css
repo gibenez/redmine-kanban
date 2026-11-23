@@ -233,7 +233,7 @@ input::placeholder { color: var(--secondary); opacity: 1; }
 }
 /* Bounded neutral counts stay visually separate from the status names. */
 .count { flex-shrink: 0; font-weight: 500; font-size: 12px; line-height: 22px; color: var(--secondary); background: var(--content); border: 1px solid var(--line); border-radius: var(--radius); padding: 0 6px; }
-/* Backlog keeps a compact title row with its independent search directly beneath. */
+/* Keep the Backlog title, search and filters on one compact row. */
 .kanban-board header.backlog-board .kanban-title-board {
   display: flex; align-items: center; justify-content: flex-start; gap: 4px; width: 100%;
 }
@@ -247,14 +247,13 @@ input::placeholder { color: var(--secondary); opacity: 1; }
 .scope-toggle:hover:not(:disabled) { background: var(--tag); border-color: transparent; color: var(--text); }
 .scope-toggle[aria-pressed="true"] { color: var(--text); background: var(--tag); }
 .backlog-toggle { margin-left: 0; }
-.kanban-board[data-id="backlog"]:not(.backlog-collapsed) header { flex-direction: column; align-items: stretch; height: auto; min-height: 84px; padding: 4px 8px 8px; gap: 4px; }
-.kanban-board[data-id="backlog"] header .kanban-title-board { width: 100%; flex: none; gap: 8px; }
+.kanban-board[data-id="backlog"]:not(.backlog-collapsed) header { flex-direction: row; align-items: center; height: auto; min-height: 44px; padding: 4px 8px; gap: 8px; }
+.kanban-board[data-id="backlog"] header .kanban-title-board { width: auto; flex: none; gap: 8px; }
 #backlog-search { display: flex; align-items: flex-end; gap: 8px; flex: 1; min-width: 0; }
 .backlog-search-field { flex: 1; min-width: 0; flex-direction: row; align-items: center; gap: 6px; }
-.backlog-search-field > span { font-size: 12px; line-height: 16px; white-space: nowrap; }
-#toggle-backlog-filters { display: inline-flex; align-items: center; justify-content: center; gap: 4px; flex: none; min-height: 32px; padding: 0 6px; background: var(--content); color: var(--text); font-size: 13px; }
+#toggle-backlog-filters { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 32px; min-height: 32px; padding: 0; background: var(--content); color: var(--text); }
 #toggle-backlog-filters[aria-expanded="true"] { background: var(--selected-bg); border-color: var(--accent); color: var(--link); }
-#toggle-backlog-filters[aria-expanded="true"] svg { transform: rotate(180deg); }
+#toggle-backlog-filters:hover { background: var(--hover-bg); border-color: var(--accent); }
 #workspace #backlog-search #query { width: 100%; min-width: 0; padding-right: 8px; font-size: 14px; }
 .kanban-board[data-id="backlog"]:not(.backlog-collapsed) { min-width: 300px; }
 .kanban-board[data-id="backlog"].backlog-collapsed { flex: 0 0 40px; min-width: 40px; border-right: 0; box-shadow: inset -3px 0 var(--border); }
