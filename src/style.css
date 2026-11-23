@@ -273,7 +273,7 @@ input::placeholder { color: var(--secondary); opacity: 1; }
 .swimlane-section:nth-child(odd) { background: var(--sidebar); }
 .swimlane-heading { padding: 6px 10px; box-sizing: border-box; font-size: 12px; line-height: 18px; }
 .swimlane-title-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
-.swimlane-title-row > strong { flex: 1 1 180px; }
+.swimlane-title-row > strong { flex: 0 1 auto; max-width: 100%; }
 .swimlane-title-row > .lane-tags:empty { display: none; }
 .swimlane-title-row strong {
   min-width: 0; padding: 3px 0; font-size: 14px; font-weight: 600;

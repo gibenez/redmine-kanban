@@ -156,6 +156,33 @@ for (const activation of ['click', 'keyboard']) {
 }
 
 for (const mode of ['light', 'dark']) {
+  test(`Swimlane tags follow the title instead of aligning right in ${mode} mode`, async ({ page }) => {
+    await page.emulateMedia({ colorScheme: mode });
+    const fixture = await setup(page);
+    fixture.rows[3].subject = 'Billing improvements';
+    fixture.rows[3].tags = ['Billing', 'UI'];
+    await page.getByRole('button', { name: 'Refresh now', exact: true }).click();
+    const lane = heading(page, 4);
+    await expect(lane.locator('.issue-tag')).toHaveText(['Billing', 'UI']);
+    for (const width of [1440, 1024, 768]) {
+      await page.setViewportSize({ width, height: 1000 });
+      const geometry = await lane.evaluate(node => {
+        const title = node.querySelector('.swimlane-title-row > strong').getBoundingClientRect();
+        const tags = node.querySelector('.lane-tags').getBoundingClientRect();
+        const actions = node.querySelector('.swimlane-actions').getBoundingClientRect();
+        const row = node.querySelector('.swimlane-title-row').getBoundingClientRect();
+        return { gap: tags.left - title.right, titleCenter: title.top + title.height / 2,
+          tagsCenter: tags.top + tags.height / 2, tagsRight: tags.right,
+          actionsLeft: actions.left, actionsRight: actions.right, rowRight: row.right };
+      });
+      expect(geometry.gap).toBe(8);
+      expect(Math.abs(geometry.tagsCenter - geometry.titleCenter)).toBeLessThanOrEqual(1);
+      expect(geometry.actionsLeft).toBeGreaterThan(geometry.tagsRight);
+      expect(geometry.actionsRight).toBe(geometry.rowRight);
+    }
+    expect(fixture.writes).toEqual([]);
+  });
+
   test(`Swimlane tracker is a right-aligned badge before the add button in ${mode} mode`, async ({ page }) => {
     await page.emulateMedia({ colorScheme: mode });
     const fixture = await setup(page);
