@@ -1,4 +1,6 @@
 import { sprintFilterChoices, sprintFiltersActive } from './sprint-filters.js';
+import { projectColor } from './project-colors.js';
+import { projectSwatch } from './project-summary.js';
 
 // Preserve the search node and unchanged option lists across board rerenders.
 export function createSprintFilterControls(root, onChange) {
@@ -64,7 +66,7 @@ export function createSprintFilterControls(root, onChange) {
   window.addEventListener('resize', repositionOpenFilters);
   // Fixed panels follow their anchor when the compact control strip scrolls.
   root.addEventListener('scroll', repositionOpenFilters, { capture: true, passive: true });
-  return (filters, cards, visible, tagChoices = []) => {
+  return (filters, cards, visible, tagChoices = [], projects = []) => {
     current = filters;
     if (query.value !== filters.query) query.value = filters.query;
     for (const details of root.querySelectorAll('details')) {
@@ -76,12 +78,14 @@ export function createSprintFilterControls(root, onChange) {
       if (details.open) for (const input of list.querySelectorAll('input')) {
         if (!choices.some(([id]) => id === input.value)) choices.push([input.value, input.parentElement.textContent]);
       }
-      const signature = JSON.stringify(choices);
+      const signature = JSON.stringify(choices.map(([id, name]) => [id, name, key === 'project' ? projectColor(projects, id) : '']));
       if (list.dataset.choices !== signature) {
         list.replaceChildren(...choices.map(([id, name]) => {
           const label = document.createElement('label'), input = document.createElement('input');
           input.type = 'checkbox'; input.value = id;
-          label.append(input, document.createTextNode(name)); return label;
+          label.append(input);
+          if (key === 'project') label.append(projectSwatch(projectColor(projects, id)));
+          label.append(document.createTextNode(name)); return label;
         }));
         if (!choices.length) { const empty = document.createElement('span'); empty.textContent = 'No choices in this Sprint'; list.append(empty); }
         list.dataset.choices = signature;

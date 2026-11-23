@@ -81,6 +81,41 @@ async function signOut(page) {
   await page.getByRole('button', { name: 'Sign out', exact: true }).click();
 }
 
+test('project overview stays unfiltered, refreshes versions and fits narrow screens', async ({ page }) => {
+  const { issues } = await setup(page);
+  issues[1].fixed_version = { id: 300, name: '2.10' };
+  issues[3].fixed_version = { id: 299, name: '2.9' };
+  await page.route('**/redmine/projects.json?**', route => route.fulfill({ json: { projects: [
+    { id: 1, name: 'Team', trackers: [{ id: 1, name: 'Feature' }, { id: 2, name: 'Bug' }], custom_fields: [{ name: 'Colore', value: '#123456' }] },
+  ] } }));
+  await login(page);
+  const summary = page.getByRole('region', { name: 'Projects and Target versions' });
+  await expect(summary).toHaveText('Team (2.9, 2.10)');
+  await page.getByLabel('Search Sprint Cards').fill('no matching cards');
+  await expect(page.locator('[data-sprint-empty]')).toBeVisible();
+  await expect(summary).toHaveText('Team (2.9, 2.10)');
+  await page.locator('[data-filter="project"] summary').click();
+  await expect(page.locator('[data-filter="project"] .project-swatch')).toHaveCSS('background-color', 'rgb(18, 52, 86)');
+  await page.locator('[data-filter="project"] summary').click();
+  issues[1].fixed_version = undefined;
+  await page.getByRole('button', { name: 'Refresh now', exact: true }).click();
+  await expect(summary).toHaveText('Team (2.9, none)');
+  for (const width of [1440, 1024, 768, 390]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await expect(summary).toBeVisible();
+    const bounds = await summary.boundingBox();
+    expect(bounds.x).toBeGreaterThanOrEqual(0);
+    expect(bounds.x + bounds.width).toBeLessThanOrEqual(width);
+    if (width <= 1000) {
+      const toolbar = await page.locator('.toolbar').boundingBox();
+      expect(bounds.y).toBeGreaterThanOrEqual(toolbar.y + toolbar.height);
+    }
+  }
+  await page.getByLabel('Include closed sprints').check();
+  await page.getByLabel('Sprint', { exact: true }).selectOption('11');
+  await expect(summary).toHaveText('No projects in this Sprint');
+});
+
 for (const theme of ['light', 'dark']) {
   test(`project Colore tints only Cards in ${theme} mode`, async ({ page }) => {
     await page.emulateMedia({ colorScheme: theme });
@@ -189,22 +224,22 @@ test('Backlog filter state remains visible with its panel closed and after clear
   await login(page);
   await page.locator('#assignee').selectOption('none');
   const toggle = page.getByRole('button', { name: 'Backlog filters', exact: true });
-  await expect(toggle).toHaveText('Filters · 1');
+  await expect(toggle).toHaveText('');
+  await expect(toggle).toHaveClass(/has-selection/);
   await expect(toggle).toHaveAttribute('title', /Assignee: Unassigned/);
   await toggle.click();
   await expect(page.locator('#filter-controls')).toBeHidden();
   await expect(toggle).toHaveClass(/has-selection/);
   await page.getByLabel('Search backlog').fill('feature');
-  await expect(toggle).toHaveText('Filters · 1'); // Visible search is not counted twice.
+  await expect(toggle).toHaveAttribute('title', /Assignee: Unassigned/);
   await toggle.click();
   await page.getByLabel('Show closed issues', { exact: true }).check();
-  await expect(toggle).toHaveText('Filters · 2');
+  await expect(toggle).toHaveAttribute('title', /Assignee: Unassigned\nClosed issues included/);
   await page.locator('#clear-filters').click();
   await expect(page.getByLabel('Search backlog')).toHaveValue('');
-  await expect(toggle).toHaveText('Filters · 1');
-  await expect(toggle).toHaveAttribute('title', /Closed issues included/);
+  await expect(toggle).toHaveAttribute('title', 'Backlog filters\nClosed issues included');
   await page.getByLabel('Show closed issues', { exact: true }).uncheck();
-  await expect(toggle).toHaveText('Filters');
+  await expect(toggle).toHaveAttribute('title', 'Backlog filters');
   await expect(toggle).not.toHaveClass(/has-selection/);
 });
 
@@ -257,6 +292,14 @@ test('keeps planning controls and commitment in one compact line', async ({ page
   await setup(page);
   await login(page);
   await expect(page.locator('.planning-prototype-switcher')).toHaveCount(0);
+  await expect(page.locator('.masthead #planning-controls')).toBeVisible();
+  for (const id of ['refresh', 'refresh-now']) {
+    const button = page.locator(`#${id}`);
+    await expect(button).toHaveText('');
+    await expect(button.locator('svg')).toBeVisible();
+    await expect(button).toHaveAttribute('aria-label', /refresh/i);
+    await expect(button).toHaveAttribute('title', /refresh/i);
+  }
   const sprintLabelGap = await page.locator('.sprint-control').evaluate(control => {
     const label = control.querySelector('label').getBoundingClientRect();
     const select = control.querySelector('select').getBoundingClientRect();
@@ -267,12 +310,12 @@ test('keeps planning controls and commitment in one compact line', async ({ page
   expect(sprintLabelWidth).toBeLessThan(50);
   for (const width of [1527, 1024, 600]) {
     await page.setViewportSize({ width, height: 1000 });
-    const geometry = await page.locator('.planning-row').evaluate(row => ({
+    const geometry = await page.locator('.masthead .toolbar').evaluate(row => ({
       height: row.getBoundingClientRect().height,
       width: row.clientWidth,
       contentWidth: row.scrollWidth,
       pageOverflow: document.documentElement.scrollWidth > innerWidth,
-      centers: [...row.querySelectorAll('#project, #sprint, #closed, #sprint-name, #sprint-state, #totals')]
+      centers: [...row.querySelectorAll('#project, #sprint, #closed, #sprint-state, #totals')]
         .map(element => { const rect = element.getBoundingClientRect(); return rect.top + rect.height / 2; }),
     }));
     expect(geometry.height).toBeLessThanOrEqual(width <= 600 ? 54 : 44);
@@ -281,6 +324,16 @@ test('keeps planning controls and commitment in one compact line', async ({ page
     if (width === 1527) expect(geometry.contentWidth).toBe(geometry.width);
     if (width === 600) expect(geometry.contentWidth).toBeGreaterThan(geometry.width);
   }
+  await page.setViewportSize({ width: 1920, height: 1000 });
+  const centered = await page.locator('#planning-controls').evaluate(panel => {
+    const bounds = panel.getBoundingClientRect();
+    const state = panel.querySelector('#sprint-state').getBoundingClientRect();
+    const totals = panel.querySelector('#totals').getBoundingClientRect();
+    return { center: bounds.left + bounds.width / 2, width: bounds.width, totalsGap: totals.left - state.right };
+  });
+  expect(centered.center).toBeCloseTo(960, 0);
+  expect(centered.width).toBeLessThan(1200);
+  expect(centered.totalsGap).toBe(16);
   await page.getByLabel('Include closed sprints').check();
   await expect(page.locator('#sprint option', { hasText: 'Sprint 9' })).toHaveCount(1);
 });
@@ -792,6 +845,31 @@ test('a delayed old search cannot overwrite newer results', async ({ page }) => 
   await expect(page.getByLabel('Search backlog')).toHaveValue('Already');
 });
 
+test('Sprint Cards show project and Target Version while Backlog retains its tracker', async ({ page }) => {
+  const { issues } = await setup(page);
+  const release = '<release> 2.10 ' + 'long version name '.repeat(8);
+  issues[1].fixed_version = { id: 300, name: release };
+  issues[1].assigned_to = { id: 7, name: 'Alexandra Example With A Very Long Name' };
+  await login(page);
+  const metadata = page.locator('[data-eid="2"] .card-project');
+  await expect(metadata).toHaveText(`Team (${release})`);
+  await expect(metadata).toHaveAttribute('title', `Team (${release})`);
+  await expect(page.locator('[data-eid="2"] .card-tracker')).toHaveCount(0);
+  await expect(page.locator('[data-eid="2"] release')).toHaveCount(0);
+  await expect(page.locator('[data-eid="1"] .card-tracker')).toHaveText('Feature');
+  await expect(page.locator('[data-eid="1"] .card-project')).toHaveCount(0);
+  const geometry = await metadata.evaluate(node => {
+    const bounds = node.getBoundingClientRect();
+    const assignee = node.parentElement.querySelector('.card-assignee').getBoundingClientRect();
+    return { left: bounds.left, assigneeRight: assignee.right, clipped: node.scrollWidth > node.clientWidth };
+  });
+  expect(geometry.assigneeRight).toBeLessThanOrEqual(geometry.left);
+  expect(geometry.clipped).toBe(true);
+  issues[1].fixed_version = undefined;
+  await page.getByRole('button', { name: 'Refresh now', exact: true }).click();
+  await expect(metadata).toHaveText('Team (none)');
+});
+
 test('refresh patches changed fields without replacing cards or their controls', async ({ page }) => {
   const fixture = await setup(page); await login(page);
   await page.evaluate(() => {
@@ -804,10 +882,12 @@ test('refresh patches changed fields without replacing cards or their controls',
   fixture.issues[1].estimated_hours = 8;
   fixture.issues[1].assigned_to = { id: 9, name: 'Updated Assignee' };
   fixture.issues[1].tracker = { id: 1, name: 'Updated Tracker' };
+  fixture.issues[1].fixed_version = { id: 300, name: 'Updated Release' };
   await page.getByRole('button', { name: 'Refresh now', exact: true }).click();
   await expect(page.locator('[data-eid="2"] h3')).toHaveText('Updated on Redmine');
   await expect(page.locator('[data-eid="2"] .card-assignee')).toHaveText('UAUpdated Assignee');
-  await expect(page.locator('[data-eid="2"] .card-tracker')).toHaveText('Updated Tracker');
+  await expect(page.locator('[data-eid="2"] .card-project')).toHaveText('Team (Updated Release)');
+  await expect(page.locator('[data-eid="2"] .card-tracker')).toHaveCount(0);
   await expect(page.locator('[data-eid="2"]')).not.toHaveClass(/prio-/);
   await expect(page.locator('[data-eid="2"] .card-footer strong')).toHaveCount(0);
   expect(await page.evaluate(() => window.updatedCard === document.querySelector('[data-eid="2"]') && window.updatedTitle === window.updatedCard.querySelector('h3') && window.updatedButton === window.updatedCard.querySelector('.plan'))).toBe(true);
@@ -827,7 +907,7 @@ for (const name of ['High', 'Alta']) {
   });
 }
 
-test('Column title rows align, with Backlog search controls on their own compact row', async ({ page }) => {
+test('Column title rows align, with Backlog search controls inline', async ({ page }) => {
   await setup(page); await login(page);
   const headers = await page.locator('.kanban-board header').evaluateAll(nodes => nodes.map(header => {
     const title = header.querySelector('.kanban-title-board');
@@ -899,7 +979,7 @@ test('dark mode follows the system preference on login, board and dialogs', asyn
   await page.getByLabel('Personal API key').fill('test-personal-key');
   await page.getByRole('button', { name: 'Connect to Redmine' }).click();
   await expect(page.locator('#updated')).toContainText('Updated');
-  await expect(page.locator('.summary')).toHaveCSS('background-color', 'rgb(30, 31, 34)');
+  await expect(page.locator('#project')).toHaveCSS('background-color', 'rgb(30, 31, 34)');
   await expect(page.locator('.kanban-item').first()).toHaveCSS('background-color', 'rgb(30, 31, 34)');
   await expect(page.locator('#project')).toHaveCSS('color', 'rgb(255, 255, 255)');
   await page.getByRole('button', { name: 'Plan #1', exact: true }).click();
@@ -913,10 +993,10 @@ test('dark mode follows the system preference on login, board and dialogs', asyn
   await expect(page.locator('#notice')).toHaveCSS('background-color', 'rgb(56, 37, 31)');
   await page.emulateMedia({ colorScheme: 'light' });
   await expect(page.locator('html')).toHaveCSS('color-scheme', 'light');
-  await expect(page.locator('.summary')).toHaveCSS('background-color', 'rgb(255, 255, 255)');
+  await expect(page.locator('#project')).toHaveCSS('background-color', 'rgb(255, 255, 255)');
   await expect(page.locator('#notice')).toHaveCSS('background-color', 'rgb(255, 235, 236)');
   await page.emulateMedia({ colorScheme: 'dark' });
-  await expect(page.locator('.summary')).toHaveCSS('background-color', 'rgb(30, 31, 34)');
+  await expect(page.locator('#project')).toHaveCSS('background-color', 'rgb(30, 31, 34)');
 });
 
 for (const theme of ['light', 'dark']) {
@@ -943,7 +1023,7 @@ for (const theme of ['light', 'dark']) {
     expect(bounds.y).toBeGreaterThanOrEqual(anchor.y + anchor.height);
     expect(bounds.y + bounds.height).toBeLessThanOrEqual(650);
     expect(await page.locator('#board').boundingBox()).toEqual(before);
-    await page.getByRole('heading', { name: 'Sprint board', exact: true }).click();
+    await page.locator('.brand-mark').click();
     await expect(popover).not.toBeVisible();
     await expect(avatar).toHaveAttribute('aria-expanded', 'false');
     await avatar.focus(); await page.keyboard.press('Enter');
@@ -1114,7 +1194,8 @@ for (const viewport of [{ width: 1280, height: 720 }, { width: 390, height: 650 
     const refresh = page.locator('#refresh-now');
     const statusbar = page.getByRole('contentinfo', { name: 'Board status' });
     await expect(refresh).toBeInViewport();
-    await expect(refresh).toHaveText('Refresh now');
+    await expect(refresh).toHaveText('');
+    await expect(refresh).toHaveAttribute('aria-label', 'Refresh now');
     await expect(refresh.locator('svg')).toBeVisible();
     await expect(page.locator('.toolbar #refresh, .toolbar #updated')).toHaveCount(0);
     await expect(statusbar).toContainText('Updated');
@@ -1338,12 +1419,13 @@ for (const viewport of [{ width: 1280, height: 720 }, { width: 1440, height: 100
     for (let id = 100; id < 112; id++) fixture.issues.push({ ...fixture.issues[1], id, subject: `Long status issue ${id} ${'wrapped content '.repeat(12)}` });
     for (let id = 200; id < 206; id++) fixture.issues.push({ ...fixture.issues[0], id });
     await login(page);
-    const toolbar = await page.locator('.planning-row .toolbar').boundingBox();
+    const toolbar = await page.locator('.masthead .toolbar').boundingBox();
     const commitment = page.getByRole('region', { name: 'Sprint commitment' });
     const summary = await commitment.boundingBox();
-    expect(summary.y).toBe(toolbar.y);
-    expect(summary.x).toBeGreaterThanOrEqual(toolbar.x + toolbar.width);
-    await expect(commitment).toHaveCSS('background-color', 'rgb(255, 255, 255)');
+    expect(summary.y).toBeGreaterThanOrEqual(toolbar.y);
+    expect(summary.x).toBeGreaterThan(toolbar.x);
+    expect(summary.x + summary.width).toBeLessThanOrEqual(toolbar.x + toolbar.width);
+    await expect(page.locator('.toolbar .summary')).toHaveCount(1);
     const geometry = await page.evaluate(() => {
       const root = document.scrollingElement, board = document.getElementById('board');
       const rect = element => { const r = element.getBoundingClientRect(); return { left: r.left, top: r.top, right: r.right, bottom: r.bottom, height: r.height }; };
@@ -1713,7 +1795,7 @@ test('project versions 403 explains the denied resource and keeps project select
   await expect(page.locator('#notice')).toContainText('Cannot load sprints for project');
   await expect(page.locator('#notice')).toContainText('Issue tracking');
   expect(fixture.requests.some(request => new URL(request.url()).pathname === '/redmine/projects/1/versions.json')).toBe(true);
-  await expect(page.locator('#sprint-name')).toContainText('Sprint data unavailable');
+  await expect(page.locator('#sprint-state')).toContainText('Sprint data unavailable');
   await expect(page.getByLabel('Project', { exact: true })).toBeEnabled();
   await page.getByLabel('Project', { exact: true }).selectOption('2');
   await expect(page.locator('#updated')).toContainText('Updated');
@@ -1742,8 +1824,9 @@ test('versions 403 pauses polling but manual Refresh retries after permissions c
 test('loads backlog, all sprint statuses and totals without executing issue HTML', async ({ page }) => {
   const errors = []; page.on('pageerror', error => errors.push(error.message));
   const fixture = await setup(page); await login(page);
-  // Target-version IDs are not issue IDs and must not become issue links.
-  await expect(page.locator('#sprint-name a')).toHaveCount(0);
+  await expect(page.locator('#sprint-name')).toHaveCount(0);
+  await expect(page.locator('.toolbar .summary')).toHaveCount(1);
+  await expect(page.locator('.closed-sprints-toggle')).toHaveText('');
   await expect(page.locator('[data-id="backlog"] .kanban-item')).toHaveCount(2);
   await expect(page.locator('.kanban-board[data-id="status-2"]')).toContainText('Already underway');
   await expect(page.locator('.unmapped-notice summary')).toContainText('1 issues outside displayed statuses');

@@ -18,7 +18,16 @@
   <a class="skip-link" href="#main">Skip to content</a>
   <header class="masthead">
     <div class="brand"><span class="brand-mark" aria-busy="false"><img src="/branding/redmine-logo.png" width="32" height="32" alt="Redmine"></span><div><span class="eyebrow">Redmine / Team planning</span><h1>Sprint board</h1></div></div>
-    <div class="masthead-actions"><button id="refresh" class="refresh-button" type="button" aria-label="Autorefresh" aria-pressed="false" title="Autorefresh off — enable" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6.1 6.1A8 8 0 0 1 20 12M4 12a8 8 0 0 0 13.9 5.9"/><path class="autorefresh-check" d="m8 12 3 3 5-6"/></svg><span class="control-label">Auto refresh</span></button><button id="refresh-now" class="refresh-button" type="button" aria-label="Refresh now" title="Refresh now" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M20 5v6h-6M20 11a8 8 0 1 0-2 7"/></svg><span class="control-label">Refresh now</span></button><button id="theme" class="theme-button" type="button" data-theme="system" aria-label="Appearance: System. Switch to Light" title="Appearance: System. Switch to Light">
+    <div id="planning-controls" class="toolbar panel" aria-label="Project and Sprint planning" hidden>
+      <label>Project<select id="project" aria-label="Project"></select></label>
+      <div class="sprint-control">
+        <label for="sprint">Sprint</label>
+        <select id="sprint" aria-label="Sprint"></select>
+      </div>
+      <label class="closed-sprints-toggle" title="Include closed sprints in the Sprint list."><input id="closed" type="checkbox" aria-label="Include closed sprints"><svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="14" height="12" rx="2"/><path d="M6 3v4m8-4v4M3 9h14m-10 4 2 2 4-4"/></svg></label>
+      <section class="summary" aria-label="Sprint commitment"><p id="sprint-state" class="muted"></p><div id="totals" class="totals"></div></section>
+    </div>
+    <div class="masthead-actions"><button id="refresh" class="refresh-button" type="button" aria-label="Autorefresh" aria-pressed="false" title="Autorefresh off — enable" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6.1 6.1A8 8 0 0 1 20 12M4 12a8 8 0 0 0 13.9 5.9"/><path class="autorefresh-check" d="m8 12 3 3 5-6"/></svg></button><button id="refresh-now" class="refresh-button" type="button" aria-label="Refresh now" title="Refresh now" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M20 5v6h-6M20 11a8 8 0 1 0-2 7"/></svg></button><button id="theme" class="theme-button" type="button" data-theme="system" aria-label="Appearance: System. Switch to Light" title="Appearance: System. Switch to Light">
       <svg data-theme-icon="system" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8m-4-4v4"/></svg>
       <svg data-theme-icon="light" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true" focusable="false" hidden><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.4 1.4m11.2 11.2L19 19M5 19l1.4-1.4M17.6 6.4 19 5"/></svg>
       <svg data-theme-icon="dark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false" hidden><path d="M20.5 14.5A9 9 0 0 1 9.5 3.5a9 9 0 1 0 11 11Z"/></svg>
@@ -46,15 +55,7 @@
     </section>
     <section id="workspace" hidden>
       <div class="planning-row">
-      <div class="toolbar panel">
-        <label>Project<select id="project" aria-label="Project"></select></label>
-        <div class="sprint-control">
-          <label for="sprint">Sprint</label>
-          <select id="sprint" aria-label="Sprint"></select>
-        </div>
-        <label class="checkbox" title="Include closed sprints in the Sprint list."><input id="closed" type="checkbox" aria-label="Include closed sprints"> Closed sprints</label>
-      </div>
-      <section class="summary panel" aria-label="Sprint commitment"><div><h2 id="sprint-name">Select a sprint</h2><p id="sprint-state" class="muted"></p></div><div id="totals" class="totals"></div></section>
+      <section id="project-summary" class="panel" aria-label="Projects and Target versions" tabindex="0">No projects in this Sprint</section>
       </div>
       <section id="sprint-filters" aria-label="Sprint Card filters">
         <div class="sprint-filter-controls" data-sprint-controls>

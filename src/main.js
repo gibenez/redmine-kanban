@@ -14,6 +14,7 @@ import { createSelectionPreferences } from './selection-preferences.js';
 import { createBoardScroll } from './board-scroll.js';
 import { createRelatedIssues } from './related-issues.js';
 import { projectColor } from './project-colors.js';
+import { renderProjectSummary } from './project-summary.js';
 
 const $ = id => document.getElementById(id);
 const beginLoading = createLoadingOverlay($('loading-overlay'));
@@ -53,6 +54,7 @@ const renderSprintFilters = createSprintFilterControls($('sprint-filters'), () =
   else renderSprintFilters(sprintFilters, [], []);
 });
 renderSprintFilters(sprintFilters, [], []);
+renderProjectSummary($('project-summary'), [], projects);
 const backlogFiltered = () => Boolean(filters.query.trim() || filters.tracker || filters.assignee || filters.tags.length);
 function resetFilters() {
   Object.assign(filters, { query: '', tracker: '', assignee: '', tags: [] });
@@ -123,7 +125,7 @@ function lock() {
   $('refresh').disabled = !api;
   $('refresh-now').disabled = busy || loading || !api;
   $('refresh-now').setAttribute('aria-busy', String(loading));
-  document.querySelectorAll('#workspace select, #workspace input, #workspace button, #edit-form input, #edit-form select, #edit-form button[type="submit"]').forEach(el => { el.disabled = busy || loading; });
+  document.querySelectorAll('#planning-controls select, #planning-controls input, #workspace select, #workspace input, #workspace button, #edit-form input, #edit-form select, #edit-form button[type="submit"]').forEach(el => { el.disabled = busy || loading; });
   document.querySelectorAll('.plan, .scope-toggle').forEach(el => { el.disabled = busy || loading || (el.closest('[data-id="backlog"]') && (queryLoading || feed?.loadingMore)); });
   $('tracker').disabled = busy || loading || !eligibleTrackers().length;
   document.querySelectorAll('[data-add-descendants]').forEach(el => { el.disabled = busy || loading || sprint?.status !== 'open' || !lanePlanning.get(Number(el.dataset.addDescendants))?.count; });
@@ -133,6 +135,7 @@ function lock() {
   $('board').setAttribute('aria-busy', String(loading));
 }
 function destroyBoard() {
+  renderProjectSummary($('project-summary'), [], projects);
   // Preserve the controls and their event listeners when replacing the board.
   for (const id of ['filter-controls', 'backlog-search', 'filtered']) { $(id).hidden = true; $('workspace').append($(id)); }
   laneResizeObserver?.disconnect(); laneResizeObserver = null;
@@ -140,6 +143,7 @@ function destroyBoard() {
 }
 function clearBoardCards() {
   renderSprintFilters(sprintFilters, [], []);
+  renderProjectSummary($('project-summary'), [], projects);
   if (!board) return;
   const emptyColumns = board.options.boards.map(column => {
     const title = document.createElement('div'); title.innerHTML = column.title;
@@ -248,6 +252,7 @@ function forget() {
   $('user-popover').hidePopover(); $('identity').hidden = true;
   $('refresh').hidden = true; $('refresh').disabled = true; $('refresh-now').hidden = true; $('statusbar').hidden = true; $('updated').textContent = '';
   $('user-avatar').textContent = ''; $('user-avatar').setAttribute('aria-label', 'Account'); $('user-avatar').removeAttribute('title'); $('user-name').textContent = '';
+  $('planning-controls').hidden = true;
   $('workspace').hidden = true; $('login').hidden = false; $('api-key').focus(); notify('API key forgotten on this browser.');
 }
 function linkToIssue(id) { return `${config.redminePublicUrl}/issues/${Number(id)}`; }
@@ -286,11 +291,16 @@ function dueDateMarkup(issue) {
   const date = e(issue.due_date);
   return `<time class="issue-due-date" datetime="${date}" title="Due date: ${date}">Due ${date}</time>`;
 }
-function card(issue) {
+function card(issue, backlog = false) {
   const id = Number(issue.id);
   const open = sprint?.status === 'open';
   const subject = e(issue.subject);
   const action = `${open ? 'Plan' : 'View'} #${id}`;
+  const project = issue.project?.name || `Project #${issue.project?.id}`;
+  const version = issue.fixed_version?.name || (issue.fixed_version?.id == null ? 'none' : `Version #${issue.fixed_version.id}`);
+  const metadata = backlog
+    ? `<span class="card-tracker" title="Tracker: ${e(issue.tracker.name)}">${e(issue.tracker.name)}</span>`
+    : `<span class="card-project" title="${e(`${project} (${version})`)}">${e(`${project} (${version})`)}</span>`;
   const assignee = issue.assigned_to?.name || 'Unassigned';
   const initials = issue.assigned_to ? assignee.trim().split(/\s+/u).map(part => Array.from(part)[0]).filter(Boolean).slice(0, 2).join('') : '–';
   return {
@@ -298,19 +308,14 @@ function card(issue) {
     projectColor: projectColor(projects, issue.project?.id),
     // The summary is clamped to three lines in CSS; title and aria-label keep the full text
     // reachable for pointer and assistive technology alike.
-    title: `<div class="card-head"><a href="${e(linkToIssue(issue.id))}" target="_blank" rel="noopener noreferrer">#${id}</a><h3 title="${subject}" aria-label="${subject}">${subject}</h3></div><div class="card-footer"><span class="card-assignee" title="Assignee: ${e(assignee)}"><span class="avatar${issue.assigned_to ? '' : ' unassigned'}" aria-hidden="true">${e(initials)}</span><span>${e(assignee)}</span></span><span class="card-tracker" title="Tracker: ${e(issue.tracker.name)}">${e(issue.tracker.name)}</span></div>${isSwimlane(issue, config.swimlaneTrackers) ? dueDateMarkup(issue) : ''}<button type="button" class="plan" data-edit="${id}" aria-label="${action}" title="${action}"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m10.5 2.5 3 3M3 10l7.5-7.5a2.1 2.1 0 0 1 3 3L6 13l-4 1 1-4Z"/></svg></button>`,
+    title: `<div class="card-head"><a href="${e(linkToIssue(issue.id))}" target="_blank" rel="noopener noreferrer">#${id}</a><h3 title="${subject}" aria-label="${subject}">${subject}</h3></div><div class="card-footer"><span class="card-assignee" title="Assignee: ${e(assignee)}"><span class="avatar${issue.assigned_to ? '' : ' unassigned'}" aria-hidden="true">${e(initials)}</span><span>${e(assignee)}</span></span>${metadata}</div>${isSwimlane(issue, config.swimlaneTrackers) ? dueDateMarkup(issue) : ''}<button type="button" class="plan" data-edit="${id}" aria-label="${action}" title="${action}"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m10.5 2.5 3 3M3 10l7.5-7.5a2.1 2.1 0 0 1 3 3L6 13l-4 1 1-4Z"/></svg></button>`,
   };
 }
 function backlogCard(issue) {
-  const item = card(issue);
+  const item = card(issue, true);
   item.class.push(priorityClass(issue.priority?.name));
   return item;
 }
-function renderSprintHeading() {
-  const heading = $('sprint-name'), name = sprint?.name || 'No sprint selected';
-  if (heading.textContent !== name) heading.textContent = name;
-}
-
 function unmappedNotice(items) {
   if (!items.length) return '';
   return `<details class="unmapped-notice"><summary>${items.length} issues outside displayed statuses</summary><ul>${items.map(issue => `<li><a href="${e(linkToIssue(issue.id))}" target="_blank" rel="noopener noreferrer">#${Number(issue.id)} — ${e(issue.subject)}</a> · ${e(issue.status.name)}</li>`).join('')}</ul></details>`;
@@ -336,7 +341,6 @@ function renderBoard() {
   const scrollPosition = boardScroll.beforeRender(JSON.stringify([scrollIdentity, projectId, sprint?.id, sprintFilters]));
   const visible = issues;
   const total = effort(feed?.snapshot.sprintAll || []);
-  renderSprintHeading();
   $('sprint-state').textContent = sprint ? `${sprint.status === 'open' ? 'Open sprint' : 'Closed sprint · read only'}${sprint.due_date ? ` · Due ${sprint.due_date}` : ''}` : 'Create an open product version in Redmine to start planning.';
   const totalsMarkup = `<div><strong>${e(Number(total.hours.toFixed(2)))}</strong><span>estimated hours</span></div><div><strong>${total.count}</strong><span>issues</span></div><div><strong>${total.unestimated}</strong><span>unestimated</span></div>`;
   if ($('totals').innerHTML !== totalsMarkup) $('totals').innerHTML = totalsMarkup;
@@ -344,10 +348,11 @@ function renderBoard() {
   const backlog = visible.filter(issue => backlogIds.has(issue.id));
   const boards = [{ id: 'backlog', title: `${backlogToggle()}<span class="backlog-label">Backlog</span> <span class="count">${backlog.length} / ${feed?.snapshot.total ?? '?'}</span>${backlogCollapsed && backlogFiltered() ? '<span class="backlog-filtered muted">Filtered</span>' : ''}`, class: 'backlog-board', item: backlog.map(backlogCard) }];
   const { cards, visible: sprintVisible, lanes, tagChoices } = filteredSprint(feed?.snapshot.sprintAll || [], config.swimlaneTrackers, laneAncestors, sprintFilters);
-  renderSprintFilters(sprintFilters, cards, sprintVisible, tagChoices);
+  renderSprintFilters(sprintFilters, cards, sprintVisible, tagChoices, projects);
+  renderProjectSummary($('project-summary'), cards, projects);
   for (const [index, statusId] of config.columnStatusIds.entries()) {
     const items = lanes ? lanes.flatMap(lane => lane.visible.filter(issue => issue.status.id === statusId).map(issue => ({ ...card(issue), lane: lane.id })))
-      : sprintVisible.filter(issue => issue.status.id === statusId).map(card);
+      : sprintVisible.filter(issue => issue.status.id === statusId).map(issue => card(issue));
     boards.push({ id: `status-${statusId}`, title: `${e(statuses.find(status => status.id === statusId).name)} <span class="count">${items.length}</span>`, item: items,
       lanes: lanes?.map(lane => ({ id: lane.id, title: index === 0 ? laneHeading(lane) : '' })),
     });
@@ -569,8 +574,7 @@ async function refresh(projectChanged = false, retryDenied = false, background =
         issues = []; versions = []; memberships = []; sprint = null;
         renderFilters(); clearBoardCards();
         options($('sprint'), [['', 'Sprints unavailable']]);
-        $('sprint-name').textContent = 'Sprint data unavailable';
-        $('sprint-state').textContent = 'See the error above. Choose another project or retry with Refresh.';
+        $('sprint-state').textContent = 'Sprint data unavailable. See the error above. Choose another project or retry with Refresh.';
         $('totals').replaceChildren(); $('filtered').textContent = ''; $('updated').textContent = ''; $('empty').hidden = true;
       }
     }
@@ -706,7 +710,7 @@ async function connect(key, remember) {
     try {
       if (remember) localStorage.setItem(storageKey, key); else localStorage.removeItem(storageKey);
     } catch { notify('Connected, but browser storage is unavailable. The API key will not be remembered.', true); }
-    $('api-key').value = ''; $('login').hidden = true; $('workspace').hidden = false;
+    $('api-key').value = ''; $('login').hidden = true; $('workspace').hidden = false; $('planning-controls').hidden = false;
     document.body.classList.add('board-active');
     $('refresh').hidden = false; $('refresh-now').hidden = false; $('statusbar').hidden = false;
     renderIdentity(userData.user);
@@ -751,6 +755,7 @@ $('sprint').addEventListener('change', () => {
   boardScroll.reset();
   cancelQuery(); feed = newFeed();
   sprint = versions.find(version => version.id === Number($('sprint').value));
+  renderProjectSummary($('project-summary'), [], projects);
   if (sprint) {
     selectionPreferences?.selectProject(projectId);
     selectionPreferences?.selectSprint(projectId, sprint.id);

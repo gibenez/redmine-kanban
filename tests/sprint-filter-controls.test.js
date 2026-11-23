@@ -45,6 +45,21 @@ describe('readable planning controls', () => {
     expect(document.activeElement).toBe(search);
   });
 
+  it('adds project-only swatches and updates colors without changing filter labels', () => {
+    const root = document.getElementById('sprint-filters');
+    const render = createSprintFilterControls(root, vi.fn());
+    const filters = emptySprintFilters();
+    const cards = [{ project: { id: 2, name: 'Module' }, priority: { id: 3, name: 'High' } }];
+    const projects = [{ id: 2, custom_fields: [{ name: 'Colore', value: '#123456' }] }];
+    render(filters, cards, cards, [], projects);
+    const label = root.querySelector('[data-filter="project"] label');
+    expect(label.textContent).toBe('Module');
+    expect(label.querySelector('.project-swatch').style.getPropertyValue('--project-color')).toBe('#123456');
+    expect(root.querySelector('[data-filter="priority"] .project-swatch')).toBeNull();
+    render(filters, cards, cards, [], []);
+    expect(root.querySelector('[data-filter="project"] .project-swatch').style.getPropertyValue('--project-color')).toBe('');
+  });
+
   it('names a single selection and describes multiple or unavailable selections', () => {
     const root = document.getElementById('sprint-filters');
     const filters = emptySprintFilters();
