@@ -88,15 +88,16 @@ function positionUserPopover() {
   $('user-popover').style.right = `${Math.max(8, window.innerWidth - bounds.right)}px`;
 }
 
+function positionNotice() {
+  const parent = document.body.classList.contains('board-active') ? $('statusbar') : $('main');
+  if ($('notice').parentElement !== parent) parent.prepend($('notice'));
+}
 function notify(message, error = false) {
-  const compactMessage = document.body.classList.contains('board-active') && message.length > 180;
-  const text = document.createElement('span'); text.textContent = message;
+  positionNotice();
+  const text = document.createElement('span');
+  text.textContent = message;
   $('notice').replaceChildren(text);
-  $('notice-message').textContent = message;
-  if (compactMessage) {
-    const more = document.createElement('button'); more.type = 'button'; more.textContent = 'Full message';
-    more.addEventListener('click', () => $('notice-dialog').showModal()); $('notice').append(more);
-  }
+  $('notice').title = message;
   $('notice').className = error ? 'error' : 'success';
   $('notice').hidden = !message;
   $('editor-notice').textContent = message;
@@ -248,7 +249,7 @@ function forget() {
   $('editor').close(); editing = null; destroyBoard();
   issues = []; versions = []; memberships = []; projects = []; sprint = null; projectId = ''; blockedProjectId = '';
   document.body.classList.remove('board-active');
-  $('notice-dialog').close(); $('help-dialog').close();
+  $('help-dialog').close();
   $('user-popover').hidePopover(); $('identity').hidden = true;
   $('refresh').hidden = true; $('refresh').disabled = true; $('refresh-now').hidden = true; $('statusbar').hidden = true; $('updated').textContent = '';
   $('user-avatar').textContent = ''; $('user-avatar').setAttribute('aria-label', 'Account'); $('user-avatar').removeAttribute('title'); $('user-name').textContent = '';
@@ -713,6 +714,7 @@ async function connect(key, remember) {
     $('api-key').value = ''; $('login').hidden = true; $('workspace').hidden = false; $('planning-controls').hidden = false;
     document.body.classList.add('board-active');
     $('refresh').hidden = false; $('refresh-now').hidden = false; $('statusbar').hidden = false;
+    positionNotice();
     renderIdentity(userData.user);
     scrollIdentity = JSON.stringify([config.redminePublicUrl, userData.user.id]);
     selectionPreferences = createSelectionPreferences(config.redminePublicUrl, userData.user.id);

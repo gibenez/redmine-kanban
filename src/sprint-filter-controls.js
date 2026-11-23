@@ -1,6 +1,6 @@
 import { sprintFilterChoices, sprintFiltersActive } from './sprint-filters.js';
 import { projectColor } from './project-colors.js';
-import { projectSwatch } from './project-summary.js';
+import { compareProjectPresentation, projectSwatch } from './project-summary.js';
 
 // Preserve the search node and unchanged option lists across board rerenders.
 export function createSprintFilterControls(root, onChange) {
@@ -78,6 +78,10 @@ export function createSprintFilterControls(root, onChange) {
       if (details.open) for (const input of list.querySelectorAll('input')) {
         if (!choices.some(([id]) => id === input.value)) choices.push([input.value, input.parentElement.textContent]);
       }
+      if (key === 'project') choices.sort(([idA, nameA], [idB, nameB]) => compareProjectPresentation(
+        { id: idA, name: nameA, color: projectColor(projects, idA) },
+        { id: idB, name: nameB, color: projectColor(projects, idB) },
+      ));
       const signature = JSON.stringify(choices.map(([id, name]) => [id, name, key === 'project' ? projectColor(projects, id) : '']));
       if (list.dataset.choices !== signature) {
         list.replaceChildren(...choices.map(([id, name]) => {

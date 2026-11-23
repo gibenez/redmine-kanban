@@ -2,6 +2,10 @@ import { projectColor } from './project-colors.js';
 
 const compareNames = (a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });
 
+export function compareProjectPresentation(a, b) {
+  return Number(Boolean(b.color)) - Number(Boolean(a.color)) || compareNames(a.name, b.name) || compareNames(a.id, b.id);
+}
+
 // Input is the complete ordinary Sprint Card set, never the filtered view.
 export function projectSummary(cards, projects) {
   const groups = new Map();
@@ -16,7 +20,7 @@ export function projectSummary(cards, projects) {
     group.versions.set(version?.id == null ? 'none' : String(version.id), version?.id == null ? 'none' : version.name || `Version #${version.id}`);
   }
   return [...groups.values()]
-    .sort((a, b) => Number(Boolean(b.color)) - Number(Boolean(a.color)) || compareNames(a.name, b.name) || compareNames(a.id, b.id))
+    .sort(compareProjectPresentation)
     .map(group => ({ ...group, versions: [...group.versions.entries()]
       .sort(([a, nameA], [b, nameB]) => Number(a === 'none') - Number(b === 'none') || compareNames(nameA, nameB) || compareNames(a, b))
       .map(([, name]) => name) }));

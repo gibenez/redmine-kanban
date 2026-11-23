@@ -81,6 +81,17 @@ async function signOut(page) {
   await page.getByRole('button', { name: 'Sign out', exact: true }).click();
 }
 
+test('projects without a valid color have transparent swatches', async ({ page }) => {
+  await setup(page);
+  await page.route('**/redmine/projects.json?**', route => route.fulfill({ json: { projects: [
+    { id: 1, name: 'Team', trackers: [{ id: 1, name: 'Feature' }, { id: 2, name: 'Bug' }], custom_fields: [{ name: 'Colore', value: 'invalid' }] },
+  ] } }));
+  await login(page);
+  await expect(page.locator('#project-summary .project-swatch')).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+  await page.locator('[data-filter="project"] summary').click();
+  await expect(page.locator('[data-filter="project"] .project-swatch')).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+});
+
 test('project overview stays unfiltered, refreshes versions and fits narrow screens', async ({ page }) => {
   const { issues } = await setup(page);
   issues[1].fixed_version = { id: 300, name: '2.10' };
@@ -845,6 +856,46 @@ test('a delayed old search cannot overwrite newer results', async ({ page }) => 
   await expect(page.getByLabel('Search backlog')).toHaveValue('Already');
 });
 
+for (const width of [1280, 390]) {
+  test(`board messages fit the existing thin bottom status bar at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 1000 });
+    await setup(page);
+    await login(page);
+    const statusbar = page.locator('#statusbar');
+    const before = await statusbar.boundingBox();
+    const boardBefore = await page.locator('#board').boundingBox();
+    const message = 'A long Redmine error. '.repeat(40);
+    await page.route('**/redmine/projects/1/versions.json**', route => route.fulfill({ status: 503, json: { errors: [message] } }));
+    await page.getByRole('button', { name: 'Refresh now', exact: true }).click();
+    const notice = statusbar.locator('#notice');
+    await expect(notice).toContainText(message.trim());
+    await expect(page.locator('main > #notice')).toHaveCount(0);
+    expect(await statusbar.boundingBox()).toEqual(before);
+    expect(before.height).toBe(24);
+    expect(await page.locator('#board').boundingBox()).toEqual(boardBefore);
+    const geometry = await notice.evaluate(node => {
+      const text = node.querySelector('span'), bounds = node.getBoundingClientRect();
+      return { clipped: text.scrollWidth > text.clientWidth, right: bounds.right, height: bounds.height };
+    });
+    expect(geometry.clipped).toBe(true);
+    expect(geometry.right).toBeLessThanOrEqual(width);
+    expect(geometry.height).toBeLessThanOrEqual(24);
+    await expect(notice.locator('button, a')).toHaveCount(0);
+    await expect(notice).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+    await expect(notice).toHaveAttribute('title', `Refresh failed: ${message}`);
+    const indicator = await notice.evaluate(node => {
+      const dot = getComputedStyle(node, '::before');
+      return { text: node.textContent, color: getComputedStyle(node).color, dotColor: dot.backgroundColor, dotSize: dot.width };
+    });
+    expect(indicator.text).toBe(`Refresh failed: ${message}`);
+    expect(indicator.dotColor).toBe(indicator.color);
+    expect(indicator.dotSize).toBe('7px');
+    await signOut(page);
+    await expect(page.locator('main > #notice')).toContainText('API key forgotten');
+    await expect(statusbar).toBeHidden();
+  });
+}
+
 test('Sprint Cards show project and Target Version while Backlog retains its tracker', async ({ page }) => {
   const { issues } = await setup(page);
   const release = '<release> 2.10 ' + 'long version name '.repeat(8);
@@ -990,11 +1041,11 @@ test('dark mode follows the system preference on login, board and dialogs', asyn
   await page.getByRole('button', { name: 'Refresh now', exact: true }).click();
   await expect(page.locator('#notice.error')).toContainText('A theme test error');
   await expect(page.locator('#notice')).toHaveCSS('color', 'rgb(255, 188, 170)');
-  await expect(page.locator('#notice')).toHaveCSS('background-color', 'rgb(56, 37, 31)');
+  await expect(page.locator('#notice')).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
   await page.emulateMedia({ colorScheme: 'light' });
   await expect(page.locator('html')).toHaveCSS('color-scheme', 'light');
   await expect(page.locator('#project')).toHaveCSS('background-color', 'rgb(255, 255, 255)');
-  await expect(page.locator('#notice')).toHaveCSS('background-color', 'rgb(255, 235, 236)');
+  await expect(page.locator('#notice')).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
   await page.emulateMedia({ colorScheme: 'dark' });
   await expect(page.locator('#project')).toHaveCSS('background-color', 'rgb(30, 31, 34)');
 });

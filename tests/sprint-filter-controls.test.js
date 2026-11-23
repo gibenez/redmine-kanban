@@ -45,6 +45,25 @@ describe('readable planning controls', () => {
     expect(document.activeElement).toBe(search);
   });
 
+  it('sorts projects like the overview: valid colors first, then natural alphabetical names', () => {
+    const root = document.getElementById('sprint-filters');
+    const render = createSprintFilterControls(root, vi.fn());
+    const projects = [
+      { id: 1, name: 'Alpha' },
+      { id: 2, name: 'Zulu', custom_fields: [{ name: 'Colore', value: '#123456' }] },
+      { id: 3, name: 'Module 10', custom_fields: [{ name: 'Colore', value: '#abcdef' }] },
+      { id: 4, name: 'Module 2', custom_fields: [{ name: 'Colore', value: '#ABCDEF' }] },
+      { id: 5, name: 'Beta', custom_fields: [{ name: 'Colore', value: 'invalid' }] },
+      { id: 6, name: 'Gamma', custom_fields: [{ name: 'Colore', value: '' }] },
+    ];
+    const cards = projects.map(project => ({ project }));
+    render(emptySprintFilters(), cards, cards, [], projects);
+    const labels = () => [...root.querySelectorAll('[data-filter="project"] label')].map(node => node.textContent);
+    expect(labels()).toEqual(['Module 2', 'Module 10', 'Zulu', 'Alpha', 'Beta', 'Gamma']);
+    render(emptySprintFilters(), cards, cards, [], []);
+    expect(labels()).toEqual(['Alpha', 'Beta', 'Gamma', 'Module 2', 'Module 10', 'Zulu']);
+  });
+
   it('adds project-only swatches and updates colors without changing filter labels', () => {
     const root = document.getElementById('sprint-filters');
     const render = createSprintFilterControls(root, vi.fn());
