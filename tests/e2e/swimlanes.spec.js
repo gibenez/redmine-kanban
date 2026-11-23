@@ -247,7 +247,7 @@ for (const mode of ['light', 'dark']) {
           headerTop: header.top, headerHeight: header.height,
           sections: sections.map(rect => ({ left: rect.left, top: rect.top, bottom: rect.bottom })) };
       });
-      expect(geometry.width).toBe(3);
+      expect(geometry.width).toBe(5);
       expect(geometry.left).toBe(geometry.sections[0].left);
       expect(geometry.top).toBe(geometry.headerTop);
       for (const section of geometry.sections) {

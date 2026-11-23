@@ -41,6 +41,7 @@
 
   /* Deliberately stronger than the original muted stripes: priority must be readable
      at a glance, including Normal. Names, never arbitrary Redmine IDs, select colors. */
+  --priority-bar-width: 5px;
   --priority-none: #a8adbd;
   --priority-low: #3c9b55;
   --priority-normal: #e0b51b;
@@ -194,7 +195,7 @@ input::placeholder { color: var(--secondary); opacity: 1; }
 #editor-tags { margin-bottom: 12px; }
 .lane-tracker { flex: none; white-space: nowrap; }
 .lane-priority-bar {
-  position: absolute; left: 0; top: 0; width: 3px; height: var(--swimlane-height, 100%);
+  position: absolute; left: 0; top: 0; width: var(--priority-bar-width); height: var(--swimlane-height, 100%);
   background: var(--stripe, var(--priority-none)); pointer-events: auto;
 }
 
@@ -313,7 +314,7 @@ input::placeholder { color: var(--secondary); opacity: 1; }
 .kanban-item:hover { border-color: var(--secondary); box-shadow: var(--shadow); cursor: grab; }
 .kanban-item:active:not(.not-draggable) { cursor: grabbing; }
 [data-id="backlog"] .kanban-item {
-  border-left: 5px solid var(--stripe, var(--priority-none));
+  border-left: var(--priority-bar-width) solid var(--stripe, var(--priority-none));
 }
 [data-id="backlog"] .kanban-item:hover, [data-id="backlog"] .kanban-item:focus-within {
   border-left-color: var(--stripe, var(--priority-none));
