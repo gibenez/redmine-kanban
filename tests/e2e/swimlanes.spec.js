@@ -156,6 +156,27 @@ for (const activation of ['click', 'keyboard']) {
 }
 
 for (const mode of ['light', 'dark']) {
+  test(`Backlog and board canvas contrast with unchanged Swimlane interiors in ${mode} mode`, async ({ page }) => {
+    await page.emulateMedia({ colorScheme: mode });
+    await setup(page);
+    const well = mode === 'light' ? 'rgb(229, 234, 241)' : 'rgb(50, 54, 62)';
+    const surface = mode === 'light' ? 'rgb(255, 255, 255)' : 'rgb(30, 31, 34)';
+    await expect(page.locator('[data-id="backlog"] .kanban-drag')).toHaveCSS('background-color', well);
+    for (const section of await page.locator('.swimlane-section').all()) {
+      await expect(section).toHaveCSS('background-color', surface);
+    }
+    for (const card of await page.locator('.kanban-item').all()) {
+      await expect(card).toHaveCSS('background-color', surface);
+    }
+    for (const header of await page.locator('.swimlane-headers > .swimlane-heading').all()) {
+      await expect(header).toHaveCSS('background-color', surface);
+      expect(await header.evaluate(node => getComputedStyle(node, '::before').backgroundColor)).toBe(well);
+    }
+    for (const list of await page.locator('.has-swimlanes').all()) {
+      await expect(list).toHaveCSS('background-color', well);
+    }
+  });
+
   test(`Swimlanes frame their title and children as separated non-draggable groups in ${mode} mode`, async ({ page }) => {
     await page.emulateMedia({ colorScheme: mode });
     const fixture = await setup(page);
