@@ -156,6 +156,58 @@ for (const activation of ['click', 'keyboard']) {
 }
 
 for (const mode of ['light', 'dark']) {
+  test(`Swimlanes frame their title and children as separated non-draggable groups in ${mode} mode`, async ({ page }) => {
+    await page.emulateMedia({ colorScheme: mode });
+    const fixture = await setup(page);
+    fixture.rows[0].custom_fields[0].value = ['100'];
+    fixture.rows[1].status = { id: 5, name: 'Done', is_closed: true };
+    fixture.rows.push({ ...fixture.rows[1], id: 50, subject: 'Child in New', status: { id: 1, name: 'New' } });
+    await page.getByRole('button', { name: 'Refresh now', exact: true }).click();
+    const lane = heading(page, 1);
+    const geometry = await lane.evaluate(node => {
+      const heading = node.getBoundingClientRect(), frame = getComputedStyle(node, '::after');
+      const frameTop = heading.top + parseFloat(getComputedStyle(node).borderTopWidth) + parseFloat(frame.top);
+      const sections = [...document.querySelectorAll('.swimlane-section[data-lane="1"]')].map(section => section.getBoundingClientRect());
+      const children = [...document.querySelectorAll('.swimlane-section[data-lane="1"] .kanban-item')].map(card => card.getBoundingClientRect());
+      const first = document.querySelector('.has-swimlanes');
+      const rows = [...first.querySelectorAll('.swimlane-section')].map(section => section.getBoundingClientRect());
+      const firstBounds = first.getBoundingClientRect();
+      const last = [...document.querySelectorAll('.has-swimlanes')].at(-1), lastBounds = last.getBoundingClientRect();
+      const scrollbarGutter = Math.max(16, lastBounds.width - last.clientLeft - last.clientWidth);
+      const card = document.querySelector('[data-eid="50"]'), bounds = card.getBoundingClientRect();
+      const hit = document.elementFromPoint(bounds.left + bounds.width / 2, bounds.top + bounds.height / 2);
+      return { left: heading.left, right: heading.right, top: frameTop, bottom: frameTop + parseFloat(frame.height),
+        radius: frame.borderTopRightRadius, pointerEvents: frame.pointerEvents, draggable: node.draggable,
+        outerLeft: heading.left - firstBounds.left, outerTop: rows[0].top - firstBounds.top,
+        outerRight: lastBounds.right - scrollbarGutter - heading.right,
+        sections: sections.map(rect => ({ top: rect.top, bottom: rect.bottom, right: rect.right })),
+        children: children.map(rect => ({ left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom })),
+        gaps: rows.slice(1).map((row, index) => row.top - rows[index].bottom), hitCard: hit?.closest('.kanban-item')?.dataset.eid };
+    });
+    expect(geometry.radius).toBe('4px');
+    expect(geometry.pointerEvents).toBe('none');
+    expect(geometry.draggable).toBe(false);
+    expect(geometry.hitCard).toBe('50');
+    expect(geometry.outerLeft).toBeCloseTo(8, 1);
+    expect(geometry.outerTop).toBeCloseTo(8, 1);
+    expect(geometry.outerRight).toBeCloseTo(8, 1);
+    for (const gap of geometry.gaps) expect(gap).toBe(8);
+    for (const section of geometry.sections) {
+      expect(section.top).toBe(geometry.top);
+      expect(section.bottom).toBe(geometry.bottom);
+    }
+    expect(geometry.sections.at(-1).right).toBe(geometry.right);
+    for (const child of geometry.children) {
+      expect(child.left).toBeGreaterThan(geometry.left);
+      expect(child.right).toBeLessThan(geometry.right);
+      expect(child.top).toBeGreaterThan(geometry.top);
+      expect(child.bottom).toBeLessThan(geometry.bottom);
+    }
+    await laneCard(page, 1, 50).dragTo(page.locator('[data-id="status-2"] [data-lane="1"] .swimlane-cards'));
+    await expect(page.locator('[data-id="status-2"] [data-eid="50"]')).toBeVisible();
+    expect(fixture.writes).toEqual([{ id: 50, patch: { status_id: 2 } }]);
+  });
+
   test(`Swimlane tags follow the title instead of aligning right in ${mode} mode`, async ({ page }) => {
     await page.emulateMedia({ colorScheme: mode });
     const fixture = await setup(page);

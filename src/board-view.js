@@ -130,7 +130,11 @@ export function positionSwimlaneHeaders(container) {
   // leave a 16px clear strip; use the actual gutter when a wider native scrollbar
   // is present. Measuring only clientWidth lets the overlay paint over the thumb.
   const lastList = lists.at(-1);
-  const scrollbarGutter = Math.max(16, last.width - lastList.clientLeft - lastList.clientWidth);
+  const occupiedGutter = last.width - lastList.clientLeft - lastList.clientWidth;
+  const scrollbarGutter = Math.max(16, occupiedGutter);
+  // Keep the last segment and its children inside the same frame edge on both
+  // overlay-scrollbar and classic-scrollbar platforms.
+  lastList.style.setProperty('--swimlane-scrollbar-inset', `${scrollbarGutter - occupiedGutter}px`);
   headers.style.width = `${last.right - first.left - scrollbarGutter}px`;
   headers.style.height = `${first.height}px`;
   const sections = [...lists[0].querySelectorAll('.swimlane-section')];

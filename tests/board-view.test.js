@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { reconcileBoard } from '../src/board-view.js';
+import { reconcileBoard, positionSwimlaneHeaders } from '../src/board-view.js';
 
 // Minimal jKanban adapter: exercise our DOM reconciliation independently of its
 // bundled Dragula implementation (real dragging is covered in browser tests).
@@ -48,6 +48,21 @@ describe('Card project colours', () => {
 });
 
 describe('Swimlane reconciliation', () => {
+  for (const occupiedGutter of [0, 15, 20]) {
+    it(`aligns the group frame and last segment with a ${occupiedGutter}px scrollbar gutter`, () => {
+      const board = boardFixture();
+      reconcileBoard(board, [definition([], [lane('1')]), { ...definition([], [lane('1')]), id: 'status-2' }]);
+      const lists = [...board.container.querySelectorAll('.has-swimlanes')];
+      lists.forEach((list, index) => {
+        list.getBoundingClientRect = () => ({ left: index * 250, right: (index + 1) * 250, top: 0, width: 250, height: 300 });
+        Object.defineProperty(list, 'clientWidth', { value: 250 - (index === 1 ? occupiedGutter : 0) });
+      });
+      positionSwimlaneHeaders(board.container);
+      const gutter = Math.max(16, occupiedGutter);
+      expect(document.querySelector('.swimlane-headers').style.width).toBe(`${500 - gutter}px`);
+      expect(lists[1].style.getPropertyValue('--swimlane-scrollbar-inset')).toBe(`${gutter - occupiedGutter}px`);
+    });
+  }
   it('removes empty Ungrouped headings and sections but keeps empty Sprint Columns droppable', () => {
     const board = boardFixture();
     reconcileBoard(board, [definition([item(7, 'ungrouped')], [lane('ungrouped')])]);
