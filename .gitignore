@@ -6,5 +6,7 @@ dist/
 playwright-report/
 test-results/
 coverage/
+# Local visual-check builds, browser profiles and screenshots.
+.taste-skill/
 # Third-party documentation screenshots used only to measure; re-fetch, do not vendor.
 .scratch/sprint-planning/youtrack-shots/

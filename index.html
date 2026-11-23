@@ -1,19 +1,24 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-type="software">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="referrer" content="no-referrer">
   <title>Redmine Sprint Board</title>
   <meta name="color-scheme" content="light dark">
+  <meta name="description" content="Plan Redmine issues by Sprint, assign work and review estimates on your team's Sprint Board.">
+  <meta name="page-type" content="software">
+  <meta name="site-kind" content="software">
+  <link rel="icon" href="/branding/redmine-logo.png">
   <script src="/theme.js"></script>
   <link rel="stylesheet" href="/vendor/jkanban.min.css">
   <link rel="stylesheet" href="/vendor/dragula.min.css">
 </head>
 <body>
+  <a class="skip-link" href="#main">Skip to content</a>
   <header class="masthead">
     <div class="brand"><span class="brand-mark" aria-busy="false"><img src="/branding/redmine-logo.png" width="32" height="32" alt="Redmine"></span><div><span class="eyebrow">Redmine / Team planning</span><h1>Sprint board</h1></div></div>
-    <div class="masthead-actions"><button id="refresh" class="refresh-button" type="button" aria-label="Autorefresh" aria-pressed="false" title="Autorefresh off — enable" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6.1 6.1A8 8 0 0 1 20 12M4 12a8 8 0 0 0 13.9 5.9"/><path class="autorefresh-check" d="m8 12 3 3 5-6"/></svg></button><button id="refresh-now" class="refresh-button" type="button" aria-label="Refresh now" title="Refresh now" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M20 5v6h-6M20 11a8 8 0 1 0-2 7"/></svg></button><button id="theme" class="theme-button" type="button" data-theme="system" aria-label="Appearance: System. Switch to Light" title="Appearance: System. Switch to Light">
+    <div class="masthead-actions"><button id="refresh" class="refresh-button" type="button" aria-label="Autorefresh" aria-pressed="false" title="Autorefresh off — enable" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6.1 6.1A8 8 0 0 1 20 12M4 12a8 8 0 0 0 13.9 5.9"/><path class="autorefresh-check" d="m8 12 3 3 5-6"/></svg><span class="control-label">Auto refresh</span></button><button id="refresh-now" class="refresh-button" type="button" aria-label="Refresh now" title="Refresh now" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M20 5v6h-6M20 11a8 8 0 1 0-2 7"/></svg><span class="control-label">Refresh now</span></button><button id="theme" class="theme-button" type="button" data-theme="system" aria-label="Appearance: System. Switch to Light" title="Appearance: System. Switch to Light">
       <svg data-theme-icon="system" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8m-4-4v4"/></svg>
       <svg data-theme-icon="light" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true" focusable="false" hidden><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.4 1.4m11.2 11.2L19 19M5 19l1.4-1.4M17.6 6.4 19 5"/></svg>
       <svg data-theme-icon="dark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false" hidden><path d="M20.5 14.5A9 9 0 0 1 9.5 3.5a9 9 0 1 0 11 11Z"/></svg>
@@ -25,13 +30,14 @@
       </div>
     </div></div>
   </header>
-  <main>
+  <main id="main" tabindex="-1">
     <div id="notice" role="status" aria-live="polite" hidden></div>
     <section id="login" class="login panel">
-      <span class="eyebrow">YOUR TEAM. YOUR WORKFLOW.</span><h2>Make room for the next sprint.</h2>
-      <p>Connect with your personal Redmine API key. Your permissions stay yours.</p>
+      <span class="eyebrow">Redmine Sprint Board</span><h2>Connect to your Sprint Board</h2>
+      <p>Plan issues, assign work and review Sprint estimates using your Redmine account.</p>
+      <p class="login-instructions" id="api-key-hint">Find your API key in Redmine under <strong>My account → API access key</strong>. Redmine controls which issues you can view and edit.</p>
       <form id="login-form">
-        <label for="api-key">Personal API key</label><input id="api-key" name="key" type="password" required autocomplete="off" spellcheck="false">
+        <label for="api-key">Personal API key</label><input id="api-key" name="key" type="password" required autocomplete="off" spellcheck="false" aria-describedby="api-key-hint">
         <label class="checkbox"><input id="remember" type="checkbox"> Remember API key on this browser</label>
         <p class="muted">Remembered keys are stored in this site's local storage. Only use this on a trusted browser.</p>
         <button type="submit" class="primary">Connect to Redmine</button>
@@ -46,21 +52,25 @@
           <label for="sprint">Sprint</label>
           <select id="sprint" aria-label="Sprint"></select>
         </div>
-        <label class="checkbox" title="Include closed sprints in the Sprint list."><input id="closed" type="checkbox" aria-label="Include closed sprints"> Show closed</label>
+        <label class="checkbox" title="Include closed sprints in the Sprint list."><input id="closed" type="checkbox" aria-label="Include closed sprints"> Closed sprints</label>
       </div>
       <section class="summary panel" aria-label="Sprint commitment"><div><h2 id="sprint-name">Select a sprint</h2><p id="sprint-state" class="muted"></p></div><div id="totals" class="totals"></div></section>
       </div>
       <section id="sprint-filters" aria-label="Sprint Card filters">
-        <input id="sprint-query" type="search" aria-label="Search Sprint Cards" placeholder="Search by ID or title" autocomplete="off">
-        <details data-filter="project"><summary>Project: All</summary><div class="sprint-filter-options" role="group" aria-label="Filter Cards by project"></div></details>
-        <details data-filter="assignee"><summary>Assignee: All</summary><div class="sprint-filter-options" role="group" aria-label="Filter Cards by assignee"></div></details>
-        <details data-filter="priority"><summary>Priority: All</summary><div class="sprint-filter-options" role="group" aria-label="Filter Cards by priority"></div></details>
-        <details data-filter="tag"><summary>Tag: All</summary><div class="sprint-filter-options" role="group" aria-label="Filter Cards by Swimlane tag"></div></details>
-        <span data-sprint-count class="muted" role="status" aria-live="polite"></span>
-        <span data-sprint-empty role="status" hidden>No Cards match these filters</span>
-        <button type="button" data-clear-sprint hidden>Clear filters</button>
+        <div class="sprint-filter-controls" data-sprint-controls>
+          <label class="sprint-search" for="sprint-query"><span>Sprint filters</span><input id="sprint-query" type="search" aria-label="Search Sprint Cards" placeholder="Issue ID or title" autocomplete="off"></label>
+          <details data-filter="project"><summary>Project: All</summary><div class="sprint-filter-options" role="group" aria-label="Filter Cards by project"><div class="sprint-filter-heading"><span>Projects</span><button type="button" data-clear-filter aria-label="Clear Project filter" hidden>Clear</button></div><div data-filter-choices></div></div></details>
+          <details data-filter="assignee"><summary>Assignee: All</summary><div class="sprint-filter-options" role="group" aria-label="Filter Cards by assignee"><div class="sprint-filter-heading"><span>Assignees</span><button type="button" data-clear-filter aria-label="Clear Assignee filter" hidden>Clear</button></div><div data-filter-choices></div></div></details>
+          <details data-filter="priority"><summary>Priority: All</summary><div class="sprint-filter-options" role="group" aria-label="Filter Cards by priority"><div class="sprint-filter-heading"><span>Priorities</span><button type="button" data-clear-filter aria-label="Clear Priority filter" hidden>Clear</button></div><div data-filter-choices></div></div></details>
+          <details data-filter="tag"><summary>Tag: All</summary><div class="sprint-filter-options" role="group" aria-label="Filter Cards by Swimlane tag"><div class="sprint-filter-heading"><span>Swimlane tags</span><button type="button" data-clear-filter aria-label="Clear Tag filter" hidden>Clear</button></div><div data-filter-choices></div></div></details>
+        </div>
+        <div class="sprint-filter-results">
+          <span data-sprint-count class="muted" role="status" aria-live="polite"></span>
+          <span data-sprint-empty role="status" hidden>No Cards match these filters</span>
+          <button type="button" data-clear-sprint hidden>Clear filters</button>
+        </div>
       </section>
-      <div id="backlog-search" hidden><input id="query" type="search" aria-label="Search backlog" placeholder="Search"><button id="toggle-backlog-filters" type="button" aria-label="Backlog filters" title="Backlog filters" aria-expanded="false" aria-controls="filter-controls"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg></button></div>
+      <div id="backlog-search" hidden><label class="backlog-search-field" for="query"><span>Search Backlog</span><input id="query" type="search" aria-label="Search backlog" placeholder="ID or title"></label><button id="toggle-backlog-filters" type="button" aria-label="Backlog filters" title="Backlog filters" aria-expanded="false" aria-controls="filter-controls"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg><span data-backlog-filter-label>Filters</span></button></div>
       <section id="filter-controls" aria-label="Backlog filters" hidden>
       <div class="filters">
         <div class="field"><label for="tracker">Tracker</label><select id="tracker"><option value="">All eligible trackers</option></select></div>
@@ -81,8 +91,8 @@
       <div><dt>Choose your Sprint</dt><dd>Select a Project and Sprint. Backlog filters never change Sprint Cards, Swimlanes or commitment totals.</dd></div>
       <div><dt>Plan and update work</dt><dd>Drag a Backlog parent into the Sprint to open it and add its missing ordinary subtasks at every depth, including closed issues. Descendant statuses and other Sprint memberships stay unchanged. The highlighted Add missing subtasks header button adds missing descendants immediately, without confirmation. Nested Swimlane-capable issues are skipped but traversed. Move an individual issue to Backlog to remove only the selected Sprint, without resetting status. Use the pencil button for individual keyboard-accessible planning, assignment and estimates.</dd></div>
       <div><dt>Search backlog</dt><dd>Search Backlog by subject or exact issue ID, such as #123. Combine Tracker, Assignee and exact Backlog tag filters. Only Swimlane-capable trackers are offered. Clear filters resets these four controls, not Show closed. Scroll each Column independently; Backlog loads more as you scroll.</dd></div>
-      <div><dt>Filter Sprint Cards</dt><dd>The row below the planning header filters only Sprint Cards, never Backlog or Swimlane headings. Search title substrings ignoring case; digits match an exact ID or title text, while #123 matches only issue #123. Select multiple Projects, Assignees or Priorities: alternatives within each dropdown, combined across controls. Zero-match headings hide while filters are active; clearing restores empty headings. Counts include matching Cards outside displayed statuses, but commitment totals stay unfiltered. Choices come from all Sprint Cards. Search and selections are remembered per Project, server and account, even across reloads; absent saved values remain removable. Clear filters resets this row only. Planning actions still include eligible hidden descendants.</dd></div>
-      <div><dt>Widen the Backlog</dt><dd>Backlog shows Unplanned Swimlane-capable issues in all open statuses; Show closed also includes closed issues. Use the chevron in the Backlog header to collapse it and its filters into a narrow rail. Active filters are retained and indicated by “Filtered”. This browser remembers the collapsed state across projects and Sprints. Collapsed Backlog makes no Backlog-only requests; Sprint loading continues normally. Expanding loads a fresh first page, with Retry if loading fails. Expand Backlog before dragging Cards into it.</dd></div>
+      <div><dt>Filter Sprint Cards</dt><dd>The row below the planning header filters only Sprint Cards, never Backlog or Swimlane headings. Search title substrings ignoring case; digits match an exact ID or title text, while #123 matches only issue #123. Select multiple Projects, Assignees or Priorities: alternatives within each dropdown, combined across controls. Zero-match headings hide while filters are active; clearing restores empty headings. Counts include matching Cards outside displayed statuses, but commitment totals stay unfiltered. Choices come from all Sprint Cards. Search and selections are remembered per Project, server and account, even across reloads; absent saved values remain removable. Each dropdown shows its selected name or count; its Clear button resets only that filter. Clear filters resets this entire row. Planning actions still include eligible hidden descendants.</dd></div>
+      <div><dt>Collapse the Backlog</dt><dd>Backlog shows Unplanned Swimlane-capable issues in all open statuses; Show closed also includes closed issues. Use the chevron in the Backlog header to collapse it and its filters into a narrow rail. Active filters are retained and indicated by “Filtered”. This browser remembers the collapsed state across projects and Sprints. Collapsed Backlog makes no Backlog-only requests; Sprint loading continues normally. Expanding loads a fresh first page, with Retry if loading fails. Expand Backlog before dragging Cards into it.</dd></div>
       <div><dt>Filter by Swimlane Tag</dt><dd>The Sprint Tag dropdown uses tags from planned Swimlane headings, including empty ones. A Card matches its nearest planned heading's tags, never its own or outer ancestors' tags. Names match exactly, including case. Multiple tags are alternatives, combined with the other filters. Ungrouped Cards do not match selected tags; flat mode has no heading tags. Tag choices stay stable while filtering, and selections are remembered and cleared with the Sprint filters.</dd></div>
       <div><dt>Permissions stay yours</dt><dd>Closed Sprints are read only. Redmine checks your permissions and workflow; changes appear only after they are confirmed. Open an issue ID to view its details in Redmine.</dd></div>
       <div><dt>Refresh the Sprint Board</dt><dd>Autorefresh starts off. Toggle it in the top bar to enable periodic polling for this session, or use Refresh now for a one-time update. Returning to the tab still refreshes when polling is off. The Redmine icon pulses while loading. Connection, manual refreshes and saving block interaction until finished; tab-return refreshes and polling do not show an overlay. Backlog-only loading, searching and retries do not block interaction; collapse Backlog to cancel its loading.</dd></div>

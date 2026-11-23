@@ -160,6 +160,83 @@ test('flat Sprint search preserves surviving nodes and focus without network sea
   await expect(page.locator('[data-sprint-empty]')).toBeVisible();
 });
 
+test('Sprint dropdowns show selections and clear one filter without resetting the others', async ({ page }) => {
+  const fixture = await setup(page);
+  await login(page);
+  await page.getByRole('button', { name: 'Backlog filters', exact: true }).click();
+  const bar = page.getByRole('region', { name: 'Sprint Card filters' });
+  await page.getByLabel('Search Sprint Cards').fill('#2');
+  const projects = bar.locator('[data-filter="project"]');
+  await projects.locator('summary').click();
+  await projects.getByLabel('Team', { exact: true }).check();
+  await expect(projects.locator('summary')).toHaveText('Project: Team');
+  const assignees = bar.locator('[data-filter="assignee"]');
+  await assignees.locator('summary').click();
+  await assignees.getByLabel('Team Member', { exact: true }).check();
+  await expect(assignees.locator('summary')).toHaveText('Assignee: Team Member');
+  if (process.env.UI_SCREENSHOTS) await page.screenshot({ path: '.taste-skill/shots/active-filters.png' });
+  await assignees.getByRole('button', { name: 'Clear Assignee filter', exact: true }).click();
+  await expect(assignees.locator('summary')).toHaveText('Assignee: All');
+  await expect(assignees.locator('summary')).toBeFocused();
+  await expect(projects.locator('summary')).toHaveText('Project: Team');
+  await expect(page.getByLabel('Search Sprint Cards')).toHaveValue('#2');
+  await expect(bar).toContainText('Showing 1 of 2 Cards');
+  expect(fixture.writes).toEqual([]);
+});
+
+test('Backlog filter state remains visible with its panel closed and after clearing', async ({ page }) => {
+  await setup(page);
+  await login(page);
+  await page.locator('#assignee').selectOption('none');
+  const toggle = page.getByRole('button', { name: 'Backlog filters', exact: true });
+  await expect(toggle).toHaveText('Filters · 1');
+  await expect(toggle).toHaveAttribute('title', /Assignee: Unassigned/);
+  await toggle.click();
+  await expect(page.locator('#filter-controls')).toBeHidden();
+  await expect(toggle).toHaveClass(/has-selection/);
+  await page.getByLabel('Search backlog').fill('feature');
+  await expect(toggle).toHaveText('Filters · 1'); // Visible search is not counted twice.
+  await toggle.click();
+  await page.getByLabel('Show closed issues', { exact: true }).check();
+  await expect(toggle).toHaveText('Filters · 2');
+  await page.locator('#clear-filters').click();
+  await expect(page.getByLabel('Search backlog')).toHaveValue('');
+  await expect(toggle).toHaveText('Filters · 1');
+  await expect(toggle).toHaveAttribute('title', /Closed issues included/);
+  await page.getByLabel('Show closed issues', { exact: true }).uncheck();
+  await expect(toggle).toHaveText('Filters');
+  await expect(toggle).not.toHaveClass(/has-selection/);
+});
+
+test('Sprint filters stay on one compact row and dropdowns track their scrolled anchors', async ({ page }) => {
+  await setup(page);
+  await login(page);
+  const bar = page.locator('#sprint-filters');
+  for (const width of [1440, 1024, 820, 768, 390, 320]) {
+    await page.setViewportSize({ width, height: 900 });
+    const geometry = await bar.evaluate(node => ({ height: node.getBoundingClientRect().height, pageOverflow: document.documentElement.scrollWidth > innerWidth }));
+    expect(geometry.height).toBeLessThanOrEqual(width <= 600 ? 60 : 46);
+    expect(geometry.pageOverflow).toBe(false);
+  }
+  await page.setViewportSize({ width: 640, height: 900 });
+  const controls = bar.locator('[data-sprint-controls]');
+  const dropdown = bar.locator('[data-filter="tag"]');
+  await dropdown.locator('summary').click();
+  const panel = dropdown.locator('.sprint-filter-options');
+  await expect(panel).toBeVisible();
+  const before = await panel.boundingBox();
+  await controls.evaluate(node => { node.scrollLeft = 0; });
+  await expect.poll(() => dropdown.evaluate(node => node.open)).toBe(false);
+  await dropdown.locator('summary').click();
+  await expect.poll(async () => {
+    const bounds = await panel.boundingBox();
+    return bounds && bounds.x >= 8 && bounds.x + bounds.width <= 632 && bounds.y + bounds.height <= 892;
+  }).toBe(true);
+  expect(before).not.toBeNull();
+  await page.keyboard.press('Escape');
+  await expect(dropdown.locator('summary')).toBeFocused();
+});
+
 test('Sprint filters occupy a full-width panel with right-aligned results', async ({ page }) => {
   await setup(page);
   await login(page);
@@ -198,7 +275,7 @@ test('keeps planning controls and commitment in one compact line', async ({ page
       centers: [...row.querySelectorAll('#project, #sprint, #closed, #sprint-name, #sprint-state, #totals')]
         .map(element => { const rect = element.getBoundingClientRect(); return rect.top + rect.height / 2; }),
     }));
-    expect(geometry.height).toBeLessThanOrEqual(44);
+    expect(geometry.height).toBeLessThanOrEqual(width <= 600 ? 54 : 44);
     expect(Math.max(...geometry.centers) - Math.min(...geometry.centers)).toBeLessThanOrEqual(2);
     expect(geometry.pageOverflow).toBe(false);
     if (width === 1527) expect(geometry.contentWidth).toBe(geometry.width);
@@ -750,21 +827,21 @@ for (const name of ['High', 'Alta']) {
   });
 }
 
-test('column heading text, counts and scope controls share the same vertical center', async ({ page }) => {
+test('Column title rows align, with Backlog search controls on their own compact row', async ({ page }) => {
   await setup(page); await login(page);
   const headers = await page.locator('.kanban-board header').evaluateAll(nodes => nodes.map(header => {
     const title = header.querySelector('.kanban-title-board');
     const range = document.createRange(); range.selectNodeContents(title.firstChild);
-    const text = range.getBoundingClientRect(), bounds = header.getBoundingClientRect();
+    const text = range.getBoundingClientRect(), bounds = title.getBoundingClientRect();
     const count = header.querySelector('.count')?.getBoundingClientRect();
-    const toggle = header.querySelector('#toggle-backlog-filters')?.getBoundingClientRect();
+    const toggle = header.querySelector('.backlog-toggle')?.getBoundingClientRect();
     return { top: bounds.top, height: bounds.height, center: bounds.top + bounds.height / 2,
       textCenter: text.top + text.height / 2,
       countCenter: count ? count.top + count.height / 2 : null,
       toggleCenter: toggle ? toggle.top + toggle.height / 2 : null };
   }));
   for (const header of headers) {
-    expect(header.top).toBe(headers[0].top);
+    expect(Math.abs(header.top - headers[0].top)).toBeLessThanOrEqual(1);
     expect(header.height).toBe(headers[0].height);
     expect(Math.abs(header.textCenter - headers[0].textCenter)).toBeLessThanOrEqual(1);
     expect(Math.abs(header.textCenter - header.center)).toBeLessThanOrEqual(1);
@@ -954,22 +1031,25 @@ for (const reducedMotion of ['no-preference', 'reduce']) {
       await requested;
       try {
         await expect(mark).toHaveAttribute('aria-busy', 'true');
-        await expect(icon).toHaveCSS('animation-name', 'brand-pulse');
+        await expect(icon).toHaveCSS('animation-name', reducedMotion === 'reduce' ? 'none' : 'brand-pulse');
         await expect(mark).toHaveCSS('outline-style', 'none');
         await expect(icon).toHaveCSS('transform', 'none');
-        // Verify the actual fade, not merely the animation's presence. This
-        // opacity-only loading cue also runs with reduced motion enabled.
-        const opacities = await icon.evaluate(node => {
-          const animation = node.getAnimations()[0];
-          animation.pause();
-          const samples = [0, 500, 1000].map(time => {
-            animation.currentTime = time;
-            return Number(getComputedStyle(node).opacity);
+        if (reducedMotion === 'reduce') {
+          await expect(icon).toHaveCSS('opacity', '1');
+        } else {
+          // Verify the actual fade, not merely the animation's presence.
+          const opacities = await icon.evaluate(node => {
+            const animation = node.getAnimations()[0];
+            animation.pause();
+            const samples = [0, 500, 1000].map(time => {
+              animation.currentTime = time;
+              return Number(getComputedStyle(node).opacity);
+            });
+            animation.play();
+            return samples;
           });
-          animation.play();
-          return samples;
-        });
-        expect(opacities).toEqual([1, 0.2, 1]);
+          expect(opacities).toEqual([1, 0.2, 1]);
+        }
         await expect(page.locator('#loading-overlay')).not.toBeVisible();
       } finally { release(); }
       await expect(mark).toHaveAttribute('aria-busy', 'false');
@@ -1034,7 +1114,7 @@ for (const viewport of [{ width: 1280, height: 720 }, { width: 390, height: 650 
     const refresh = page.locator('#refresh-now');
     const statusbar = page.getByRole('contentinfo', { name: 'Board status' });
     await expect(refresh).toBeInViewport();
-    await expect(refresh).toHaveText('');
+    await expect(refresh).toHaveText('Refresh now');
     await expect(refresh.locator('svg')).toBeVisible();
     await expect(page.locator('.toolbar #refresh, .toolbar #updated')).toHaveCount(0);
     await expect(statusbar).toContainText('Updated');
@@ -1206,6 +1286,7 @@ for (const mode of ['light', 'dark']) {
         probe.remove();
         return color;
       }, tier);
+      await expect(card.locator('.card-priority')).toHaveCount(0);
       await expect(card).toHaveCSS('border-left-width', '5px');
       await expect(card).toHaveCSS('border-left-color', color);
       await card.hover();

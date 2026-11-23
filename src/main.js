@@ -406,6 +406,16 @@ function renderBoard() {
 
 function renderBacklogFooter() {
   if (!board || !feed) return;
+  const activeFilters = [
+    filters.tracker && `Tracker: ${$('tracker').selectedOptions[0]?.textContent || filters.tracker}`,
+    filters.assignee && `Assignee: ${$('assignee').selectedOptions[0]?.textContent || filters.assignee}`,
+    filters.tags.length && `Tag: ${filters.tags.join(', ')}`,
+    showClosedParents && 'Closed issues included',
+  ].filter(Boolean);
+  const filterToggle = $('toggle-backlog-filters');
+  filterToggle.classList.toggle('has-selection', activeFilters.length > 0);
+  filterToggle.querySelector('[data-backlog-filter-label]').textContent = `Filters${activeFilters.length ? ` · ${activeFilters.length}` : ''}`;
+  filterToggle.title = ['Backlog filters', ...activeFilters].join('\n');
   const node = board.findBoard('backlog');
   node.querySelector('.count').textContent = `${feed.snapshot.backlog.length} / ${feed.snapshot.total ?? '?'}`;
   node.querySelector('.kanban-drag').setAttribute('aria-busy', String(feed.loadingMore || queryLoading));

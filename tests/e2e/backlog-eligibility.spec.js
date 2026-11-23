@@ -42,7 +42,7 @@ test('Backlog only shows Swimlane-capable issues with no Sprint, including after
   for (const id of [1, 2]) await expect(backlog.locator(`[data-eid="${id}"]`)).toBeVisible();
   await expect(page.getByLabel('Show all unplanned')).toHaveCount(0);
   await expect(page.locator('#filter-controls')).toBeHidden();
-  await expect(page.getByLabel('Search backlog')).toHaveAttribute('placeholder', 'Search');
+  await expect(page.getByLabel('Search backlog')).toHaveAttribute('placeholder', 'ID or title');
   await page.getByRole('button', { name: 'Backlog filters', exact: true }).click();
   await page.getByRole('checkbox', { name: 'Show closed issues', exact: true }).check();
   await expect(backlog.locator('.kanban-item')).toHaveCount(3);
