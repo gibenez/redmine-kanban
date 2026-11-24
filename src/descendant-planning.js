@@ -49,7 +49,7 @@ export async function collectMissingSubtasks(api, parentId, scope) {
 }
 
 // Preflight all reads before any writes. A failed/uncertain write ends the batch.
-export async function planDescendants(api, parentId, scope, { includeParent = false, openedStatusId } = {}) {
+export async function planDescendants(api, parentId, scope, { includeParent = false, openedStatusId, replaceSprint = false } = {}) {
   const report = { added: [], failed: [], notAttempted: [], error: null };
   let pending = [];
   const parents = new Map();
@@ -57,7 +57,9 @@ export async function planDescendants(api, parentId, scope, { includeParent = fa
     if (!scope.projectIds.includes(issue.project?.id)) throw new Error(`Issue #${issue.id} moved outside the product hierarchy.`);
     if (issue.id !== parentId && isSwimlane(issue, scope.swimlaneTrackers)) throw new Error(`Tracker changed on #${issue.id}. Refresh before planning.`);
     if (parents.has(issue.id) && issue.parent?.id !== parents.get(issue.id)) throw new Error(`Hierarchy changed on #${issue.id}. Refresh before planning.`);
-    const patch = membershipPatch(issue, scope.sprintFieldId, scope.sprintId, true);
+    // A concurrent addition of this Sprint is already confirmed; keep its other memberships.
+    const replace = replaceSprint && !sprintValues(issue, scope.sprintFieldId).includes(scope.sprintId);
+    const patch = membershipPatch(issue, scope.sprintFieldId, scope.sprintId, true, { replace });
     if (includeParent && issue.id === parentId) {
       if (!isSwimlane(issue, scope.swimlaneTrackers)) throw new Error('The parent is no longer Swimlane-capable.');
       if (issue.status.id !== openedStatusId) patch.status_id = openedStatusId;

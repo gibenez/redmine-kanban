@@ -330,7 +330,7 @@ function laneHeading(lane) {
   const metadata = lane.parent ? `<span class="lane-tags">${tagsMarkup(lane.parent)}</span>` : '';
   const tracker = lane.parent ? `<span class="lane-tracker" title="Tracker: ${e(lane.parent.tracker?.name || '')}">${e(lane.parent.tracker?.name || '')}</span>` : '';
   const state = lanePlanning.get(id);
-  const hint = !state || state.pending ? 'Checking missing subtasks…' : state.error ? `Missing subtasks unknown: ${state.error} Use Refresh to retry.` : `Add missing subtasks to ${sprint?.name || 'this Sprint'} (${state.count || 0} missing). Includes closed subtasks and those assigned elsewhere; preserves statuses and other Sprints. Cards group under their nearest planned Swimlane.`;
+  const hint = !state || state.pending ? 'Checking missing subtasks…' : state.error ? `Missing subtasks unknown: ${state.error} Use Refresh to retry.` : `Add missing subtasks to ${sprint?.name || 'this Sprint'} (${state.count || 0} missing). Includes closed subtasks and those assigned elsewhere; replaces their Sprint with this Sprint and preserves statuses. Cards group under their nearest planned Swimlane.`;
   const icon = `<svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3 3v10h3M3 6h3M9 6h7M9 13h2M15 11v6M12 14h6"/>${state?.error ? '<circle cx="16" cy="3" r="2"/>' : ''}</svg>`;
   const action = lane.parent ? `<span class="swimlane-actions" title="${e(hint)}">${dueDateMarkup(lane.parent)}${tracker}<button type="button" class="add-subtasks${state?.count ? ' requires-attention' : ''}${state?.error ? ' planning-unknown' : ''}" data-add-descendants="${id}" aria-label="Add missing subtasks for #${id}" title="${e(hint)}"${state?.error ? ' aria-invalid="true"' : ''}>${icon}</button></span>` : '';
   return `${bar}<div class="swimlane-title-row"><strong${closed ? ' class="closed"' : ''}>${title}</strong>${metadata}${action}</div>${unmappedNotice(lane.visible.filter(issue => !config.columnStatusIds.includes(issue.status.id)))}${lane.parent ? relatedIssues.markup(id) : ''}`;
@@ -589,7 +589,7 @@ async function addMissingSubtasks(id, includeParent = false) {
   const stamp = epoch, currentApi = api;
   notify('Checking hierarchy and planning Sprint membership…');
   try {
-    const report = await planDescendants(currentApi, id, feedScope(), { includeParent, openedStatusId: config.openedStatusId });
+    const report = await planDescendants(currentApi, id, feedScope(), { includeParent, openedStatusId: config.openedStatusId, replaceSprint: !includeParent });
     if (stamp !== epoch) return;
     const list = ids => ids.length ? ids.map(id => `#${id}`).join(', ') : 'none';
     let message = `Added/confirmed: ${list(report.added)}. Failed/unconfirmed: ${list(report.failed)}. Not attempted: ${list(report.notAttempted)}.${report.error ? ` ${report.error}` : ''}`;

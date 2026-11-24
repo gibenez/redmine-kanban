@@ -634,7 +634,7 @@ test('parents belonging to another Sprint are excluded from Backlog without writ
   expect(fixture.writes).toEqual([]);
 });
 
-test('header action highlights all missing descendants and adds closed and other-Sprint subtasks without confirmation', async ({ page }) => {
+test('header action highlights all missing descendants and replaces other Sprints without confirmation', async ({ page }) => {
   const fixture = await setup(page);
   fixture.rows[0].custom_fields[0].value = ['100'];
   fixture.rows[2].custom_fields[0].value = ['99'];
@@ -651,13 +651,28 @@ test('header action highlights all missing descendants and adds closed and other
   await expect(page.locator('[data-id="backlog"] footer')).toContainText('No backlog issues match');
   await add.focus(); await page.keyboard.press('Enter');
   await expect(page.locator('#notice')).toContainText('Added/confirmed: #3, #8');
-  expect(fixture.writes).toEqual([3, 8].map(id => ({ id, patch: { custom_fields: [{ id: 7, value: ['99', '100'] }] } })));
+  expect(fixture.writes).toEqual([3, 8].map(id => ({ id, patch: { custom_fields: [{ id: 7, value: ['100'] }] } })));
+  await expect(heading(page, 1)).toBeVisible();
   expect(fixture.rows.find(row => row.id === 7).custom_fields[0].value).toEqual(['99']);
   expect(fixture.rows[2].status.id).toBe(5); expect(fixture.rows[2].fixed_version.id).toBe(300);
   await expect(add).toBeDisabled();
   await expect(add).not.toHaveClass(/requires-attention/);
   const positions = await add.evaluate(button => ({ button: button.getBoundingClientRect().right, header: button.closest('.swimlane-heading').getBoundingClientRect().right }));
   expect(positions.header - positions.button).toBeLessThan(20);
+});
+
+test('header action overwrites an occupied single-value Sprint field', async ({ page }) => {
+  const fixture = await setup(page);
+  fixture.rows[0].custom_fields[0].value = ['100'];
+  fixture.rows[2].custom_fields = [{ id: 7, value: '99' }];
+  await refresh(page);
+  await heading(page, 1).getByRole('button', { name: 'Add missing subtasks for #1' }).click();
+  await expect(page.locator('#notice')).toContainText('Added/confirmed: #3. Failed/unconfirmed: none.');
+  expect(fixture.writes).toEqual([{ id: 3, patch: { custom_fields: [{ id: 7, value: '100' }] } }]);
+  expect(fixture.rows[2].status.id).toBe(1);
+  expect(fixture.rows[2].fixed_version.id).toBe(300);
+  await expect(laneCard(page, 1, 3)).toBeVisible();
+  await expect(heading(page, 1).getByRole('button', { name: 'Add missing subtasks for #1' })).toBeDisabled();
 });
 
 test('forbidden opened transition aborts the complete Backlog operation', async ({ page }) => {

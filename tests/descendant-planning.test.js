@@ -82,6 +82,18 @@ describe('descendant collection', () => {
 });
 
 describe('bulk planning', () => {
+  it.each(['', '99', [], ['99']])('sets Sprint value %j to the clicked Sprint when adding missing subtasks', async value => {
+    const { api, rows } = fixture();
+    rows.splice(2);
+    rows[0].custom_fields[0].value = ['100'];
+    rows[1].custom_fields = [{ id: 7, value }];
+    const report = await planDescendants(api, 1, scope, { replaceSprint: true });
+    expect(report.error).toBeNull();
+    expect(report.added).toEqual([2]);
+    expect(rows[1].custom_fields[0].value).toEqual(Array.isArray(value) ? ['100'] : '100');
+    expect(rows[1].status.id).toBe(1);
+    expect(rows[1].fixed_version.id).toBe(800);
+  });
   it('writes only missing memberships, preserving statuses, releases and other Sprints', async () => {
     const { api, rows } = fixture();
     const report = await planDescendants(api, 1, scope);
@@ -138,6 +150,18 @@ describe('bulk planning', () => {
     api.request.mockImplementation(async (...args) => { rows[1].custom_fields[0].value = ['77']; return original(...args); });
     await planDescendants(api, 1, scope);
     expect(api.update.mock.calls[0][1].custom_fields[0].value).toEqual(['77', '100']);
+  });
+  it('does not overwrite a descendant concurrently added to the selected Sprint', async () => {
+    const { api, rows } = fixture();
+    const original = api.issue.getMockImplementation();
+    api.issue.mockImplementation(async id => {
+      if (id === 2) rows[1].custom_fields[0].value = ['77', '100'];
+      return original(id);
+    });
+    const report = await planDescendants(api, 1, scope, { replaceSprint: true });
+    expect(report.error).toBeNull();
+    expect(rows[1].custom_fields[0].value).toEqual(['77', '100']);
+    expect(api.update.mock.calls.map(([id]) => id)).not.toContain(2);
   });
   it('detects a write Redmine did not retain', async () => {
     const { api } = fixture(); api.update.mockResolvedValue(undefined);

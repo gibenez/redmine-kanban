@@ -35,10 +35,10 @@ export function sprintValues(issue, fieldId) {
   return [...new Set(ids)].sort((a, b) => a - b);
 }
 export const sprintPatch = (fieldId, value) => ({ custom_fields: [{ id: fieldId, value: Array.isArray(value) ? value.map(String) : value == null ? '' : String(value) }] });
-export function membershipPatch(issue, fieldId, sprintId, add) {
+export function membershipPatch(issue, fieldId, sprintId, add, { replace = false } = {}) {
   const field = issue.custom_fields?.find(field => Number(field.id) === Number(fieldId));
   const current = sprintValues(issue, fieldId);
-  const next = add ? [...new Set([...current, sprintId])] : current.filter(id => id !== sprintId);
+  const next = add ? (replace ? [sprintId] : [...new Set([...current, sprintId])]) : current.filter(id => id !== sprintId);
   if (!field.multiple && !Array.isArray(field.value) && next.length > 1) throw new Error('Enable multiple values on the Sprint field before adding another Sprint.');
   return sprintPatch(fieldId, field.multiple || Array.isArray(field.value) ? next : next[0] ?? null);
 }
