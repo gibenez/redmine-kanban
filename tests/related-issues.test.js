@@ -1,11 +1,11 @@
 import { describe, it, expect, vi } from 'vitest';
 import { createRelatedIssues } from '../src/related-issues.js';
 
-const issue = id => ({ id, subject: `Issue <${id}>`, status: { name: 'Closed' } });
+const issue = id => ({ id, subject: `Issue <${id}>`, status: { id: 5, name: 'Closed' } });
 function setup(relations = []) {
   const api = { relations: vi.fn().mockResolvedValue(relations), issue: vi.fn(async id => issue(id)) };
   const onChange = vi.fn();
-  const related = createRelatedIssues({ getApi: () => api, linkToIssue: id => `https://redmine.test/issues/${id}`, onChange });
+  const related = createRelatedIssues({ getApi: () => api, linkToIssue: id => `https://redmine.test/issues/${id}`, isClosed: issue => issue.status?.id === 5, onChange });
   related.setScope('product/sprint');
   const open = async (id = 1) => {
     related.toggle(id, true); related.loadOpen([id]);
@@ -48,6 +48,18 @@ describe('related issues disclosures', () => {
     expect(api.issue).toHaveBeenCalledTimes(3);
     expect(host.querySelectorAll('a[target="_blank"][rel="noopener noreferrer"]')).toHaveLength(4);
     expect(related.markup(1)).toContain('Issue &lt;3&gt;');
+  });
+
+  it('marks only closed issue links, keeping the dash and surrounding metadata unchanged', async () => {
+    const { api, related, open } = setup([2, 3, 4].map(id => ({ issue_id: 1, issue_to_id: id, relation_type: 'relates' })));
+    api.issue.mockImplementation(async id => ({ ...issue(id), status: id === 2 ? { id: 5, name: 'Resolved' } : id === 3 ? { id: 1, name: 'Closed' } : undefined }));
+    await open();
+    const host = document.createElement('div'); host.innerHTML = related.markup(1);
+    const links = [...host.querySelectorAll('a')];
+    expect(links.map(link => link.classList.contains('closed'))).toEqual([true, false, false]);
+    expect(links[0].textContent).toBe('#2 — Issue <2>');
+    expect(links[0].parentElement.textContent).toBe('relates to · #2 — Issue <2> · Resolved');
+    expect(host.querySelectorAll('li.closed')).toHaveLength(0);
   });
 
   it('distinguishes unavailable targets from failures, preserves successes, and retries only on request', async () => {

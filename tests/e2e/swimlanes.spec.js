@@ -730,6 +730,33 @@ test('filters retain planned empty headings and disabled add action', async ({ p
 });
 
 
+test('related issue links omit underlines and strike through only closed ID and title', async ({ page }) => {
+  const fixture = await setup(page);
+  fixture.relations.set(4, [5, 6].map(id => ({ issue_id: 4, issue_to_id: id, relation_type: 'relates' })));
+  // The issue response omits is_closed; the catalogue defines Done as closed.
+  fixture.rows[4].status = { id: 5, name: 'Done' };
+  await refresh(page);
+  const details = heading(page, 4).locator('[data-related="4"]');
+  await details.locator('summary').click();
+  const closedLink = details.getByRole('link', { name: '#5 — Issue 5' });
+  const openLink = details.getByRole('link', { name: '#6 — Issue 6' });
+  await expect(closedLink).toHaveCSS('text-decoration-line', 'line-through');
+  await expect(openLink).toHaveCSS('text-decoration-line', 'none');
+  await closedLink.hover();
+  await expect(closedLink).toHaveCSS('text-decoration-line', 'line-through');
+  await openLink.hover();
+  await expect(openLink).toHaveCSS('text-decoration-line', 'none');
+  await openLink.focus();
+  await expect(openLink).toBeFocused();
+  const row = details.locator('li').first();
+  await expect(row).toHaveText('relates to · #5 — Issue 5 · Done');
+  await expect(row).toHaveCSS('text-decoration-line', 'none');
+  fixture.rows[4].status = { id: 1, name: 'New' };
+  await refresh(page);
+  await expect(closedLink).toHaveCSS('text-decoration-line', 'none');
+  expect(fixture.writes).toEqual([]);
+});
+
 test('related disclosures load lazily, stay open across updates, and refresh independently of membership', async ({ page }) => {
   const fixture = await setup(page);
   await expect(heading(page, 4).locator('[data-related]')).toHaveCount(0);

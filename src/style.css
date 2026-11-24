@@ -305,6 +305,8 @@ input::placeholder { color: var(--secondary); opacity: 1; }
 .swimlane-cards .kanban-item { flex: none; }
 .unmapped-notice { font-size: 11px; font-weight: 400; line-height: 16px; margin-top: 6px; }
 .unmapped-notice summary { cursor: pointer; }
+.related-notice a { text-decoration: none; }
+.related-notice a.closed { text-decoration: line-through; }
 .unmapped-notice ul { padding-left: 16px; margin: 6px 0; }
 .kanban-title-board .unmapped-notice { position: relative; }
 .kanban-title-board .unmapped-notice[open] ul { position: absolute; top: 100%; right: 0; z-index: 2; width: 240px; padding: 12px 12px 12px 24px; background: var(--content); border: 1px solid var(--line); }

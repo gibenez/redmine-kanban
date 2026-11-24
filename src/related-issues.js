@@ -14,7 +14,7 @@ const labels = {
 
 // This cache belongs to one selected Product Project/Sprint, not to membership
 // or Card filtering. Abort and identity checks prevent stale requests leaking in.
-export function createRelatedIssues({ getApi, linkToIssue, onChange }) {
+export function createRelatedIssues({ getApi, linkToIssue, isClosed, onChange }) {
   let states = new Map(), controller = new AbortController(), scope;
   function state(id) {
     if (!states.has(id)) states.set(id, { open: false });
@@ -85,7 +85,7 @@ export function createRelatedIssues({ getApi, linkToIssue, onChange }) {
     if (!value.relations?.length && !value.error) return '';
     const summary = value.relations ? `${value.relations.length} related issues` : 'Related issues';
     const items = rows.map(row => `<li>${e(row.label)} · ${row.issue
-      ? `<a href="${e(linkToIssue(row.id))}" target="_blank" rel="noopener noreferrer">#${row.id} — ${e(row.issue.subject)}</a> · ${e(row.issue.status?.name || '')}`
+      ? `<a${isClosed(row.issue) ? ' class="closed"' : ''} href="${e(linkToIssue(row.id))}" target="_blank" rel="noopener noreferrer">#${row.id} — ${e(row.issue.subject)}</a> · ${e(row.issue.status?.name || '')}`
       : row.failed ? 'Issue could not be loaded' : 'Issue unavailable'}</li>`).join('');
     const content = `${items ? `<ul>${items}</ul>` : ''}${value.pending || (!value.loaded && !value.error) ? '<p role="status">Loading related issues…</p>' : ''}${value.loaded && !rows.length ? '<p>No related issues.</p>' : ''}${value.error ? `<p role="status">Some related issues could not be loaded. <button type="button" data-retry-related="${id}"${value.pending ? ' disabled' : ''}>Retry</button></p>` : ''}`;
     return `<details class="unmapped-notice related-notice" data-related="${id}"${value.open ? ' open' : ''}><summary>${summary}</summary>${value.open ? content : ''}</details>`;

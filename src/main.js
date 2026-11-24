@@ -65,7 +65,7 @@ let laneAncestors = [], laneMembers;
 let lanePlanning = new Map();
 let lanePlanningController;
 let laneResizeObserver;
-const relatedIssues = createRelatedIssues({ getApi: () => api, linkToIssue: id => linkToIssue(id), onChange: () => { if (board && api) renderBoard(); } });
+const relatedIssues = createRelatedIssues({ getApi: () => api, linkToIssue: id => linkToIssue(id), isClosed: issue => statuses.some(status => status.id === issue.status?.id && status.is_closed), onChange: () => { if (board && api) renderBoard(); } });
 const newFeed = () => new PlanningFeed(api);
 const closedStatusIds = () => statuses.filter(status => status.is_closed).map(status => status.id);
 function selectedMember(issue) { return Boolean(sprint) && sprintValues(issue, config.sprintFieldId).includes(sprint.id); }
