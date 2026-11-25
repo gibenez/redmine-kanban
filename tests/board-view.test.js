@@ -49,7 +49,7 @@ describe('Card project colours', () => {
 
 describe('Swimlane reconciliation', () => {
   for (const occupiedGutter of [0, 15, 20]) {
-    it(`aligns the group frame and last segment with a ${occupiedGutter}px scrollbar gutter`, () => {
+    it(`keeps the frame full-width even if a scrollport reports a ${occupiedGutter}px gutter`, () => {
       const board = boardFixture();
       reconcileBoard(board, [definition([], [lane('1')]), { ...definition([], [lane('1')]), id: 'status-2' }]);
       const lists = [...board.container.querySelectorAll('.has-swimlanes')];
@@ -58,11 +58,24 @@ describe('Swimlane reconciliation', () => {
         Object.defineProperty(list, 'clientWidth', { value: 250 - (index === 1 ? occupiedGutter : 0) });
       });
       positionSwimlaneHeaders(board.container);
-      const gutter = Math.max(16, occupiedGutter);
-      expect(document.querySelector('.swimlane-headers').style.width).toBe(`${500 - gutter}px`);
-      expect(lists[1].style.getPropertyValue('--swimlane-scrollbar-inset')).toBe(`${gutter - occupiedGutter}px`);
+      expect(document.querySelector('.swimlane-headers').style.width).toBe('500px');
+      expect(lists[1].style.getPropertyValue('--swimlane-scrollbar-inset')).toBe('');
     });
   }
+  it('retains one accessible overlay scrollport and removes it when Swimlanes disappear', () => {
+    const board = boardFixture();
+    reconcileBoard(board, [definition([], [lane('1')])]);
+    const scrollbar = document.querySelector('.swimlane-scrollbar');
+    expect(scrollbar.getAttribute('role')).toBe('region');
+    expect(scrollbar.getAttribute('aria-label')).toBe('Scroll Sprint swimlanes');
+    expect(scrollbar.tabIndex).toBe(0);
+    expect(scrollbar.firstElementChild.getAttribute('aria-hidden')).toBe('true');
+    reconcileBoard(board, [definition([], [lane('1')])]);
+    expect(document.querySelectorAll('.swimlane-scrollbar')).toHaveLength(1);
+    expect(document.querySelector('.swimlane-scrollbar')).toBe(scrollbar);
+    reconcileBoard(board, [definition()]);
+    expect(document.querySelector('.swimlane-scrollbar')).toBeNull();
+  });
   it('removes empty Ungrouped headings and sections but keeps empty Sprint Columns droppable', () => {
     const board = boardFixture();
     reconcileBoard(board, [definition([item(7, 'ungrouped')], [lane('ungrouped')])]);

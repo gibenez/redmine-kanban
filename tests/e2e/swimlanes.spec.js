@@ -45,6 +45,80 @@ async function setup(page) {
   await expect(page.locator('#updated')).toContainText('Updated');
   return { rows, writes, relations, relationRequests };
 }
+for (const overflowing of [false, true]) {
+  test(`rightmost Swimlane uses the available width ${overflowing ? 'with' : 'without'} vertical overflow`, async ({ page }) => {
+    const fixture = await setup(page);
+    if (overflowing) {
+      for (let index = 0; index < 16; index++) fixture.rows.push({
+        ...structuredClone(fixture.rows[1]), id: 100 + index, parent: { id: 4 }, status: { id: 5, name: 'Done' },
+      });
+      await refresh(page);
+    }
+    for (const width of [1440, 768]) {
+      await page.setViewportSize({ width, height: 1000 });
+      // ResizeObserver updates the shared frame on the next rendering turn.
+      await expect(async () => {
+        const geometry = await page.locator('.swimlane-headers > [data-lane="4"]').evaluate(node => {
+          const last = [...document.querySelectorAll('.has-swimlanes')].at(-1);
+          const bounds = last.getBoundingClientRect(), style = getComputedStyle(last);
+          const borderRight = parseFloat(style.borderRightWidth);
+          const nativeScrollbar = last.offsetWidth - last.clientWidth - last.clientLeft - borderRight;
+          return { gap: bounds.right - node.getBoundingClientRect().right, nativeScrollbar, borderRight,
+            frameRight: node.getBoundingClientRect().right,
+            sectionRight: last.querySelector('[data-lane="4"]').getBoundingClientRect().right,
+            overflowing: last.scrollHeight > last.clientHeight };
+        });
+        expect(geometry.overflowing).toBe(overflowing);
+        expect(geometry.gap).toBeCloseTo(8 + geometry.nativeScrollbar + geometry.borderRight, 1);
+        expect(geometry.sectionRight).toBeCloseTo(geometry.frameRight, 1);
+      }).toPass({ timeout: 3000 });
+    }
+  });
+}
+
+test('the shared scrollbar floats above Swimlane headings and keeps all Columns synchronized', async ({ page }) => {
+  const fixture = await setup(page);
+  for (let index = 0; index < 16; index++) fixture.rows.push({
+    ...structuredClone(fixture.rows[1]), id: 100 + index, parent: { id: 4 }, status: { id: 5, name: 'Done' },
+  });
+  await refresh(page);
+  const geometry = await page.locator('#board').evaluate(board => {
+    const node = board.querySelector('.swimlane-scrollbar') || [...board.querySelectorAll('.has-swimlanes')].at(-1);
+    const bounds = node.getBoundingClientRect();
+    const heading = document.querySelector('.swimlane-headers > [data-lane="4"]').getBoundingClientRect();
+    const hit = document.elementFromPoint(bounds.right - 10, heading.top + heading.height / 2);
+    const last = [...document.querySelectorAll('.has-swimlanes')].at(-1);
+    return { onTop: hit === node || node.contains(hit), position: getComputedStyle(node).position,
+      zIndex: Number(getComputedStyle(node).zIndex),
+      headingsZIndex: Number(getComputedStyle(document.querySelector('.swimlane-headers')).zIndex),
+      background: getComputedStyle(node).backgroundColor,
+      lastGutter: last.offsetWidth - last.clientWidth, right: bounds.right, lastRight: last.getBoundingClientRect().right };
+  });
+  expect(geometry.onTop).toBe(true);
+  expect(geometry.zIndex).toBeGreaterThan(geometry.headingsZIndex);
+  expect(geometry.background).toBe('rgba(0, 0, 0, 0)');
+  expect(geometry.position).toBe('absolute');
+  expect(geometry.lastGutter).toBe(0);
+  expect(geometry.right).toBeCloseTo(geometry.lastRight, 1);
+  const scrollbar = page.getByRole('region', { name: 'Scroll Sprint swimlanes' });
+  await expect(scrollbar).toBeVisible();
+  await scrollbar.evaluate(node => { node.scrollTop = 80; });
+  for (const list of await page.locator('.has-swimlanes').all()) await expect.poll(() => list.evaluate(node => node.scrollTop)).toBe(80);
+  await page.locator('.has-swimlanes').first().evaluate(node => { node.scrollTop = 140; });
+  await expect.poll(() => scrollbar.evaluate(node => node.scrollTop)).toBe(140);
+  await scrollbar.focus();
+  await page.keyboard.press('End');
+  await expect.poll(() => scrollbar.evaluate(node => Math.abs(node.scrollHeight - node.clientHeight - node.scrollTop))).toBeLessThanOrEqual(1);
+  for (const list of await page.locator('.has-swimlanes').all()) {
+    await expect.poll(() => list.evaluate(node => Math.abs(node.scrollHeight - node.clientHeight - node.scrollTop))).toBeLessThanOrEqual(1);
+  }
+  await page.getByLabel('Search Sprint Cards').fill('#2');
+  await expect(scrollbar).not.toBeVisible();
+  await page.getByLabel('Search Sprint Cards').fill('');
+  await expect(scrollbar).toBeVisible();
+  expect(fixture.writes).toEqual([]);
+});
+
 const heading = (page, id) => page.locator(`.swimlane-headers > [data-lane="${id}"]`);
 const backlog = (page, id) => page.locator(`[data-id="backlog"] [data-eid="${id}"]`);
 const laneCard = (page, lane, id) => page.locator(`[data-id="status-1"] [data-lane="${lane}"] [data-eid="${id}"]`);
@@ -194,7 +268,7 @@ for (const mode of ['light', 'dark']) {
       const rows = [...first.querySelectorAll('.swimlane-section')].map(section => section.getBoundingClientRect());
       const firstBounds = first.getBoundingClientRect();
       const last = [...document.querySelectorAll('.has-swimlanes')].at(-1), lastBounds = last.getBoundingClientRect();
-      const scrollbarGutter = Math.max(16, lastBounds.width - last.clientLeft - last.clientWidth);
+      const scrollbarGutter = lastBounds.width - last.clientLeft - last.clientWidth;
       const card = document.querySelector('[data-eid="50"]'), bounds = card.getBoundingClientRect();
       const hit = document.elementFromPoint(bounds.left + bounds.width / 2, bounds.top + bounds.height / 2);
       return { left: heading.left, right: heading.right, top: frameTop, bottom: frameTop + parseFloat(frame.height),

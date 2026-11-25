@@ -903,12 +903,12 @@ $('board').addEventListener('wheel', event => {
 }, { passive: false });
 $('board').addEventListener('scroll', event => {
   const list = event.target;
-  if (!list.classList?.contains('has-swimlanes')) return;
+  if (!list.matches?.('.has-swimlanes, .swimlane-scrollbar')) return;
   // Ignore mirrored events so they cannot interrupt the user's native wheel or
   // keyboard scrolling by echoing an earlier position back to the active list.
   if (mirroredStatusScrolls.get(list) === list.scrollTop) return;
   mirroredStatusScrolls.delete(list);
-  for (const other of $('board').querySelectorAll('.has-swimlanes')) {
+  for (const other of $('board').querySelectorAll('.has-swimlanes, .swimlane-scrollbar')) {
     if (other === list || other.scrollTop === list.scrollTop) continue;
     other.scrollTop = list.scrollTop;
     mirroredStatusScrolls.set(other, other.scrollTop);

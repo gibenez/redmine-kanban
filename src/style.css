@@ -273,13 +273,16 @@ input::placeholder { color: var(--secondary); opacity: 1; }
 /* Swimlane segments share measured row heights and synchronized status scrolling.
    Backlog remains an independently scrollable planning source. */
 .kanban-board .kanban-drag.has-swimlanes { padding: var(--swimlane-gap) 0 0; gap: 0; display: block; }
-/* Synchronized status lists need only the far-right scrollbar. Keep scrolling
-   enabled everywhere for wheel/touch/keyboard input; Backlog is independent. */
-.kanban-board:not(:last-child) .kanban-drag.has-swimlanes { scrollbar-width: none; }
-.kanban-board:not(:last-child) .kanban-drag.has-swimlanes::-webkit-scrollbar { display: none; }
+/* One shared native scrollbar floats above the headings and frame. Keep every
+   status list scrollable for wheel/touch/keyboard; Backlog stays independent. */
+.kanban-board .kanban-drag.has-swimlanes { scrollbar-width: none; }
+.kanban-board .kanban-drag.has-swimlanes::-webkit-scrollbar { display: none; }
+.swimlane-scrollbar { position: absolute; z-index: 3; width: 16px; overflow-y: auto; overflow-x: hidden; background: transparent; scrollbar-width: thin; scrollbar-color: var(--secondary) transparent; overscroll-behavior: contain; }
+.swimlane-scrollbar::-webkit-scrollbar-track { background: transparent; }
+.swimlane-scrollbar:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .swimlane-section { background: var(--content); margin-bottom: var(--swimlane-gap); }
 .kanban-board[data-id="backlog"] + .kanban-board .swimlane-section { margin-left: var(--swimlane-gap); border-bottom-left-radius: var(--radius); }
-.kanban-board:last-child .swimlane-section { margin-right: calc(var(--swimlane-gap) + var(--swimlane-scrollbar-inset, 0px)); border-bottom-right-radius: var(--radius); }
+.kanban-board:last-child .swimlane-section { margin-right: var(--swimlane-gap); border-bottom-right-radius: var(--radius); }
 .swimlane-heading { padding: 6px 10px; box-sizing: border-box; font-size: 12px; line-height: 18px; }
 .swimlane-title-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .swimlane-title-row > strong { flex: 0 1 auto; max-width: 100%; }

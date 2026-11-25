@@ -114,7 +114,10 @@ export function reconcileBoard(board, definitions) {
       if (heading !== nextHeading) headers.insertBefore(heading, nextHeading);
       nextHeading = heading.nextElementSibling;
     }
-  } else headers?.remove();
+  } else {
+    headers?.remove();
+    host.querySelector(':scope > .swimlane-scrollbar')?.remove();
+  }
   alignSwimlanes(board.container);
 }
 
@@ -126,17 +129,25 @@ export function positionSwimlaneHeaders(container) {
   const hostRect = host.getBoundingClientRect(), first = lists[0].getBoundingClientRect(), last = lists.at(-1).getBoundingClientRect();
   headers.style.left = `${first.left - hostRect.left + host.scrollLeft}px`;
   headers.style.top = `${first.top - hostRect.top + host.scrollTop}px`;
-  // Overlay scrollbars (notably macOS) consume no clientWidth space. Always
-  // leave a 16px clear strip; use the actual gutter when a wider native scrollbar
-  // is present. Measuring only clientWidth lets the overlay paint over the thumb.
-  const lastList = lists.at(-1);
-  const occupiedGutter = last.width - lastList.clientLeft - lastList.clientWidth;
-  const scrollbarGutter = Math.max(16, occupiedGutter);
-  // Keep the last segment and its children inside the same frame edge on both
-  // overlay-scrollbar and classic-scrollbar platforms.
-  lastList.style.setProperty('--swimlane-scrollbar-inset', `${scrollbarGutter - occupiedGutter}px`);
-  headers.style.width = `${last.right - first.left - scrollbarGutter}px`;
+  headers.style.width = `${last.right - first.left}px`;
   headers.style.height = `${first.height}px`;
+  // A separate transparent scrollport puts the native thumb above the shared
+  // headings and frames. It never takes width away from any Column.
+  let scrollbar = host.querySelector(':scope > .swimlane-scrollbar');
+  if (!scrollbar) {
+    scrollbar = document.createElement('div');
+    scrollbar.className = 'swimlane-scrollbar'; scrollbar.tabIndex = 0;
+    scrollbar.setAttribute('role', 'region');
+    scrollbar.setAttribute('aria-label', 'Scroll Sprint swimlanes');
+    const spacer = document.createElement('div'); spacer.setAttribute('aria-hidden', 'true');
+    scrollbar.append(spacer); host.append(scrollbar);
+  }
+  scrollbar.hidden = lists[0].scrollHeight <= lists[0].clientHeight;
+  scrollbar.style.top = headers.style.top;
+  scrollbar.style.height = `${first.height}px`;
+  scrollbar.style.left = `${last.right - hostRect.left + host.scrollLeft - scrollbar.getBoundingClientRect().width}px`;
+  scrollbar.firstElementChild.style.height = `${lists[0].scrollHeight}px`;
+  if (scrollbar.scrollTop !== lists[0].scrollTop) scrollbar.scrollTop = lists[0].scrollTop;
   const sections = [...lists[0].querySelectorAll('.swimlane-section')];
   for (const heading of headers.children) {
     const section = sections.find(node => node.dataset.lane === heading.dataset.lane);
