@@ -1,6 +1,6 @@
 const jKanban = window.jKanban;
 import './style.css';
-import DOMPurify from 'dompurify';
+import { descriptionMarkdown, descriptionHtml, sanitizeDescription, textPatch, assertTextUnchanged } from './issue-text.js';
 import { reconcileBoard, alignSwimlanes, positionSwimlaneHeaders } from './board-view.js';
 import { RedmineClient, RedmineError } from './api.js';
 import { validateConfig, isBacklog, effort, movePatch, parseEstimate, assertTransition, matchesPatch, sprintValues, membershipPatch, hasSprintField, projectScope, escapeHtml as e } from './domain.js';
@@ -35,6 +35,7 @@ let showClosedParents = false;
 const closedParentsStorageKey = 'redmine-sprint-board.closed-parents';
 let api, config, statuses = [], projects = [], versions = [], memberships = [], issues = [], board;
 let sprint = null, projectId = '', blockedProjectId = '', busy = false, dragging = false, loading = false, epoch = 0, timer, editing;
+let initialMarkdown = '', initialEditorValues = '';
 let completion = null, rescheduling = null;
 let autorefresh = false;
 let selectionPreferences;
@@ -131,7 +132,7 @@ function lock() {
   $('refresh-now').disabled = busy || loading || !api;
   $('refresh-now').setAttribute('aria-busy', String(loading));
   document.querySelectorAll('#planning-controls select, #planning-controls input, #workspace select, #workspace input, #workspace button').forEach(el => { el.disabled = busy || loading; });
-  $('edit-form').querySelectorAll('input, select, button[type="submit"]').forEach(el => { el.disabled = busy || loading || sprint?.status !== 'open' || Boolean(el.closest('[hidden]')); });
+  $('edit-form').querySelectorAll('input, textarea, select, button[type="submit"]').forEach(el => { el.disabled = busy || loading || sprint?.status !== 'open' || Boolean(el.closest('section[hidden]')); });
   document.querySelectorAll('[data-edit], .scope-toggle').forEach(el => { el.disabled = busy || loading || (el.closest('[data-id="backlog"]') && (queryLoading || feed?.loadingMore)); });
   $('tracker').disabled = busy || loading || !eligibleTrackers().length;
   document.querySelectorAll('[data-add-descendants]').forEach(el => { el.disabled = busy || loading || sprint?.status !== 'open' || !lanePlanning.get(Number(el.dataset.addDescendants))?.count; });
@@ -801,6 +802,7 @@ async function mutate(id, patch) {
     if (version.version.status !== 'open') throw new Error('This sprint is no longer open. Refresh before planning.');
     if (stamp !== epoch) return;
     assertTransition(fresh, patch);
+    if (editing?.id === id) assertTextUnchanged(editing, fresh, patch);
     // Do not send unchanged attributes, which may be workflow-read-only.
     const changed = Object.fromEntries(Object.entries(patch).filter(([key, value]) => !matchesPatch(fresh, { [key]: value })));
     if (Object.keys(changed).length) await currentApi.update(id, changed);
@@ -867,17 +869,16 @@ async function openEditor(id) {
     editing = issue;
     $('editor-notice').hidden = true;
     $('editor-title').textContent = `#${issue.id} — ${issue.subject}`;
-    const description = issue.description || '';
-    $('editor-description').innerHTML = DOMPurify.sanitize(description, {
-      USE_PROFILES: { html: true },
-      FORBID_TAGS: ['style', 'form', 'input', 'button', 'select', 'textarea'],
-      FORBID_ATTR: ['style', 'id', 'name', 'autofocus'],
-    });
-    $('editor-description-section').hidden = !description.trim();
+    $('editor-subject').value = issue.subject;
+    initialMarkdown = descriptionMarkdown(issue.description);
+    $('edit-description').value = initialMarkdown;
+    $('editor-description').innerHTML = sanitizeDescription(issue.description || '');
+    showDescriptionMode(true);
     const people = new Map(members()); if (issue.assigned_to) people.set(issue.assigned_to.id, issue.assigned_to.name);
     options($('edit-assignee'), [['', 'Unassigned'], ...people], issue.assigned_to?.id || '');
     $('edit-estimate').value = issue.estimated_hours ?? '';
     $('issue-link').href = linkToIssue(issue.id);
+    initialEditorValues = editorValues();
   } catch (error) { if (stamp === epoch) notify(error.message, true); }
   finally {
     finishLoading();
@@ -1039,13 +1040,34 @@ $('completion-dialog').addEventListener('close', () => {
   completion = null;
   if (api && !busy && !loading) startBacklog();
 });
-$('close-editor').addEventListener('click', () => { if (!busy) { $('editor').close(); editing = null; } });
-$('editor').addEventListener('cancel', event => { if (busy) event.preventDefault(); });
+function editorValues() {
+  return JSON.stringify(['editor-subject', 'edit-description', 'edit-assignee', 'edit-estimate', 'edit-priority'].map(id => $(id).value));
+}
+function mayCloseEditor() {
+  return !busy && (editorValues() === initialEditorValues || window.confirm('Discard unsaved changes?'));
+}
+function showDescriptionMode(preview) {
+  if (preview) $('editor-description').innerHTML = $('edit-description').value === initialMarkdown
+    ? sanitizeDescription(editing?.description || '') : descriptionHtml($('edit-description').value);
+  $('edit-description').hidden = preview;
+  $('description-hint').hidden = preview;
+  $('editor-description').hidden = !preview;
+  $('description-write').setAttribute('aria-pressed', String(!preview));
+  $('description-preview').setAttribute('aria-pressed', String(preview));
+}
+$('description-write').addEventListener('click', () => showDescriptionMode(false));
+$('description-preview').addEventListener('click', () => showDescriptionMode(true));
+$('close-editor').addEventListener('click', () => { if (mayCloseEditor()) $('editor').close(); });
+$('editor').addEventListener('cancel', event => { if (!mayCloseEditor()) event.preventDefault(); });
+$('editor').addEventListener('close', () => {
+  editing = null;
+  if (api && !busy && !loading) startBacklog();
+});
 $('edit-form').addEventListener('submit', event => {
   event.preventDefault(); if (!editing || busy) return;
   try {
     if (sprint?.status !== 'open') throw new Error('Select an open sprint before editing issues.');
-    const patch = { assigned_to_id: $('edit-assignee').value ? Number($('edit-assignee').value) : null, estimated_hours: parseEstimate($('edit-estimate').value) };
+    const patch = { ...textPatch(editing, $('editor-subject').value, $('edit-description').value, initialMarkdown), assigned_to_id: $('edit-assignee').value ? Number($('edit-assignee').value) : null, estimated_hours: parseEstimate($('edit-estimate').value) };
     if (isSwimlane(editing, config.swimlaneTrackers)) patch.priority_id = Number($('edit-priority').value);
     void mutate(editing.id, patch);
   } catch (error) { notify(error.message, true); }

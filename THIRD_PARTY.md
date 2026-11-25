@@ -13,6 +13,10 @@ smaller size but the asset is not modified. Use does not imply endorsement by Re
 
 SHA-256: `2d70f2e2780cd182615f6d706491d153559b1ad8dba1c3a07193876c66b8ffbf`.
 
+## Description editing libraries
+
+The Markdown editor bundles npm dependencies locally through Vite: [Marked](https://github.com/markedjs/marked) (MIT) for Markdown-to-HTML, [Turndown](https://github.com/mixmark-io/turndown) (MIT) and [turndown-plugin-gfm](https://github.com/mixmark-io/turndown-plugin-gfm) (MIT) for HTML-to-Markdown, and [DOMPurify](https://github.com/cure53/DOMPurify) (Apache-2.0 OR MPL-2.0) for HTML sanitization. Exact versions are recorded in `package-lock.json`; no runtime CDN requests are made.
+
 ## Board libraries
 
 The application uses the **unmodified jKanban 1.3.1 browser distribution**, from the npm `jkanban@1.3.1` package, sourced from https://github.com/riktar/jkanban (Apache-2.0). It is vendored instead of installing jKanban's legacy npm watch/build dependency tree. The classic browser script exposes `window.jKanban`; application code remains ES modules. jKanban supplies the actual board and Dragula drag/drop implementation, not just styling.

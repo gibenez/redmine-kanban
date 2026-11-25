@@ -80,6 +80,12 @@ export function assertTransition(issue, patch) {
   if (!Array.isArray(issue.allowed_statuses)) throw new Error('Redmine did not provide allowed statuses. Status changes require Redmine 5.0+ with workflow information.');
   if (!issue.allowed_statuses.some(status => status.id === patch.status_id)) throw new Error('Your Redmine workflow does not allow this status transition.');
 }
+export function sameIssueText(key, actual, expected) {
+  // Redmine Issue#description= stores every line ending as CRLF.
+  // Ignore that transport normalization, not whitespace or HTML differences.
+  const normalize = value => (value ?? '').replace(/\r\n?/g, '\n');
+  return key === 'description' ? normalize(actual) === normalize(expected) : (actual ?? '') === (expected ?? '');
+}
 export function matchesPatch(issue, patch) {
   const values = { status_id: issue.status.id, priority_id: issue.priority?.id ?? null, assigned_to_id: issue.assigned_to?.id ?? null, estimated_hours: issue.estimated_hours ?? null };
   return Object.entries(patch).every(([key, value]) => key === 'custom_fields'
@@ -88,6 +94,7 @@ export function matchesPatch(issue, patch) {
       const expected = [...new Set((Array.isArray(field.value) ? field.value : field.value === '' ? [] : [field.value]).map(Number))].sort((a, b) => a - b);
       return JSON.stringify(actual) === JSON.stringify(expected);
     })
+    : key === 'subject' || key === 'description' ? sameIssueText(key, issue[key], value)
     : value == null ? values[key] == null : values[key] != null && Number(values[key]) === Number(value));
 }
 export function escapeHtml(value) { return String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char])); }

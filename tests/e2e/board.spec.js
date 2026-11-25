@@ -55,8 +55,10 @@ async function setup(page, { deny = false, ignored = false, denyVersions = false
       if (!ignored) {
         if ('custom_fields' in patch) issue.custom_fields = patch.custom_fields;
         if ('status_id' in patch) issue.status = statuses.find(s => s.id === patch.status_id);
+        if ('subject' in patch) issue.subject = patch.subject;
+        if ('description' in patch) issue.description = patch.description;
         if ('estimated_hours' in patch) issue.estimated_hours = patch.estimated_hours;
-        if ('assigned_to_id' in patch) issue.assigned_to = patch.assigned_to_id ? { id: 7, name: 'Team Member' } : undefined;
+        if ('assigned_to_id' in patch) issue.assigned_to = patch.assigned_to_id ? { id: patch.assigned_to_id, name: patch.assigned_to_id === 7 ? 'Team Member' : 'Other Member' } : undefined;
       }
       return route.fulfill({ status: 204, body: '' });
     }
@@ -1909,6 +1911,25 @@ for (const width of [1440, 390]) {
     await login(page);
     await page.getByRole('button', { name: 'Plan #1', exact: true }).click();
     const body = page.locator('#editor-description');
+    await expect(page.locator('#editor-subject')).toHaveValue('Build backlog feature');
+    await expect(page.locator('#edit-description')).toBeHidden();
+    await expect(page.locator('#description-preview')).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.locator('#description-write')).toHaveAttribute('aria-pressed', 'false');
+    await expect(page.locator('#description-hint')).toBeHidden();
+    expect(await page.getByRole('group', { name: 'Description mode' }).getByRole('button').evaluateAll(buttons => buttons.map(button => button.id))).toEqual(['description-preview', 'description-write']);
+    const heading = page.getByRole('heading', { name: 'Description', exact: true });
+    const headingBounds = await heading.boundingBox();
+    for (const name of ['Read description', 'Edit description']) {
+      const button = page.getByRole('button', { name, exact: true });
+      await expect(button).toBeVisible();
+      await expect(button).toHaveAttribute('title', name);
+      await expect(button).toHaveText('');
+      await expect(button.locator('svg[aria-hidden="true"]')).toHaveCount(1);
+      await expect(heading.locator('..').getByRole('button', { name, exact: true })).toHaveCount(1);
+      const bounds = await button.boundingBox();
+      expect(bounds.y).toBeLessThan(headingBounds.y + headingBounds.height);
+      expect(bounds.y + bounds.height).toBeGreaterThan(headingBounds.y);
+    }
     await expect(body.getByRole('heading', { name: 'Issue details' })).toBeVisible();
     await expect(body.locator('strong')).toHaveText('important');
     await expect(body.locator('br')).toHaveCount(1);
@@ -1927,17 +1948,20 @@ for (const width of [1440, 390]) {
     await expect(page.getByRole('button', { name: 'Save changes' })).toBeInViewport();
     await page.getByRole('button', { name: 'Close editor' }).click();
     await page.getByRole('button', { name: 'Plan #2', exact: true }).click();
-    await expect(page.locator('#editor-description-section')).toBeHidden();
+    await expect(page.locator('#editor-description-section')).toBeVisible();
+    await expect(page.locator('#edit-description')).toBeHidden();
+    await expect(page.locator('#description-preview')).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.locator('#edit-description')).toHaveValue('');
     await expect(body).toBeEmpty();
   });
 }
 
 for (const id of [1, 2]) {
-  test(`keyboard-accessible planner only changes assignee and estimate for issue #${id}`, async ({ page }) => {
+  test(`keyboard-accessible planner preserves untouched text while changing assignee and estimate for issue #${id}`, async ({ page }) => {
     const { writes } = await setup(page); await login(page);
     await page.getByRole('button', { name: `Plan #${id}`, exact: true }).click();
     const editor = page.locator('#editor');
-    await expect(editor.locator('input:visible, select:visible')).toHaveCount(id === 1 ? 3 : 2);
+    await expect(editor.locator('input:visible, select:visible')).toHaveCount(id === 1 ? 4 : 3);
     await expect(editor.getByLabel('Status', { exact: true })).toHaveCount(0);
     await expect(editor.getByLabel('Planning destination')).toHaveCount(0);
     await expect(editor.locator('#editor-tags, #editor-warning')).toHaveCount(0);
@@ -2288,3 +2312,252 @@ test('reschedule controls are disabled during target loading and while a confirm
   } finally { releaseWrite(); }
   await expect(page.locator('#notice')).toContainText('Moved/confirmed: #1, #2, #30, #31, #32');
 });
+
+test('planner saves a new title and sanitized Markdown HTML, then reloads the saved text', async ({ page }) => {
+  const fixture = await setup(page);
+  await login(page);
+  await page.getByRole('button', { name: 'Plan #1', exact: true }).click();
+  await expect(page.locator('#editor-title')).toHaveText('#1 — Build backlog feature');
+  await expect(page.locator('#description-preview')).toHaveAttribute('aria-pressed', 'true');
+  await page.locator('#description-write').click();
+  await expect(page.locator('#description-write')).toHaveAttribute('aria-pressed', 'true');
+  const subject = 'Revised <strong>plain text</strong> title';
+  const markdown = '# Acceptance\n\nA **bold** result with [details](https://example.test/details).\n\n- First item\n- Second item\n\n<script>window.injected=true</script>\n<img src=x onerror="window.injected=true">\n[Unsafe](javascript:alert(1))';
+  await page.locator('#editor-subject').fill(subject);
+  await page.locator('#edit-description').fill(markdown);
+  await page.locator('#description-preview').click();
+  const preview = page.locator('#editor-description');
+  await expect(preview.getByRole('heading', { name: 'Acceptance' })).toBeVisible();
+  await expect(preview.locator('strong')).toHaveText('bold');
+  await expect(preview.getByRole('listitem')).toHaveText(['First item', 'Second item']);
+  await expect(preview.getByRole('link', { name: 'details', exact: true })).toHaveAttribute('href', 'https://example.test/details');
+  await expect(preview.locator('script, [onerror], [href^="javascript:"]')).toHaveCount(0);
+  const html = await preview.innerHTML();
+  await page.locator('#description-write').click();
+  await expect(page.locator('#edit-description')).toHaveValue(markdown);
+  await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+  await expect(page.locator('#editor')).toBeHidden();
+  expect(fixture.writes).toEqual([{ subject, description: html }]);
+  expect(fixture.issues[0].description).toBe(html);
+  await expect(page.locator('[data-eid="1"]')).toContainText(subject);
+  await expect(page.locator('[data-eid="1"] strong')).toHaveCount(0);
+  expect(await page.evaluate(() => window.injected)).toBeUndefined();
+  await page.getByRole('button', { name: 'Plan #1', exact: true }).click();
+  await expect(page.locator('#editor-title')).toHaveText(`#1 — ${subject}`);
+  await expect(page.locator('#editor-subject')).toHaveValue(subject);
+  await expect(page.locator('#description-preview')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('#edit-description')).toBeHidden();
+  await expect(preview.getByRole('heading', { name: 'Acceptance' })).toBeVisible();
+  await expect(preview.locator('strong')).toHaveText('bold');
+});
+
+test('planner never rewrites unchanged original HTML after preview or a planning-only save', async ({ page }) => {
+  const fixture = await setup(page);
+  const original = '<p class="legacy">Original <b>formatting</b> &amp; spacing</p>\n<table><tr><td>Legacy cell</td></tr></table>';
+  fixture.issues[0].description = original;
+  await login(page);
+  await page.getByRole('button', { name: 'Plan #1', exact: true }).click();
+  await expect(page.locator('#edit-description')).toBeHidden();
+  await expect(page.locator('#editor-description')).toBeVisible();
+  await page.locator('#description-write').click();
+  await expect(page.locator('#edit-description')).toBeVisible();
+  await page.locator('#description-preview').click();
+  await page.locator('#description-write').click();
+  await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+  await expect(page.locator('#editor')).toBeHidden();
+  expect(fixture.writes).toEqual([]);
+  expect(fixture.issues[0].description).toBe(original);
+  await page.getByRole('button', { name: 'Plan #1', exact: true }).click();
+  await page.getByLabel('Estimated hours', { exact: true }).fill('8');
+  await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+  await expect(page.locator('#editor')).toBeHidden();
+  expect(fixture.writes).toEqual([{ estimated_hours: 8 }]);
+  expect(fixture.issues[0].description).toBe(original);
+  await page.getByRole('button', { name: 'Plan #1', exact: true }).click();
+  await page.locator('#editor-subject').fill('Title-only edit');
+  await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+  await expect(page.locator('#editor')).toBeHidden();
+  expect(fixture.writes[1]).toEqual({ subject: 'Title-only edit' });
+  expect(fixture.issues[0].description).toBe(original);
+});
+
+test('rejected text saves retain the entire draft and permit a successful retry', async ({ page }) => {
+  const fixture = await setup(page);
+  await login(page);
+  await page.getByRole('button', { name: 'Plan #1', exact: true }).click();
+  await page.locator('#editor-subject').fill('Draft title');
+  await page.locator('#description-write').click();
+  await page.locator('#edit-description').fill('Draft **description**');
+  await page.getByLabel('Assignment', { exact: true }).selectOption('9');
+  await page.getByLabel('Estimated hours', { exact: true }).fill('6');
+  await page.locator('#description-preview').click();
+  let attempts = 0;
+  await page.route('**/redmine/issues/1.json**', route => {
+    if (route.request().method() === 'PUT' && attempts++ === 0) return route.fulfill({ status: 422, json: { errors: ['Text save rejected'] } });
+    return route.fallback();
+  });
+  await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+  await expect(page.locator('#editor-notice')).toContainText(/rejected|422/i);
+  await expect(page.locator('#editor')).toBeVisible();
+  await expect(page.locator('#editor-subject')).toHaveValue('Draft title');
+  await page.locator('#description-write').click();
+  await expect(page.locator('#edit-description')).toBeEnabled();
+  await expect(page.locator('#edit-description')).toHaveValue('Draft **description**');
+  await expect(page.getByLabel('Assignment', { exact: true })).toHaveValue('9');
+  await expect(page.getByLabel('Estimated hours', { exact: true })).toHaveValue('6');
+  expect(fixture.issues[0].subject).toBe('Build backlog feature');
+  expect(fixture.writes).toEqual([]);
+  await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+  await expect(page.locator('#editor')).toBeHidden();
+  expect(attempts).toBe(2);
+  expect(fixture.writes).toHaveLength(1);
+  expect(fixture.writes[0]).toMatchObject({ subject: 'Draft title', assigned_to_id: 9, estimated_hours: 6 });
+  expect(fixture.writes[0].description).toContain('<strong>description</strong>');
+});
+
+test('planner rejects whitespace titles and can explicitly clear descriptions', async ({ page }) => {
+  const fixture = await setup(page);
+  fixture.issues[0].description = '<p>Remove this</p>';
+  await login(page);
+  await page.getByRole('button', { name: 'Plan #1', exact: true }).click();
+  await page.locator('#editor-subject').fill('   ');
+  await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+  await expect(page.locator('#editor-notice')).toContainText('Title cannot be blank');
+  expect(fixture.writes).toEqual([]);
+  await page.locator('#editor-subject').fill(fixture.issues[0].subject);
+  await page.locator('#description-write').click();
+  await page.locator('#edit-description').fill('');
+  await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+  await expect(page.locator('#editor')).toBeHidden();
+  expect(fixture.writes).toEqual([{ description: '' }]);
+  await page.getByRole('button', { name: 'Plan #1', exact: true }).click();
+  await expect(page.locator('#edit-description')).toHaveValue('');
+});
+
+for (const ignored of ['subject', 'description']) {
+  test(`silently ignored ${ignored} writes are not confirmed and retain the draft`, async ({ page }) => {
+    const fixture = await setup(page);
+    await login(page);
+    await page.getByRole('button', { name: 'Plan #1', exact: true }).click();
+    if (ignored === 'description') await page.locator('#description-write').click();
+    const field = page.locator(ignored === 'subject' ? '#editor-subject' : '#edit-description');
+    await field.fill('My unretained draft');
+    await page.route('**/redmine/issues/1.json**', route => route.request().method() === 'PUT'
+      ? route.fulfill({ status: 204 }) : route.fallback());
+    await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+    await expect(page.locator('#editor-notice')).toContainText('Redmine did not retain');
+    await expect(page.locator('#editor')).toBeVisible();
+    await expect(field).toHaveValue('My unretained draft');
+    expect(fixture.writes).toEqual([]);
+  });
+}
+
+test('Redmine CRLF normalization confirms a saved description instead of causing a retry conflict', async ({ page }) => {
+  const fixture = await setup(page);
+  fixture.issues[0].description = '<p>Original</p>\r\n';
+  await page.route('**/redmine/issues/1.json**', async route => {
+    if (route.request().method() !== 'PUT') return route.fallback();
+    const patch = route.request().postDataJSON().issue;
+    fixture.writes.push(patch);
+    fixture.issues[0].description = patch.description.replace(/\r\n|\r|\n/g, '\r\n');
+    await route.fulfill({ status: 204 });
+  });
+  await login(page);
+  await page.getByRole('button', { name: 'Plan #1', exact: true }).click();
+  await page.getByRole('button', { name: 'Edit description', exact: true }).click();
+  await page.locator('#edit-description').fill('Updated **description**\n\nSecond paragraph.');
+  await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+  await expect.poll(() => fixture.writes.length).toBe(1);
+  await expect(page.locator('#loading-overlay')).toBeHidden();
+  expect(fixture.issues[0].description).toContain('<strong>description</strong>');
+  // Verification must succeed on this first save, without requiring a retry.
+  await expect(page.locator('#editor-notice')).not.toContainText('description changed in Redmine');
+  await expect(page.locator('#editor')).toBeHidden();
+  expect(fixture.writes).toHaveLength(1);
+});
+
+test('retry confirms text already saved after a lost response without writing twice', async ({ page }) => {
+  const fixture = await setup(page);
+  await login(page);
+  await page.getByRole('button', { name: 'Plan #1', exact: true }).click();
+  await page.locator('#editor-subject').fill('Already saved title');
+  await page.getByRole('button', { name: 'Edit description', exact: true }).click();
+  await page.locator('#edit-description').fill('Already **saved**');
+  await page.route('**/redmine/issues/1.json**', async route => {
+    if (route.request().method() !== 'PUT') return route.fallback();
+    const patch = route.request().postDataJSON().issue;
+    fixture.writes.push(patch);
+    fixture.issues[0].subject = patch.subject;
+    fixture.issues[0].description = patch.description.replace(/\r\n|\r|\n/g, '\r\n');
+    // Simulate an upstream failure after Redmine has committed the write.
+    await route.fulfill({ status: 502, json: { errors: ['Response lost after commit'] } });
+  });
+  await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+  await expect(page.locator('#editor-notice')).toContainText('Save not confirmed');
+  await expect(page.locator('#loading-overlay')).toBeHidden();
+  await expect(page.locator('#edit-description')).toHaveValue('Already **saved**');
+  expect(fixture.writes).toHaveLength(1);
+  await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+  await expect(page.locator('#editor')).toBeHidden();
+  expect(fixture.writes).toHaveLength(1);
+  await expect(page.locator('#notice')).toContainText('Issue #1 saved in Redmine');
+});
+
+for (const changed of ['subject', 'description']) {
+  test(`concurrent ${changed} changes block all writes and retain the text draft`, async ({ page }) => {
+    const fixture = await setup(page);
+    fixture.issues[0].description = '<p>Original description</p>';
+    await login(page);
+    await page.getByRole('button', { name: 'Plan #1', exact: true }).click();
+    await page.locator('#editor-subject').fill('My draft title');
+    await page.locator('#description-write').click();
+    await page.locator('#edit-description').fill('My draft **description**');
+    await page.getByLabel('Estimated hours', { exact: true }).fill('4');
+    const remote = changed === 'subject' ? 'Remote title' : '<p>Remote description</p>';
+    fixture.issues[0][changed] = remote;
+    await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+    await expect(page.locator('#editor-notice')).toContainText(/changed|concurrent|conflict/i);
+    await expect(page.locator('#editor')).toBeVisible();
+    await expect(page.locator('#editor-subject')).toHaveValue('My draft title');
+    await expect(page.locator('#edit-description')).toHaveValue('My draft **description**');
+    await expect(page.getByLabel('Estimated hours', { exact: true })).toHaveValue('4');
+    expect(fixture.writes).toEqual([]);
+    expect(fixture.issues[0][changed]).toBe(remote);
+  });
+}
+
+for (const field of ['title', 'description', 'assignment', 'estimate']) {
+  test(`closing a planner with a changed ${field} confirms discard and respects refusal`, async ({ page }) => {
+    const fixture = await setup(page);
+    await login(page);
+    await page.getByRole('button', { name: 'Plan #1', exact: true }).click();
+    if (field === 'description') await page.locator('#description-write').click();
+    const control = field === 'title' ? page.locator('#editor-subject')
+      : field === 'description' ? page.locator('#edit-description')
+      : field === 'assignment' ? page.getByLabel('Assignment', { exact: true })
+      : page.getByLabel('Estimated hours', { exact: true });
+    await expect(control).toBeEnabled();
+    const original = await control.inputValue();
+    const value = field === 'assignment' ? '9' : field === 'estimate' ? '7' : 'Unsaved draft';
+    if (field === 'assignment') await control.selectOption(value);
+    else await control.fill(value);
+    const refuse = async dialog => {
+      expect(dialog.type()).toBe('confirm');
+      expect(dialog.message()).toMatch(/discard|unsaved/i);
+      await dialog.dismiss();
+    };
+    page.once('dialog', refuse);
+    await page.getByRole('button', { name: 'Close editor', exact: true }).click();
+    await expect(page.locator('#editor')).toBeVisible();
+    await expect(control).toHaveValue(value);
+    page.once('dialog', async dialog => {
+      expect(dialog.type()).toBe('confirm');
+      await dialog.accept();
+    });
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#editor')).toBeHidden();
+    expect(fixture.writes).toEqual([]);
+    await page.getByRole('button', { name: 'Plan #1', exact: true }).click();
+    await expect(control).toHaveValue(original);
+  });
+}

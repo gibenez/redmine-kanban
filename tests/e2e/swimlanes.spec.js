@@ -39,6 +39,8 @@ async function setup(page, { ignoredPriority = false } = {}) {
       if (patch.custom_fields) issue.custom_fields = patch.custom_fields;
       if (patch.status_id) issue.status = statuses.find(row => row.id === patch.status_id);
       if ('priority_id' in patch && !ignoredPriority) issue.priority = priorities.find(row => row.id === Number(patch.priority_id));
+      if ('subject' in patch) issue.subject = patch.subject;
+      if ('description' in patch) issue.description = patch.description;
       if ('estimated_hours' in patch) issue.estimated_hours = patch.estimated_hours;
       if ('assigned_to_id' in patch) issue.assigned_to = patch.assigned_to_id ? { id: patch.assigned_to_id } : undefined;
       return route.fulfill({ status: 204, body: '' });
@@ -1095,7 +1097,10 @@ test('Swimlane heading pencil is the far-right keyboard-accessible planner and l
   await expect(page.locator('#editor-swimlane-fields')).toBeVisible();
   await expect(page.getByRole('dialog', { name: '#4 — Issue 4', exact: true })).toBeVisible();
   await expect(page.locator('#editor-title')).toHaveText('#4 — Issue 4');
-  await expect(page.locator('#editor-subject')).toHaveCount(0);
+  await expect(page.locator('#editor-subject')).toHaveValue('Issue 4');
+  await expect(page.locator('#edit-description')).toBeHidden();
+  await expect(page.locator('#editor-description')).toBeVisible();
+  await expect(page.locator('#description-preview')).toHaveAttribute('aria-pressed', 'true');
   await expect(page.getByLabel('Priority', { exact: true })).toHaveAttribute('id', 'edit-priority');
   await expect(page.locator('#edit-priority')).toHaveValue('2');
   expect(await page.locator('#edit-priority option').evaluateAll(options => options.map(option => ({ id: Number(option.value), name: option.textContent })))).toEqual(fixture.priorities);
@@ -1154,7 +1159,7 @@ test('ordinary Card planner hides Swimlane fields, makes no Priority request and
   await expect(page.locator('#editor-swimlane-fields')).toBeHidden();
   await expect(page.locator('#edit-priority')).toBeHidden();
   await expect(page.locator('#edit-tags')).toBeHidden();
-  await expect(page.locator('#editor input:visible, #editor select:visible')).toHaveCount(2);
+  await expect(page.locator('#editor input:visible, #editor select:visible')).toHaveCount(3);
   expect(fixture.priorityRequests).toHaveLength(requestsBefore);
   await page.getByLabel('Estimated hours', { exact: true }).fill('5');
   await page.getByRole('button', { name: 'Save changes', exact: true }).click();
@@ -1190,4 +1195,25 @@ test('a Priority silently ignored by Redmine is not falsely confirmed as saved',
   await expect(page.locator('#editor')).toBeVisible();
   expect(fixture.writes).toEqual([{ id: 4, patch: { priority_id: 4 } }]);
   expect(fixture.rows[3].priority.id).toBe(2);
+});
+
+test('discard confirmation also protects a changed Swimlane Priority', async ({ page }) => {
+  const fixture = await setup(page);
+  await page.getByRole('button', { name: 'Plan #4', exact: true }).click();
+  await expect(page.locator('#edit-priority')).toBeEnabled();
+  await page.locator('#edit-priority').selectOption('4');
+  page.once('dialog', async dialog => {
+    expect(dialog.type()).toBe('confirm');
+    expect(dialog.message()).toMatch(/discard|unsaved/i);
+    await dialog.dismiss();
+  });
+  await page.getByRole('button', { name: 'Close editor', exact: true }).click();
+  await expect(page.locator('#editor')).toBeVisible();
+  await expect(page.locator('#edit-priority')).toHaveValue('4');
+  page.once('dialog', async dialog => { await dialog.accept(); });
+  await page.getByRole('button', { name: 'Close editor', exact: true }).click();
+  await expect(page.locator('#editor')).toBeHidden();
+  expect(fixture.writes).toEqual([]);
+  await page.getByRole('button', { name: 'Plan #4', exact: true }).click();
+  await expect(page.locator('#edit-priority')).toHaveValue('2');
 });

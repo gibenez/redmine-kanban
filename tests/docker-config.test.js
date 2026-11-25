@@ -9,6 +9,10 @@ const script = readFileSync(new URL('../docker/40-board-config.sh', import.meta.
   .replace(' > /usr/share/nginx/html/config.json', '');
 const env = { PATH: process.env.PATH, REDMINE_URL: 'https://redmine.example.test', BACKLOG_STATUS_ID: '1', OPENED_STATUS_ID: '42', SPRINT_FIELD_ID: '7', COLUMN_STATUS_IDS: '1,2,5' };
 describe('container configuration', () => {
+  it('allows bounded full-description HTML writes beyond the old planning-only limit', () => {
+    const template = readFileSync(new URL('../docker/default.conf.template', import.meta.url), 'utf8');
+    expect(template).toMatch(/client_max_body_size\s+1m;/);
+  });
   it('emits the explicitly configured opened status', () => {
     const result = spawnSync('sh', ['-c', script], { env, encoding: 'utf8' });
     expect(result.status, result.stderr).toBe(0);

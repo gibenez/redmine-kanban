@@ -105,9 +105,19 @@
   <dialog id="editor" aria-labelledby="editor-title">
     <form id="edit-form">
       <div class="dialog-heading"><h2 id="editor-title">Issue</h2><button type="button" id="close-editor" aria-label="Close editor">×</button></div>
-      <section id="editor-description-section" aria-labelledby="editor-description-title" hidden>
-        <h3 id="editor-description-title">Description</h3>
-        <div id="editor-description"></div>
+      <label for="editor-subject">Title</label><input id="editor-subject" required>
+      <section id="editor-description-section" aria-labelledby="editor-description-title">
+        <div class="description-heading">
+          <h3 id="editor-description-title">Description</h3>
+          <div class="description-tabs" role="group" aria-label="Description mode">
+            <button type="button" id="description-preview" aria-label="Read description" title="Read description" aria-pressed="true" aria-controls="editor-description"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9l-6-6Z"/><path d="M14 3v6h6M8 13h8M8 17h6"/></svg></button>
+            <button type="button" id="description-write" aria-label="Edit description" title="Edit description" aria-pressed="false" aria-controls="edit-description"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 5 4 4M4 20l5-1L21 7a2.8 2.8 0 0 0-4-4L5 15l-1 5Z"/></svg></button>
+          </div>
+        </div>
+        <label class="sr-only" for="edit-description">Description Markdown</label>
+        <textarea id="edit-description" rows="10" aria-describedby="description-hint" hidden></textarea>
+        <div id="editor-description" role="region" aria-label="Description preview"></div>
+        <p id="description-hint" class="muted" hidden>Write Markdown; saved to Redmine as HTML. Safe embedded HTML is supported. Editing removes unsafe markup and inline styles.</p>
       </section>
       <p id="editor-notice" role="status" aria-live="polite" hidden></p>
       <label for="edit-assignee">Assignment</label><select id="edit-assignee"></select>
