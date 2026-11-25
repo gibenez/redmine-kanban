@@ -2046,3 +2046,200 @@ test('save errors are also announced inside the planning dialog', async ({ page 
   await expect(page.locator('#editor-notice')).toContainText('Redmine denied');
   await expect(page.getByRole('dialog')).toBeVisible();
 });
+
+// Rescheduling includes every descendant, including nested headings and closed
+// issues, unlike the open non-heading candidates for Add missing subtasks.
+async function setupReschedule(page) {
+  const fixture = await setup(page);
+  fixture.versions[0].created_on = '2026-01-02T00:00:00Z';
+  fixture.versions[0].due_date = '2020-01-01';
+  fixture.versions[1].created_on = '2026-01-04T00:00:00Z';
+  fixture.versions.push(
+    { id: 13, name: 'Later tie', status: 'open', project: { id: 1 }, sharing: 'descendants', created_on: '2026-01-03T00:00:00Z', due_date: '2025-01-01' },
+    { id: 14, name: 'Earlier sprint', status: 'open', project: { id: 1 }, sharing: 'descendants', created_on: '2026-01-01T00:00:00Z', due_date: '2099-01-01' },
+    { id: 12, name: 'Next sprint', status: 'open', project: { id: 1 }, sharing: 'descendants', created_on: '2026-01-03T00:00:00Z', due_date: '2098-01-01' },
+    { id: 20, name: 'Module release', status: 'open', project: { id: 2 }, sharing: 'tree', created_on: '2026-01-03T00:00:00Z' },
+    { id: 21, name: 'Not shared', status: 'open', project: { id: 1 }, sharing: 'none', created_on: '2026-01-03T00:00:00Z' },
+  );
+  const root = fixture.issues[0];
+  root.custom_fields = [{ id: 7, value: '10' }];
+  root.children = [{ id: 2 }, { id: 30 }];
+  fixture.issues[1].parent = { id: 1 };
+  fixture.issues.push(
+    { ...fixture.issues[1], id: 30, subject: 'Closed branch', parent: { id: 1 }, children: [{ id: 31 }], status: { id: 5, name: 'Done', is_closed: true } },
+    { ...root, id: 31, subject: 'Nested open heading in another sprint', parent: { id: 30 }, children: [{ id: 32 }], custom_fields: [{ id: 7, value: '14' }] },
+    { ...fixture.issues[1], id: 32, subject: 'Open grandchild without a sprint', parent: { id: 31 }, custom_fields: [{ id: 7, value: '' }] },
+  );
+  return fixture;
+}
+
+async function openReschedule(page) {
+  await expect(page.locator('#workspace')).toHaveAttribute('aria-busy', 'false');
+  // Initial hierarchy scans can outlive the foreground refresh. Wait for their
+  // visible completion before installing gates or opening a second hierarchy read.
+  await expect(page.locator('[data-add-descendants="1"]')).toHaveAttribute('title', /missing\)/);
+  const button = page.getByRole('button', { name: 'Reschedule swimlane #1', exact: true });
+  await expect(button).toHaveAttribute('data-reschedule-swimlane', '1');
+  await expect(button).toHaveAttribute('title', 'Reschedule this swimlane issue and all descendants, including closed issues, to another Sprint.');
+  await expect(button).toBeEnabled();
+  await button.click();
+  await expect(page.getByRole('dialog', { name: 'Reschedule swimlane', exact: true })).toBeVisible();
+  await expect(page.locator('#reschedule-dialog')).toBeVisible();
+  await expect(page.locator('#reschedule-count')).toHaveText('5 issues will move, including the swimlane issue and all descendants, closed and non-closed.');
+  await expect(page.locator('#reschedule-target')).toBeEnabled();
+}
+
+function rescheduleWrites(fixture) {
+  return fixture.requests.filter(request => request.method() === 'PUT').map(request => ({
+    id: Number(new URL(request.url()).pathname.match(/issues\/(\d+)/)[1]),
+    patch: request.postDataJSON().issue,
+  }));
+}
+
+test('reschedule moves the parent and all descendants, including closed children and nested headings', async ({ page }) => {
+  const fixture = await setupReschedule(page);
+  const original = structuredClone(fixture.issues);
+  await login(page);
+  await openReschedule(page);
+  await expect(page.getByLabel('Target sprint', { exact: true })).toHaveValue('12');
+  await page.getByRole('button', { name: 'Reschedule', exact: true }).click();
+  await expect(page.locator('#reschedule-dialog')).not.toBeVisible();
+  await expect(page.locator('#notice')).toContainText('Moved/confirmed: #1, #2, #30, #31, #32. Failed/unconfirmed: none. Not attempted: none.');
+  await expect(page.locator('#workspace')).toHaveAttribute('aria-busy', 'false');
+  expect(rescheduleWrites(fixture)).toEqual([1, 2, 30, 31, 32].map(id => ({ id, patch: { custom_fields: [{ id: 7, value: '12' }] } })));
+  for (const issue of fixture.issues) {
+    const before = original.find(item => item.id === issue.id);
+    expect(issue).toEqual([1, 2, 30, 31, 32].includes(issue.id) ? { ...before, custom_fields: [{ id: 7, value: '12' }] } : before);
+  }
+  expect(fixture.issues.find(issue => issue.id === 30).status).toEqual({ id: 5, name: 'Done', is_closed: true });
+  await expect(page.locator('#sprint')).toHaveValue('10');
+  await expect(page.locator('[data-reschedule-swimlane="1"]')).toHaveCount(0);
+  await page.locator('#sprint').selectOption('12');
+  await expect(page.locator('[data-reschedule-swimlane="1"]')).toBeVisible();
+  await expect(page.locator('[data-reschedule-swimlane="31"]')).toBeVisible();
+  await expect(page.locator('[data-eid="32"]')).toBeVisible();
+});
+
+test('reschedule targets are newest first with descending ID ties, retain the next sprint default, and cancel makes no writes', async ({ page }) => {
+  const fixture = await setupReschedule(page);
+  const original = structuredClone(fixture.issues);
+  await login(page);
+  await openReschedule(page);
+  const target = page.getByLabel('Target sprint', { exact: true });
+  expect(await target.locator('option').evaluateAll(options => options.filter(option => option.value).map(option => option.value))).toEqual(['13', '12', '14']);
+  await expect(target).toHaveValue('12');
+  await target.selectOption('13');
+  await expect(page.locator('#reschedule-cancel')).toHaveText('Cancel');
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect(page.locator('#reschedule-dialog')).not.toBeVisible();
+  expect(fixture.writes).toEqual([]);
+  expect(fixture.issues).toEqual(original);
+  await expect(page.locator('#sprint')).toHaveValue('10');
+});
+
+test('reschedule requires a manual target when there is no next sprint by creation', async ({ page }) => {
+  const fixture = await setupReschedule(page);
+  fixture.versions[0].created_on = '2026-02-01T00:00:00Z';
+  await login(page);
+  await openReschedule(page);
+  await expect(page.getByLabel('Target sprint', { exact: true })).toHaveValue('');
+  await expect(page.locator('#reschedule-submit')).toHaveText('Reschedule');
+  await expect(page.locator('#reschedule-submit')).toBeDisabled();
+  expect(fixture.writes).toEqual([]);
+  await page.getByLabel('Target sprint', { exact: true }).selectOption('14');
+  await expect(page.locator('#reschedule-submit')).toBeEnabled();
+  await page.locator('#reschedule-submit').click();
+  await expect(page.locator('#reschedule-dialog')).not.toBeVisible();
+  await expect(page.locator('#notice')).toContainText('Moved/confirmed: #1, #2, #30, #31, #32. Failed/unconfirmed: none. Not attempted: none.');
+  // The nested heading already belongs to 14 and must not be rewritten.
+  expect(rescheduleWrites(fixture)).toEqual([1, 2, 30, 32].map(id => ({ id, patch: { custom_fields: [{ id: 7, value: '14' }] } })));
+  await expect(page.locator('#sprint')).toHaveValue('10');
+});
+
+for (const closed of ['parent', 'source sprint']) {
+  test(`reschedule is disabled for a closed ${closed}`, async ({ page }) => {
+    const fixture = await setupReschedule(page);
+    if (closed === 'parent') fixture.issues[0].status = { id: 5, name: 'Done', is_closed: true };
+    else fixture.versions[0].status = 'closed';
+    await login(page);
+    if (closed === 'source sprint') {
+      await page.getByLabel('Include closed sprints').check();
+      await page.locator('#sprint').selectOption('10');
+    }
+    await expect(page.locator('#workspace')).toHaveAttribute('aria-busy', 'false');
+    await expect(page.getByRole('button', { name: 'Reschedule swimlane #1', exact: true })).toBeDisabled();
+    await expect(page.locator('#reschedule-dialog')).not.toBeVisible();
+    expect(fixture.writes).toEqual([]);
+  });
+}
+
+for (const versionId of [10, 12]) {
+  test(`reschedule rechecks ${versionId === 10 ? 'source' : 'target'} sprint openness before any writes`, async ({ page }) => {
+    const fixture = await setupReschedule(page);
+    await login(page);
+    await openReschedule(page);
+    fixture.versions.find(version => version.id === versionId).status = 'closed';
+    await page.locator('#reschedule-submit').click();
+    await expect(page.locator('#notice')).toContainText(/no longer open|not open|closed|must still be open/i);
+    expect(fixture.writes).toEqual([]);
+  });
+}
+
+test('reschedule stops after a rejected descendant write and reports moved, failed and unattempted issues without rollback', async ({ page }) => {
+  const fixture = await setupReschedule(page);
+  const original = structuredClone(fixture.issues);
+  await login(page);
+  await openReschedule(page);
+  await page.route('**/redmine/issues/2.json', async route => {
+    if (route.request().method() !== 'PUT') return route.fallback();
+    return route.fulfill({ status: 403, json: {} });
+  });
+  await page.locator('#reschedule-submit').click();
+  await expect(page.locator('#reschedule-dialog')).not.toBeVisible();
+  const notice = page.locator('#notice');
+  await expect(notice).toContainText(/moved[^;\n]*#1/i);
+  await expect(notice).toContainText(/failed[^;\n]*#2/i);
+  await expect(notice).toContainText(/(?:unattempted|not attempted)[^;\n]*#30[^;\n]*#31[^;\n]*#32/i);
+  expect(rescheduleWrites(fixture)).toEqual([{ id: 1, patch: { custom_fields: [{ id: 7, value: '12' }] } }]);
+  for (const issue of fixture.issues) {
+    const before = original.find(item => item.id === issue.id);
+    expect(issue).toEqual(issue.id === 1 ? { ...before, custom_fields: [{ id: 7, value: '12' }] } : before);
+  }
+  await expect(page.locator('#sprint')).toHaveValue('10');
+});
+
+
+test('reschedule controls are disabled during target loading and while a confirmed move is busy', async ({ page }) => {
+  const fixture = await setupReschedule(page);
+  await login(page);
+  await openReschedule(page);
+  await page.locator('#reschedule-cancel').click();
+  let releaseLoading;
+  const loadingGate = new Promise(resolve => { releaseLoading = resolve; });
+  await page.route('**/redmine/projects/1/versions.json?**', async route => {
+    await loadingGate;
+    await route.fallback();
+  });
+  const button = page.getByRole('button', { name: 'Reschedule swimlane #1', exact: true });
+  await button.click();
+  try {
+    await expect(button).toBeDisabled();
+    await expect(page.locator('#reschedule-submit')).toBeDisabled();
+    expect(fixture.writes).toEqual([]);
+  } finally { releaseLoading(); }
+  await expect(page.locator('#reschedule-dialog')).toBeVisible();
+  await expect(page.locator('#reschedule-count')).toHaveText('5 issues will move, including the swimlane issue and all descendants, closed and non-closed.');
+  await expect(page.locator('#reschedule-submit')).toBeEnabled();
+  let releaseWrite;
+  const writeGate = new Promise(resolve => { releaseWrite = resolve; });
+  await page.route('**/redmine/issues/1.json', async route => {
+    if (route.request().method() === 'PUT') await writeGate;
+    await route.fallback();
+  });
+  await page.locator('#reschedule-submit').click();
+  try {
+    await expect(button).toBeDisabled();
+    await expect(page.locator('#reschedule-submit')).toBeDisabled();
+  } finally { releaseWrite(); }
+  await expect(page.locator('#notice')).toContainText('Moved/confirmed: #1, #2, #30, #31, #32');
+});

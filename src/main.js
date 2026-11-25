@@ -9,6 +9,7 @@ import { completedLane, closingStatuses, preferredClosingStatus } from './swimla
 import { emptySprintFilters, filteredSprint, createSprintFilterPreferences } from './sprint-filters.js';
 import { createSprintFilterControls } from './sprint-filter-controls.js';
 import { collectMissingSubtasks, createHierarchyReader, planDescendants } from './descendant-planning.js';
+import { collectReschedulingIssues, rescheduleSwimlane, reschedulingTargets } from './swimlane-rescheduling.js';
 import { createLoadingOverlay } from './loading-overlay.js';
 import { settledResults } from './settled-results.js';
 import { createSelectionPreferences } from './selection-preferences.js';
@@ -33,7 +34,7 @@ let showClosedParents = false;
 const closedParentsStorageKey = 'redmine-sprint-board.closed-parents';
 let api, config, statuses = [], projects = [], versions = [], memberships = [], issues = [], board;
 let sprint = null, projectId = '', blockedProjectId = '', busy = false, dragging = false, loading = false, epoch = 0, timer, editing;
-let completion = null;
+let completion = null, rescheduling = null;
 let autorefresh = false;
 let selectionPreferences;
 function setAutorefresh(enabled) {
@@ -132,6 +133,12 @@ function lock() {
   document.querySelectorAll('.plan, .scope-toggle').forEach(el => { el.disabled = busy || loading || (el.closest('[data-id="backlog"]') && (queryLoading || feed?.loadingMore)); });
   $('tracker').disabled = busy || loading || !eligibleTrackers().length;
   document.querySelectorAll('[data-add-descendants]').forEach(el => { el.disabled = busy || loading || sprint?.status !== 'open' || !lanePlanning.get(Number(el.dataset.addDescendants))?.count; });
+  document.querySelectorAll('[data-reschedule-swimlane]').forEach(el => {
+    const parent = feed?.snapshot.sprintAll.find(issue => issue.id === Number(el.dataset.rescheduleSwimlane));
+    el.disabled = busy || loading || sprint?.status !== 'open' || !parent || closedStatusIds().includes(parent.status.id);
+  });
+  for (const el of $('reschedule-form').querySelectorAll('button, select')) el.disabled = busy || loading;
+  $('reschedule-submit').disabled = busy || loading || !rescheduling || !$('reschedule-target').value;
   if ($('backlog-more')) $('backlog-more').disabled = busy || loading || queryLoading || feed?.loadingMore;
   document.querySelectorAll('[data-backlog-collapse]').forEach(el => { el.disabled = busy || loading || dragging; });
   $('workspace').setAttribute('aria-busy', String(busy || loading));
@@ -249,7 +256,8 @@ function forget() {
   $('login-form').querySelector('button').disabled = false;
   $('forget-saved').hidden = true;
   $('editor').close(); editing = null;
-  $('completion-dialog').close(); completion = null; destroyBoard();
+  $('completion-dialog').close(); completion = null;
+  $('reschedule-dialog').close(); rescheduling = null; destroyBoard();
   issues = []; versions = []; memberships = []; projects = []; sprint = null; projectId = ''; blockedProjectId = '';
   document.body.classList.remove('board-active');
   $('help-dialog').close();
@@ -335,7 +343,9 @@ function laneHeading(lane) {
   const state = lanePlanning.get(id);
   const hint = !state || state.pending ? 'Checking missing subtasks…' : state.error ? `Missing subtasks unknown: ${state.error} Use Refresh to retry.` : `Add missing subtasks to ${sprint?.name || 'this Sprint'} (${state.count || 0} missing). Includes closed subtasks and those assigned elsewhere; replaces their Sprint with this Sprint and preserves statuses. Cards group under their nearest planned Swimlane.`;
   const icon = `<svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3 3v10h3M3 6h3M9 6h7M9 13h2M15 11v6M12 14h6"/>${state?.error ? '<circle cx="16" cy="3" r="2"/>' : ''}</svg>`;
-  const action = lane.parent ? `<span class="swimlane-actions" title="${e(hint)}">${dueDateMarkup(lane.parent)}${tracker}<button type="button" class="add-subtasks${state?.count ? ' requires-attention' : ''}${state?.error ? ' planning-unknown' : ''}" data-add-descendants="${id}" aria-label="Add missing subtasks for #${id}" title="${e(hint)}"${state?.error ? ' aria-invalid="true"' : ''}>${icon}</button></span>` : '';
+  const rescheduleHint = closed ? 'Closed swimlanes cannot be rescheduled.' : 'Reschedule this swimlane issue and all descendants, including closed issues, to another Sprint.';
+  const rescheduleAction = `<button type="button" data-reschedule-swimlane="${id}" aria-label="Reschedule swimlane #${id}" title="${rescheduleHint}"><svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="3" y="4" width="14" height="13" rx="1"/><path d="M6 2v4m8-4v4M3 8h14m-9 5h6m-2-2 2 2-2 2"/></svg></button>`;
+  const action = lane.parent ? `<span class="swimlane-actions" title="${e(hint)}">${dueDateMarkup(lane.parent)}${tracker}<button type="button" class="add-subtasks${state?.count ? ' requires-attention' : ''}${state?.error ? ' planning-unknown' : ''}" data-add-descendants="${id}" aria-label="Add missing subtasks for #${id}" title="${e(hint)}"${state?.error ? ' aria-invalid="true"' : ''}>${icon}</button>${rescheduleAction}</span>` : '';
   return `${bar}<div class="swimlane-title-row"><strong${closed ? ' class="closed"' : ''}>${title}</strong>${metadata}${action}</div>${unmappedNotice(lane.visible.filter(issue => !config.columnStatusIds.includes(issue.status.id)))}${lane.parent ? relatedIssues.markup(id) : ''}`;
 }
 
@@ -537,7 +547,7 @@ function chooseSprint(previousId) {
   options($('sprint'), available.length ? available.map(version => [version.id, version.name + (version.status === 'closed' ? ' (closed)' : '')]) : [['', 'No open sprints']], sprint?.id || '');
 }
 async function refresh(projectChanged = false, retryDenied = false, background = false) {
-  if (!api || busy || loading || dragging || $('editor').open || $('completion-dialog').open || (blockedProjectId === projectId && !projectChanged && !retryDenied)) return;
+  if (!api || busy || loading || dragging || $('editor').open || $('completion-dialog').open || $('reschedule-dialog').open || (blockedProjectId === projectId && !projectChanged && !retryDenied)) return;
   if (!projectChanged && !retryDenied && (queryLoading || feed?.loadingMore || (!backlogCollapsed && board?.findBoard('backlog').querySelector('.kanban-drag').scrollTop > 0))) return;
   lanePlanningController?.abort();
   cancelQuery();
@@ -612,6 +622,74 @@ async function addMissingSubtasks(id, includeParent = false) {
     if (stamp === epoch) notify(`Planning failed: ${error.message}. Refresh before retrying.`, true);
   } finally {
     if (stamp === epoch) { busy = false; renderFilters(); renderBoard(); startBacklog(); }
+    finishLoading();
+  }
+}
+
+async function openRescheduling(id) {
+  if (busy || loading || !api || sprint?.status !== 'open') return;
+  const parent = feed?.snapshot.sprintAll.find(issue => issue.id === id);
+  if (!parent || closedStatusIds().includes(parent.status.id)) return;
+  cancelQuery(); loading = true; lock();
+  const finishLoading = beginLoading();
+  const stamp = epoch, currentApi = api;
+  let offer = null;
+  try {
+    const scope = { ...feedScope(), closedStatusIds: closedStatusIds() };
+    const [candidates, available] = await settledResults([
+      collectReschedulingIssues(currentApi, id, scope),
+      currentApi.list(`/projects/${projectId}/versions.json`, 'versions'),
+    ]);
+    if (stamp !== epoch) return;
+    const { targets, selectedId } = reschedulingTargets(available.filter(version => Number(version.project?.id) === Number(projectId) && version.sharing !== 'none'), sprint.id);
+    offer = { id, scope, ids: candidates.map(issue => issue.id), targets };
+    $('reschedule-parent').textContent = `#${parent.id} ${parent.subject}`;
+    $('reschedule-count').textContent = `${candidates.length} issue${candidates.length === 1 ? '' : 's'} will move, including the swimlane issue and all descendants, closed and non-closed.`;
+    options($('reschedule-target'), [['', targets.length ? 'Choose a target sprint' : 'No other open sprints available'], ...targets.map(version => [version.id, version.name])], selectedId);
+    $('reschedule-hint').textContent = !targets.length ? 'Create or open another shared product Sprint in Redmine, then refresh.' : selectedId ? 'The next Sprint by creation date is preselected.' : 'No next Sprint by creation date is available. Choose a target manually.';
+  } catch (error) {
+    if (stamp === epoch) notify(`Could not prepare rescheduling: ${error.message} Refresh before retrying.`, true);
+  } finally {
+    finishLoading();
+    if (stamp === epoch) {
+      loading = false; rescheduling = offer; lock();
+      if (offer) $('reschedule-dialog').showModal();
+      else startBacklog();
+    }
+  }
+}
+
+async function confirmRescheduling() {
+  if (!rescheduling || busy || loading || !api) return;
+  const offer = rescheduling, target = Number($('reschedule-target').value);
+  if (!offer.targets.some(version => version.id === target)) return;
+  cancelQuery(); busy = true; lock();
+  $('reschedule-dialog').close();
+  const finishLoading = beginLoading();
+  const stamp = epoch, currentApi = api;
+  notify('Checking hierarchy and rescheduling Sprint membership…');
+  try {
+    if (offer.scope.sprintId !== sprint?.id || offer.scope.projectId !== projectId) throw new Error('The selected Sprint changed. Refresh before rescheduling.');
+    const report = await rescheduleSwimlane(currentApi, offer.id, offer.scope, target, { expectedIds: offer.ids });
+    if (stamp !== epoch) return;
+    const list = ids => ids.length ? ids.map(id => `#${id}`).join(', ') : 'none';
+    let message = `Moved/confirmed: ${list(report.added)}. Failed/unconfirmed: ${list(report.failed)}. Not attempted: ${list(report.notAttempted)}.${report.error ? ` ${report.error}` : ''}`;
+    let refreshFailed = false;
+    try {
+      feed.pageSize = backlogPageSize(); backlogFailed = false;
+      const snapshot = await feed.load(feedScope(), filters, { includeBacklog: false });
+      if (stamp !== epoch) return;
+      if (!snapshot || !await syncFeed(snapshot)) throw new Error('Refresh was superseded.');
+      $('updated').textContent = `Updated ${new Date().toLocaleTimeString()}`;
+    } catch (error) {
+      refreshFailed = true;
+      message += ` Refresh failed: ${error.message} Displayed state may be stale; use Refresh, do not repeat an uncertain write.`;
+    }
+    if (stamp === epoch) notify(message, Boolean(report.error) || refreshFailed);
+  } catch (error) {
+    if (stamp === epoch) notify(`Rescheduling failed: ${error.message} Refresh before retrying.`, true);
+  } finally {
+    if (stamp === epoch) { rescheduling = null; busy = false; renderFilters(); renderBoard(); startBacklog(); }
     finishLoading();
   }
 }
@@ -926,7 +1004,16 @@ $('board').addEventListener('click', event => {
   if (event.target.closest('[data-backlog-collapse]')) { toggleBacklog(); return; }
   const add = event.target.closest('[data-add-descendants]');
   if (add && !add.disabled) { void addMissingSubtasks(Number(add.dataset.addDescendants)); return; }
+  const reschedule = event.target.closest('[data-reschedule-swimlane]');
+  if (reschedule && !reschedule.disabled) { void openRescheduling(Number(reschedule.dataset.rescheduleSwimlane)); return; }
   const button = event.target.closest('[data-edit]'); if (button) void openEditor(Number(button.dataset.edit));
+});
+$('reschedule-form').addEventListener('submit', event => { event.preventDefault(); void confirmRescheduling(); });
+$('reschedule-target').addEventListener('change', lock);
+$('reschedule-cancel').addEventListener('click', () => { if (!busy) $('reschedule-dialog').close(); });
+$('reschedule-dialog').addEventListener('cancel', event => { if (busy) event.preventDefault(); });
+$('reschedule-dialog').addEventListener('close', () => {
+  if (!busy) { rescheduling = null; if (api && !loading) startBacklog(); }
 });
 $('completion-form').addEventListener('submit', event => { event.preventDefault(); void closeCompletedParent(); });
 $('completion-dismiss').addEventListener('click', () => { if (!busy) $('completion-dialog').close(); });

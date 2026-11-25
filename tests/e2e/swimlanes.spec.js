@@ -330,7 +330,7 @@ for (const mode of ['light', 'dark']) {
     expect(fixture.writes).toEqual([]);
   });
 
-  test(`Swimlane tracker is a right-aligned badge before the add button in ${mode} mode`, async ({ page }) => {
+  test(`Swimlane tracker is a right-aligned badge before the adjacent action buttons in ${mode} mode`, async ({ page }) => {
     await page.emulateMedia({ colorScheme: mode });
     const fixture = await setup(page);
     fixture.rows[3].subject = 'A long Swimlane title that should leave room for the tracker badge and action button '.repeat(4);
@@ -353,14 +353,16 @@ for (const mode of ['light', 'dark']) {
         const row = node.querySelector('.swimlane-title-row').getBoundingClientRect();
         const badge = node.querySelector('.lane-tracker').getBoundingClientRect();
         const button = node.querySelector('.add-subtasks').getBoundingClientRect();
+        const reschedule = node.querySelector('[data-reschedule-swimlane]').getBoundingClientRect();
         const tags = node.querySelector('.lane-tags').getBoundingClientRect();
         return { right: bounds.right, rowRight: row.right, badgeRight: badge.right, badgeLeft: badge.left,
-          buttonLeft: button.left, buttonRight: button.right, tagsRight: tags.right,
+          buttonLeft: button.left, buttonRight: button.right, rescheduleLeft: reschedule.left, rescheduleRight: reschedule.right, tagsRight: tags.right,
           badgeCenter: badge.top + badge.height / 2, buttonCenter: button.top + button.height / 2 };
       });
       expect(geometry.buttonLeft - geometry.badgeRight).toBe(8);
-      expect(geometry.buttonRight).toBe(geometry.rowRight);
-      expect(geometry.buttonRight).toBeLessThan(geometry.right);
+      expect(geometry.rescheduleLeft - geometry.buttonRight).toBe(8);
+      expect(geometry.rescheduleRight).toBe(geometry.rowRight);
+      expect(geometry.rescheduleRight).toBeLessThan(geometry.right);
       expect(geometry.tagsRight).toBeLessThanOrEqual(geometry.badgeLeft);
       expect(Math.abs(geometry.badgeCenter - geometry.buttonCenter)).toBeLessThanOrEqual(1);
     }
@@ -618,7 +620,7 @@ test('renders and unlocks the board before hierarchy checks finish, ignoring sta
     await expect(heading(page, 5)).toBeVisible();
     release();
     await expect(heading(page, 4)).toHaveCount(0);
-    await expect(heading(page, 5).getByRole('button')).not.toHaveAttribute('title', /unknown/);
+    await expect(heading(page, 5).getByRole('button', { name: 'Add missing subtasks for #5' })).not.toHaveAttribute('title', /unknown/);
   } finally { release(); }
 });
 async function refresh(page) {
@@ -731,8 +733,13 @@ test('header action highlights all missing descendants and replaces other Sprint
   expect(fixture.rows[2].status.id).toBe(5); expect(fixture.rows[2].fixed_version.id).toBe(300);
   await expect(add).toBeDisabled();
   await expect(add).not.toHaveClass(/requires-attention/);
-  const positions = await add.evaluate(button => ({ button: button.getBoundingClientRect().right, header: button.closest('.swimlane-heading').getBoundingClientRect().right }));
-  expect(positions.header - positions.button).toBeLessThan(20);
+  const positions = await add.evaluate(button => {
+    const header = button.closest('.swimlane-heading');
+    const reschedule = header.querySelector('[data-reschedule-swimlane]').getBoundingClientRect();
+    return { button: button.getBoundingClientRect().right, rescheduleLeft: reschedule.left, rescheduleRight: reschedule.right, header: header.getBoundingClientRect().right };
+  });
+  expect(positions.rescheduleLeft - positions.button).toBe(8);
+  expect(positions.header - positions.rescheduleRight).toBeLessThan(20);
 });
 
 test('header action overwrites an occupied single-value Sprint field', async ({ page }) => {
@@ -777,7 +784,7 @@ test('header reports partial writes and stops before remaining subtasks', async 
   await expect(page.locator('#notice')).toContainText('Added/confirmed: #3. Failed/unconfirmed: #7. Not attempted: #8.');
   expect(fixture.writes.map(write => write.id)).toEqual([3]);
   expect(fixture.rows.find(row => row.id === 8).custom_fields[0].value).toEqual([]);
-  await expect(heading(page, 1).getByRole('button')).toHaveAttribute('title', /\(2 missing\)/);
+  await expect(heading(page, 1).getByRole('button', { name: 'Add missing subtasks for #1' })).toHaveAttribute('title', /\(2 missing\)/);
 });
 test('removing parent membership regroups children without removing them', async ({ page }) => {
   const fixture = await setup(page);
