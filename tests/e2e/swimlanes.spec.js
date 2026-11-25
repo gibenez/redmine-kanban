@@ -810,3 +810,176 @@ test('related disclosures load lazily, stay open across updates, and refresh ind
   await refresh(page);
   await expect(details).toHaveCount(0);
 });
+
+async function setupCompletion(page) {
+  const fixture = await setup(page);
+  // Only #2 belongs to this Swimlane in Sprint 100. Unplanned #3 must not block completion.
+  fixture.rows[0].custom_fields[0].value = ['100'];
+  await refresh(page);
+  await expect(laneCard(page, 1, 2)).toBeVisible();
+  return fixture;
+}
+
+async function closeLastCardInEditor(page) {
+  await page.locator('[data-edit="2"]').click();
+  await page.locator('#edit-status').selectOption('5');
+  await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+  await expect(page.locator('#editor')).not.toBeVisible();
+  await expect(page.locator('[data-id="status-5"] [data-lane="1"] [data-eid="2"]')).toBeVisible();
+  await expect(page.locator('#workspace')).toHaveAttribute('aria-busy', 'false');
+}
+
+const parentWrites = fixture => fixture.writes.filter(write => write.id === 1);
+
+test('dragging the last Card closed offers parent closure again only after reopening and completing again', async ({ page }) => {
+  const fixture = await setupCompletion(page);
+  await laneCard(page, 1, 2).dragTo(page.locator('[data-id="status-5"] [data-lane="1"] .swimlane-cards'));
+  await expect(page.locator('#completion-dialog')).toBeVisible();
+  await page.locator('#completion-dismiss').click();
+  await refresh(page);
+  await expect(page.locator('#completion-dialog')).not.toBeVisible();
+  await page.locator('[data-id="status-5"] [data-eid="2"]').dragTo(page.locator('[data-id="status-1"] [data-lane="1"] .swimlane-cards'));
+  await expect(laneCard(page, 1, 2)).toBeVisible();
+  await expect(page.locator('#completion-dialog')).not.toBeVisible();
+  await laneCard(page, 1, 2).dragTo(page.locator('[data-id="status-5"] [data-lane="1"] .swimlane-cards'));
+  await expect(page.locator('#completion-dialog')).toBeVisible();
+  expect(parentWrites(fixture)).toEqual([]);
+});
+
+test('an uncertain parent save is checked before retry and never writes an already closed parent twice', async ({ page }) => {
+  const fixture = await setupCompletion(page);
+  await closeLastCardInEditor(page);
+  await expect(page.locator('#completion-dialog')).toBeVisible();
+  let attempts = 0;
+  await page.route('**/redmine/issues/1.json**', route => {
+    if (route.request().method() === 'PUT') {
+      attempts++;
+      // Redmine committed the write, but the response was lost.
+      fixture.rows[0].status = { id: 5, name: 'Done' };
+      return route.abort('failed');
+    }
+    return route.fallback();
+  });
+  await page.locator('#completion-submit').click();
+  await expect(page.locator('#completion-message')).toContainText('Save not confirmed');
+  await page.locator('#completion-submit').click();
+  await expect(page.locator('#completion-dialog')).not.toBeVisible();
+  await expect(heading(page, 1).locator('.swimlane-title-row strong')).toHaveCSS('text-decoration-line', 'line-through');
+  expect(attempts).toBe(1);
+  expect(fixture.rows[1].status.id).toBe(5);
+});
+
+test('closing the last Card in the editor prompts to close its parent; Not now retains both issues', async ({ page }) => {
+  const fixture = await setupCompletion(page);
+  await closeLastCardInEditor(page);
+  const dialog = page.locator('#completion-dialog');
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText('#1');
+  await expect(page.locator('#completion-status')).toHaveValue('5');
+  await expect(page.locator('#completion-message')).toHaveAttribute('aria-live', /polite|assertive/);
+  await expect(page.locator('#completion-submit')).toHaveText('Close parent issue');
+  await expect(page.locator('#completion-dismiss')).toHaveText('Not now');
+  expect(parentWrites(fixture)).toEqual([]);
+  await page.locator('#completion-dismiss').click();
+  await expect(dialog).not.toBeVisible();
+  await expect(heading(page, 1)).toBeVisible();
+  await expect(page.locator('[data-id="status-5"] [data-lane="1"] [data-eid="2"]')).toBeVisible();
+  expect(fixture.rows[0].status.id).toBe(1);
+  expect(fixture.rows[1].status.id).toBe(5);
+  expect(fixture.rows[0].custom_fields[0].value).toEqual(['100']);
+  expect(fixture.rows[1].custom_fields[0].value).toEqual(['100']);
+  expect(parentWrites(fixture)).toEqual([]);
+  await refresh(page);
+  await expect(dialog).not.toBeVisible();
+});
+
+test('confirming completion closes only the parent status and retains Sprint membership and Target Version', async ({ page }) => {
+  const fixture = await setupCompletion(page);
+  await closeLastCardInEditor(page);
+  await expect(page.locator('#completion-dialog')).toBeVisible();
+  await page.locator('#completion-status').selectOption('5');
+  await page.locator('#completion-submit').click();
+  await expect(page.locator('#completion-dialog')).not.toBeVisible();
+  await expect(heading(page, 1).locator('.swimlane-title-row strong')).toHaveCSS('text-decoration-line', 'line-through');
+  expect(parentWrites(fixture)).toEqual([{ id: 1, patch: { status_id: 5 } }]);
+  expect(fixture.rows[0].status.id).toBe(5);
+  expect(fixture.rows[0].custom_fields[0].value).toEqual(['100']);
+  expect(fixture.rows[0].fixed_version.id).toBe(300);
+  expect(fixture.rows[1].status.id).toBe(5);
+  expect(fixture.rows[2].status.id).toBe(1); // Unplanned child is outside the completion scope.
+  await expect(page.locator('[data-id="status-5"] [data-lane="1"] [data-eid="2"]')).toBeVisible();
+});
+
+test('refreshing an already complete Swimlane never prompts or closes the parent', async ({ page }) => {
+  const fixture = await setupCompletion(page);
+  fixture.rows[1].status = { id: 5, name: 'Done', is_closed: true };
+  await refresh(page);
+  await expect(page.locator('[data-id="status-5"] [data-lane="1"] [data-eid="2"]')).toBeVisible();
+  await expect(page.locator('#completion-dialog')).not.toBeVisible();
+  expect(fixture.writes).toEqual([]);
+  expect(fixture.rows[0].status.id).toBe(1);
+});
+
+for (const hiddenBy of ['Sprint search', 'outside displayed statuses']) {
+  test(`an open member hidden by ${hiddenBy} prevents the completion prompt`, async ({ page }) => {
+    const fixture = await setupCompletion(page);
+    // Unlike unplanned #3, this additional Card is part of the full Sprint membership.
+    fixture.rows.push({ ...structuredClone(fixture.rows[1]), id: 7, subject: 'Still open',
+      ...(hiddenBy === 'outside displayed statuses' ? { status: { id: 99, name: 'Other' } } : {}) });
+    await refresh(page);
+    if (hiddenBy === 'Sprint search') await page.getByLabel('Search Sprint Cards').fill('#2');
+    await expect(page.locator('[data-eid="7"]')).toHaveCount(0);
+    await closeLastCardInEditor(page);
+    await expect(page.locator('#completion-dialog')).not.toBeVisible();
+    expect(fixture.rows.find(row => row.id === 7).status.id).not.toBe(5);
+    expect(parentWrites(fixture)).toEqual([]);
+    expect(fixture.rows[0].status.id).toBe(1);
+  });
+}
+
+test('reopening a Card on Redmine while the prompt is open aborts parent closure', async ({ page }) => {
+  const fixture = await setupCompletion(page);
+  await closeLastCardInEditor(page);
+  await expect(page.locator('#completion-dialog')).toBeVisible();
+  fixture.rows[1].status = { id: 1, name: 'New' };
+  await page.locator('#completion-submit').click();
+  await expect(page.locator('#completion-message')).toContainText(/open|changed|no longer/i);
+  expect(parentWrites(fixture)).toEqual([]);
+  expect(fixture.rows[0].status.id).toBe(1);
+});
+
+test('missing allowed closed workflow status shows a notice instead of a completion dialog', async ({ page }) => {
+  const fixture = await setupCompletion(page);
+  fixture.rows[0].allowed_statuses = [{ id: 1, name: 'New' }, { id: 2, name: 'Doing' }];
+  await closeLastCardInEditor(page);
+  await expect(page.locator('#notice')).toContainText(/closed status|closed transition|workflow/i);
+  await expect(page.locator('#completion-dialog')).not.toBeVisible();
+  expect(parentWrites(fixture)).toEqual([]);
+  expect(fixture.rows[1].status.id).toBe(5);
+  expect(fixture.rows[0].status.id).toBe(1);
+});
+
+test('a failed parent close shows feedback, retains the closed Card, and permits a deliberate retry', async ({ page }) => {
+  const fixture = await setupCompletion(page);
+  await closeLastCardInEditor(page);
+  await expect(page.locator('#completion-dialog')).toBeVisible();
+  let failures = 0;
+  await page.route('**/redmine/issues/1.json**', route => {
+    if (route.request().method() === 'PUT' && failures === 0) {
+      failures++;
+      return route.fulfill({ status: 422, json: { errors: ['Parent closure rejected'] } });
+    }
+    return route.fallback();
+  });
+  await page.locator('#completion-submit').click();
+  await expect(page.locator('#completion-message')).toContainText(/failed|rejected|422|not confirmed/i);
+  await expect(page.locator('#completion-dialog')).toBeVisible();
+  await expect(page.locator('#completion-submit')).toBeEnabled();
+  expect(failures).toBe(1);
+  expect(parentWrites(fixture)).toEqual([]);
+  expect(fixture.rows[0].status.id).toBe(1);
+  expect(fixture.rows[1].status.id).toBe(5);
+  await page.locator('#completion-submit').click();
+  await expect(page.locator('#completion-dialog')).not.toBeVisible();
+  expect(parentWrites(fixture)).toEqual([{ id: 1, patch: { status_id: 5 } }]);
+});

@@ -5,6 +5,7 @@ import { RedmineClient, RedmineError } from './api.js';
 import { validateConfig, isBacklog, effort, movePatch, parseEstimate, assertTransition, matchesPatch, sprintValues, membershipPatch, hasSprintField, projectScope, escapeHtml as e } from './domain.js';
 import { PlanningFeed } from './planning-feed.js';
 import { isSwimlane, loadAncestors } from './swimlanes.js';
+import { completedLane, closingStatuses, preferredClosingStatus } from './swimlane-completion.js';
 import { emptySprintFilters, filteredSprint, createSprintFilterPreferences } from './sprint-filters.js';
 import { createSprintFilterControls } from './sprint-filter-controls.js';
 import { collectMissingSubtasks, createHierarchyReader, planDescendants } from './descendant-planning.js';
@@ -32,6 +33,7 @@ let showClosedParents = false;
 const closedParentsStorageKey = 'redmine-sprint-board.closed-parents';
 let api, config, statuses = [], projects = [], versions = [], memberships = [], issues = [], board;
 let sprint = null, projectId = '', blockedProjectId = '', busy = false, dragging = false, loading = false, epoch = 0, timer, editing;
+let completion = null;
 let autorefresh = false;
 let selectionPreferences;
 function setAutorefresh(enabled) {
@@ -246,7 +248,8 @@ function forget() {
   $('api-key').value = ''; $('remember').checked = false;
   $('login-form').querySelector('button').disabled = false;
   $('forget-saved').hidden = true;
-  $('editor').close(); editing = null; destroyBoard();
+  $('editor').close(); editing = null;
+  $('completion-dialog').close(); completion = null; destroyBoard();
   issues = []; versions = []; memberships = []; projects = []; sprint = null; projectId = ''; blockedProjectId = '';
   document.body.classList.remove('board-active');
   $('help-dialog').close();
@@ -466,7 +469,7 @@ function backlogPageSize() {
   return Math.min(100, Math.max(5, Math.ceil(height / unit) + 2));
 }
 async function loadMoreBacklog({ silent = false } = {}) {
-  if (backlogCollapsed || !api || !board || busy || loading || queryLoading || searchFailed || dragging || $('editor').open || feed?.loadingMore || !feed?.snapshot.hasMore) return;
+  if (backlogCollapsed || !api || !board || busy || loading || queryLoading || searchFailed || dragging || $('editor').open || $('completion-dialog').open || feed?.loadingMore || !feed?.snapshot.hasMore) return;
   // Automatic fetches must not clear a notice the user has not read yet.
   if (!silent) notify('');
   feed.pageSize = backlogPageSize();
@@ -534,7 +537,7 @@ function chooseSprint(previousId) {
   options($('sprint'), available.length ? available.map(version => [version.id, version.name + (version.status === 'closed' ? ' (closed)' : '')]) : [['', 'No open sprints']], sprint?.id || '');
 }
 async function refresh(projectChanged = false, retryDenied = false, background = false) {
-  if (!api || busy || loading || dragging || $('editor').open || (blockedProjectId === projectId && !projectChanged && !retryDenied)) return;
+  if (!api || busy || loading || dragging || $('editor').open || $('completion-dialog').open || (blockedProjectId === projectId && !projectChanged && !retryDenied)) return;
   if (!projectChanged && !retryDenied && (queryLoading || feed?.loadingMore || (!backlogCollapsed && board?.findBoard('backlog').querySelector('.kanban-drag').scrollTop > 0))) return;
   lanePlanningController?.abort();
   cancelQuery();
@@ -613,6 +616,86 @@ async function addMissingSubtasks(id, includeParent = false) {
   }
 }
 
+function completionMessage(message, error = false) {
+  $('completion-message').textContent = message;
+  $('completion-message').className = error ? 'error' : 'success';
+  $('completion-message').hidden = !message;
+}
+function setCompletionChoices(choices, preferredId) {
+  options($('completion-status'), [['', 'Choose a closed status'], ...choices.map(status => [status.id, status.name])], preferredClosingStatus(choices, preferredId));
+}
+function showCompletion(offer) {
+  completion = offer;
+  $('completion-parent').textContent = `#${offer.parent.id} ${offer.parent.subject}`;
+  $('completion-parent').href = linkToIssue(offer.parent.id);
+  setCompletionChoices(offer.choices, offer.preferredId);
+  completionMessage('');
+  $('completion-submit').disabled = false;
+  $('completion-dialog').showModal();
+}
+async function closeCompletedParent() {
+  if (!completion || busy || loading) return;
+  const offer = completion, currentApi = api, stamp = epoch;
+  const target = Number($('completion-status').value);
+  if (!target) return;
+  cancelQuery(); busy = true; lock();
+  for (const el of $('completion-form').querySelectorAll('button, select')) el.disabled = true;
+  const finishLoading = beginLoading();
+  let confirmed = false, attempted = false, invalid = false;
+  try {
+    if (offer.sprintId !== sprint?.id || offer.projectId !== projectId) throw new Error('The selected Sprint changed. Dismiss this offer and refresh.');
+    const parent = await currentApi.issue(offer.parent.id);
+    if (closedStatusIds().includes(parent.status.id)) {
+      confirmed = true;
+      notify(`Parent #${parent.id} is already closed.`);
+    } else {
+      const version = await currentApi.request(`/versions/${sprint.id}.json`);
+      if (version.version.status !== 'open') { invalid = true; throw new Error('This sprint is no longer open.'); }
+      if (!projectScope(projects, projectId).includes(parent.project.id)) { invalid = true; throw new Error('The parent moved outside the product hierarchy.'); }
+      const snapshot = await feed.load(feedScope(), filters, { includeBacklog: false });
+      if (!snapshot || stamp !== epoch) return;
+      if (!await syncFeed(snapshot)) throw new Error('Refresh was superseded. Try checking again.');
+      const lane = completedLane(snapshot.sprintAll, laneAncestors, config.swimlaneTrackers, statuses, offer.cardId);
+      if (!lane || lane.parent.id !== parent.id) {
+        invalid = true;
+        throw new Error('The swimlane is no longer complete: a card is open or its membership changed. The parent was not changed.');
+      }
+      const choices = closingStatuses(parent, statuses);
+      if (!choices.some(status => status.id === target)) {
+        setCompletionChoices(choices, '');
+        invalid = !choices.length;
+        throw new Error(choices.length ? 'The parent’s permitted closed statuses changed. Choose a status and try again.' : 'The parent has no permitted closed transition.');
+      }
+      assertTransition(parent, { status_id: target });
+      if (stamp !== epoch) return;
+      attempted = true;
+      await currentApi.update(parent.id, { status_id: target });
+      const saved = await currentApi.issue(parent.id);
+      if (!matchesPatch(saved, { status_id: target })) throw new Error('Redmine did not retain the requested closed status.');
+      confirmed = true;
+      notify(`Parent #${parent.id} closed in Redmine.`);
+    }
+    if (stamp !== epoch) return;
+    $('completion-dialog').close(); completion = null;
+    const snapshot = await feed.load(feedScope(), filters, { includeBacklog: false });
+    if (!snapshot || stamp !== epoch) return;
+    if (!await syncFeed(snapshot)) throw new Error('Refresh was superseded.');
+  } catch (error) {
+    if (stamp === epoch) {
+      if (confirmed) notify(`Parent closure confirmed, but reloading failed: ${error.message} Use Refresh; do not repeat the write.`, true);
+      else completionMessage(`${error.message}${attempted ? ' Save not confirmed. A retry will first check the parent’s current state. No card changes were undone.' : ''}`, true);
+    }
+  } finally {
+    finishLoading();
+    if (stamp === epoch) {
+      busy = false; lock(); renderFilters(); renderBoard();
+      for (const el of $('completion-form').querySelectorAll('button, select')) el.disabled = false;
+      $('completion-submit').disabled = invalid;
+      if (!$('completion-dialog').open) startBacklog();
+    }
+  }
+}
+
 async function mutate(id, patch) {
   const issue = issues.find(item => item.id === id) || feed?.snapshot.sprintAll.find(item => item.id === id);
   if (busy || loading || !api) return;
@@ -620,7 +703,7 @@ async function mutate(id, patch) {
   cancelQuery(); busy = true; lock();
   const finishLoading = beginLoading();
   const stamp = epoch;
-  let writeConfirmed = false;
+  let writeConfirmed = false, offer = null, completionNotice = false;
   try {
     if (sprint?.status !== 'open') throw new Error('Closed sprints are read only.');
     const currentApi = api;
@@ -649,13 +732,34 @@ async function mutate(id, patch) {
     if (!await syncFeed(snapshot)) return;
     if (!writeConfirmed) throw new Error('Redmine did not retain all requested changes. Showing its confirmed values; check field permissions and workflow rules.');
     $('editor').close(); editing = null;
-    notify(patch.custom_fields && !sprintValues(confirmed, config.sprintFieldId).includes(sprint.id) && !isBacklog(confirmed, backlogScope())
+    // Only an actual open-to-closed status change by this user can offer closure.
+    if (changed.status_id && !closedStatusIds().includes(fresh.status.id) && closedStatusIds().includes(confirmed.status.id)) {
+      const lane = completedLane(snapshot.sprintAll, laneAncestors, config.swimlaneTrackers, statuses, id);
+      if (lane) {
+        try {
+          const parent = await currentApi.issue(lane.parent.id);
+          if (!closedStatusIds().includes(parent.status.id)) {
+            const choices = closingStatuses(parent, statuses);
+            if (choices.length) offer = { parent, cardId: id, preferredId: confirmed.status.id, choices, sprintId: sprint.id, projectId };
+            else {
+              completionNotice = true;
+              notify(`All cards in this sprint’s swimlane are closed, but parent #${parent.id} has no permitted closed transition. Open it in Redmine to check workflow and permissions.`);
+            }
+          }
+        } catch (error) { completionNotice = true; notify(`Card saved. Could not check parent closure: ${error.message}`, true); }
+      }
+    }
+    if (!completionNotice) notify(patch.custom_fields && !sprintValues(confirmed, config.sprintFieldId).includes(sprint.id) && !isBacklog(confirmed, backlogScope())
       ? `Issue #${id} removed from sprint. ${sprintValues(confirmed, config.sprintFieldId).length ? 'It still belongs to other Sprints' : !isSwimlane(confirmed, config.swimlaneTrackers) ? 'It is not Swimlane-capable' : 'Its status is closed'}, so it is no longer shown here.`
       : `Issue #${id} saved in Redmine.`);
   } catch (error) {
     if (stamp === epoch) notify(writeConfirmed ? `Issue #${id} was saved, but reloading the board failed: ${error.message} Use Refresh; do not repeat the write.` : `Save not confirmed: ${error.message} Refresh before retrying if the connection failed.`, true);
   }
-  finally { if (stamp === epoch) { busy = false; lock(); renderFilters(); renderBoard(); startBacklog(); } finishLoading(); }
+  finally {
+    if (stamp === epoch) { busy = false; lock(); renderFilters(); renderBoard(); if (!offer) startBacklog(); }
+    finishLoading();
+    if (stamp === epoch && offer) showCompletion(offer);
+  }
 }
 
 async function openEditor(id) {
@@ -823,6 +927,13 @@ $('board').addEventListener('click', event => {
   const add = event.target.closest('[data-add-descendants]');
   if (add && !add.disabled) { void addMissingSubtasks(Number(add.dataset.addDescendants)); return; }
   const button = event.target.closest('[data-edit]'); if (button) void openEditor(Number(button.dataset.edit));
+});
+$('completion-form').addEventListener('submit', event => { event.preventDefault(); void closeCompletedParent(); });
+$('completion-dismiss').addEventListener('click', () => { if (!busy) $('completion-dialog').close(); });
+$('completion-dialog').addEventListener('cancel', event => { if (busy) event.preventDefault(); });
+$('completion-dialog').addEventListener('close', () => {
+  completion = null;
+  if (api && !busy && !loading) startBacklog();
 });
 $('close-editor').addEventListener('click', () => { if (!busy) { $('editor').close(); editing = null; } });
 $('editor').addEventListener('cancel', event => { if (busy) event.preventDefault(); });
