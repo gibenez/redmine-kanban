@@ -1,5 +1,6 @@
 const jKanban = window.jKanban;
 import './style.css';
+import DOMPurify from 'dompurify';
 import { reconcileBoard, alignSwimlanes, positionSwimlaneHeaders } from './board-view.js';
 import { RedmineClient, RedmineError } from './api.js';
 import { validateConfig, isBacklog, effort, movePatch, parseEstimate, assertTransition, matchesPatch, sprintValues, membershipPatch, hasSprintField, projectScope, escapeHtml as e } from './domain.js';
@@ -851,15 +852,17 @@ async function openEditor(id) {
     editing = issue;
     $('editor-notice').hidden = true;
     $('editor-title').textContent = `Plan #${issue.id}`; $('editor-subject').textContent = issue.subject;
-    $('editor-tags').innerHTML = tagsMarkup(issue) || '<span class="muted">No tags</span>';
+    const description = issue.description || '';
+    $('editor-description').innerHTML = DOMPurify.sanitize(description, {
+      USE_PROFILES: { html: true },
+      FORBID_TAGS: ['style', 'form', 'input', 'button', 'select', 'textarea'],
+      FORBID_ATTR: ['style', 'id', 'name', 'autofocus'],
+    });
+    $('editor-description-section').hidden = !description.trim();
     const people = new Map(members()); if (issue.assigned_to) people.set(issue.assigned_to.id, issue.assigned_to.name);
     options($('edit-assignee'), [['', 'Unassigned'], ...people], issue.assigned_to?.id || '');
     $('edit-estimate').value = issue.estimated_hours ?? '';
-    const allowed = new Map([issue.status, ...(issue.allowed_statuses || [])].map(status => [status.id, status.name]));
-    options($('edit-status'), [...allowed], issue.status.id);
-    $('edit-destination').value = selectedMember(issue) ? 'sprint' : 'backlog';
     $('issue-link').href = linkToIssue(issue.id);
-    $('editor-warning').textContent = sprint?.status !== 'open' ? 'Read only. Select an open sprint to plan issues.' : 'Redmine enforces workflow and field permissions. Removing from a sprint does not reset status or Target version.';
   } catch (error) { if (stamp === epoch) notify(error.message, true); }
   finally {
     finishLoading();
@@ -1028,7 +1031,7 @@ $('edit-form').addEventListener('submit', event => {
   event.preventDefault(); if (!editing || busy) return;
   try {
     if (sprint?.status !== 'open') throw new Error('Select an open sprint before editing issues.');
-    const patch = { assigned_to_id: $('edit-assignee').value ? Number($('edit-assignee').value) : null, estimated_hours: parseEstimate($('edit-estimate').value), status_id: Number($('edit-status').value), ...membershipPatch(editing, config.sprintFieldId, sprint.id, $('edit-destination').value === 'sprint') };
+    const patch = { assigned_to_id: $('edit-assignee').value ? Number($('edit-assignee').value) : null, estimated_hours: parseEstimate($('edit-estimate').value) };
     void mutate(editing.id, patch);
   } catch (error) { notify(error.message, true); }
 });

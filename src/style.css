@@ -198,8 +198,7 @@ input::placeholder { color: var(--secondary); opacity: 1; }
 .swimlane-headers > .swimlane-heading > .lane-priority-bar { top: -1px; border-radius: var(--radius) 0 0 var(--radius); }
 .swimlane-section > .swimlane-heading { visibility: hidden; }
 .issue-tag, .lane-tracker { display: inline-block; padding: 0 5px; border-radius: 3px; background: var(--tag); color: var(--text); font-size: 12px; line-height: 20px; overflow-wrap: anywhere; }
-.lane-tags, #editor-tags { display: flex; flex-wrap: wrap; gap: 4px; }
-#editor-tags { margin-bottom: 12px; }
+.lane-tags { display: flex; flex-wrap: wrap; gap: 4px; }
 .lane-tracker { flex: none; white-space: nowrap; }
 .lane-priority-bar {
   position: absolute; left: 0; top: 0; width: var(--priority-bar-width); height: var(--swimlane-height, 100%);
@@ -447,6 +446,14 @@ body.board-active { height: 100dvh; overflow: hidden; display: flex; flex-direct
 #planning-controls { background: var(--sidebar); }
 #workspace #query { padding-left: 28px; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='none' stroke='%236c707e' stroke-width='1.5'%3E%3Ccircle cx='6.5' cy='6.5' r='4.5'/%3E%3Cpath d='m10 10 4 4'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: 8px center; }
 #editor-subject { line-height: 22px; overflow-wrap: anywhere; }
+#editor { max-height: calc(100dvh - 32px); overflow-y: auto; }
+#editor-description-section { margin-bottom: 16px; }
+#editor-description-title { margin: 0 0 8px; font-size: 14px; }
+#editor-description { overflow-wrap: anywhere; overflow-x: auto; line-height: 22px; }
+#editor-description img { max-width: 100%; height: auto; }
+#editor-description pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+#editor-description > :first-child { margin-top: 0; }
+#editor-description > :last-child { margin-bottom: 0; }
 #editor-notice { padding: 8px 12px; border-radius: var(--radius); }
 #editor-notice.error { color: var(--error); background: var(--error-bg); }
 #editor-notice.success { color: var(--success); background: var(--success-bg); }

@@ -1363,7 +1363,7 @@ for (const mode of ['light', 'dark']) {
     await page.emulateMedia({ colorScheme: mode });
     await setup(page); await login(page);
     await page.getByRole('button', { name: 'Plan #1', exact: true }).click();
-    for (const id of ['project', 'sprint', 'tracker', 'assignee', 'edit-assignee', 'edit-status', 'edit-destination']) {
+    for (const id of ['project', 'sprint', 'tracker', 'assignee', 'edit-assignee']) {
       const style = await page.locator(`#${id}`).evaluate(node => {
         const css = getComputedStyle(node);
         return { appearance: css.appearance, padding: css.paddingRight, left: css.paddingLeft,
@@ -1375,8 +1375,8 @@ for (const mode of ['light', 'dark']) {
       expect(style.image).toContain(mode === 'dark' ? '9da0a8' : '6c707e');
     }
     await expect(page.locator('#editor')).toBeVisible();
-    await page.locator('#edit-status').selectOption('2');
-    await expect(page.locator('#edit-status')).toHaveValue('2');
+    await page.locator('#edit-assignee').selectOption('7');
+    await expect(page.locator('#edit-assignee')).toHaveValue('7');
     await page.getByRole('button', { name: 'Close editor' }).click();
   });
 
@@ -1895,17 +1895,62 @@ test('loads backlog, all sprint statuses and totals without executing issue HTML
   expect(fixture.requests.every(request => !request.url().includes('test-personal-key'))).toBe(true);
 });
 
-test('keyboard-accessible planner changes sprint, assignee and estimate', async ({ page }) => {
-  const { writes } = await setup(page); await login(page);
-  await page.getByRole('button', { name: 'Plan #1', exact: true }).click();
-  await page.getByLabel('Assignment', { exact: true }).selectOption('7');
-  await page.getByLabel('Estimated hours', { exact: true }).fill('5.5');
-  await page.getByLabel('Planning destination').selectOption('sprint');
-  await page.getByRole('button', { name: 'Save changes' }).click();
-  await expect(page.locator('#editor')).not.toBeVisible();
-  await expect(page.locator('.swimlane-headers')).toContainText('Build backlog feature');
-  expect(writes).toEqual([{ assigned_to_id: 7, estimated_hours: 5.5, custom_fields: [{ id: 7, value: '10' }] }]);
-});
+for (const width of [1440, 390]) {
+  test(`planning dialog shows the full issue description safely at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 720 });
+    const fixture = await setup(page);
+    const description = `<h2>Issue details</h2><p>First <strong>important</strong> line<br>Next line</p>
+      <ul><li>First item</li></ul><a href="https://example.test/details">Details</a>
+      <img src=x onerror="window.injected=true" style="position:fixed" id="unsafe-image">
+      <script>window.injected=true</script><iframe srcdoc="<script>window.injected=true</script>"></iframe>
+      <a href="javascript:window.injected=true">Unsafe link</a><form><input autofocus><button>Unsafe button</button></form>
+      ${'<p>Long description line</p>'.repeat(100)}<pre>${'x'.repeat(300)}</pre><p>Last line</p>`;
+    fixture.issues[0].description = description;
+    await login(page);
+    await page.getByRole('button', { name: 'Plan #1', exact: true }).click();
+    const body = page.locator('#editor-description');
+    await expect(body.getByRole('heading', { name: 'Issue details' })).toBeVisible();
+    await expect(body.locator('strong')).toHaveText('important');
+    await expect(body.locator('br')).toHaveCount(1);
+    await expect(body.getByRole('listitem')).toHaveText('First item');
+    await expect(body.getByRole('link', { name: 'Details', exact: true })).toHaveAttribute('href', 'https://example.test/details');
+    await expect(body.locator('p').last()).toHaveText('Last line');
+    await expect(body.locator('img')).toHaveCount(1);
+    await expect(body.locator('img')).not.toHaveAttribute('onerror');
+    await expect(body.locator('img')).not.toHaveAttribute('style');
+    await expect(body.locator('img')).not.toHaveAttribute('id');
+    await expect(body.locator('script, iframe, form, input, button')).toHaveCount(0);
+    await expect(body.getByText('Unsafe link', { exact: true })).not.toHaveAttribute('href');
+    expect(await page.evaluate(() => window.injected)).toBeUndefined();
+    expect(await page.locator('#editor').evaluate(node => node.scrollWidth <= node.clientWidth)).toBe(true);
+    await page.getByRole('button', { name: 'Save changes' }).scrollIntoViewIfNeeded();
+    await expect(page.getByRole('button', { name: 'Save changes' })).toBeInViewport();
+    await page.getByRole('button', { name: 'Close editor' }).click();
+    await page.getByRole('button', { name: 'Plan #2', exact: true }).click();
+    await expect(page.locator('#editor-description-section')).toBeHidden();
+    await expect(body).toBeEmpty();
+  });
+}
+
+for (const id of [1, 2]) {
+  test(`keyboard-accessible planner only changes assignee and estimate for issue #${id}`, async ({ page }) => {
+    const { writes } = await setup(page); await login(page);
+    await page.getByRole('button', { name: `Plan #${id}`, exact: true }).click();
+    const editor = page.locator('#editor');
+    await expect(editor.locator('input, select')).toHaveCount(2);
+    await expect(editor.getByLabel('Status', { exact: true })).toHaveCount(0);
+    await expect(editor.getByLabel('Planning destination')).toHaveCount(0);
+    await expect(editor.locator('#editor-tags, #editor-warning')).toHaveCount(0);
+    await expect(editor).not.toContainText('Redmine enforces workflow');
+    await expect(editor.getByRole('link', { name: 'Open in Redmine' })).toBeVisible();
+    await page.getByLabel('Assignment', { exact: true }).selectOption('7');
+    await page.getByLabel('Estimated hours', { exact: true }).fill('5.5');
+    await page.getByRole('button', { name: 'Save changes' }).click();
+    await expect(editor).not.toBeVisible();
+    await expect(page.locator(`[data-id="${id === 1 ? 'backlog' : 'status-2'}"] [data-eid="${id}"]`)).toBeVisible();
+    expect(writes).toEqual([{ ...(id === 1 ? { assigned_to_id: 7 } : {}), estimated_hours: 5.5 }]);
+  });
+}
 
 for (const statusId of [1, 2]) {
   test(`drag from backlog into status ${statusId} commits work and only changes necessary fields`, async ({ page }) => {

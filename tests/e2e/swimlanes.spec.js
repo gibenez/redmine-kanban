@@ -796,9 +796,7 @@ test('removing parent membership regroups children without removing them', async
 });
 test('individual removal preserves other Sprint values', async ({ page }) => {
   const fixture = await setup(page);
-  await page.getByRole('button', { name: 'Plan #6', exact: true }).click();
-  await page.getByLabel('Destination').selectOption('backlog');
-  await page.getByRole('button', { name: 'Save changes' }).click();
+  await page.locator('[data-id="status-1"] [data-eid="6"]').dragTo(page.locator('[data-id="backlog"] .kanban-drag'));
   await expect(page.locator('#notice')).toContainText('still belongs to other Sprints');
   expect(fixture.rows.find(row => row.id === 6).custom_fields[0].value).toEqual(['99']);
   await expect(backlog(page, 6)).toHaveCount(0);
@@ -901,11 +899,8 @@ async function setupCompletion(page) {
   return fixture;
 }
 
-async function closeLastCardInEditor(page) {
-  await page.locator('[data-edit="2"]').click();
-  await page.locator('#edit-status').selectOption('5');
-  await page.getByRole('button', { name: 'Save changes', exact: true }).click();
-  await expect(page.locator('#editor')).not.toBeVisible();
+async function closeLastCard(page) {
+  await laneCard(page, 1, 2).dragTo(page.locator('[data-id="status-5"] [data-lane="1"] .swimlane-cards'));
   await expect(page.locator('[data-id="status-5"] [data-lane="1"] [data-eid="2"]')).toBeVisible();
   await expect(page.locator('#workspace')).toHaveAttribute('aria-busy', 'false');
 }
@@ -929,7 +924,7 @@ test('dragging the last Card closed offers parent closure again only after reope
 
 test('an uncertain parent save is checked before retry and never writes an already closed parent twice', async ({ page }) => {
   const fixture = await setupCompletion(page);
-  await closeLastCardInEditor(page);
+  await closeLastCard(page);
   await expect(page.locator('#completion-dialog')).toBeVisible();
   let attempts = 0;
   await page.route('**/redmine/issues/1.json**', route => {
@@ -950,9 +945,9 @@ test('an uncertain parent save is checked before retry and never writes an alrea
   expect(fixture.rows[1].status.id).toBe(5);
 });
 
-test('closing the last Card in the editor prompts to close its parent; Not now retains both issues', async ({ page }) => {
+test('closing the last Card prompts to close its parent; Not now retains both issues', async ({ page }) => {
   const fixture = await setupCompletion(page);
-  await closeLastCardInEditor(page);
+  await closeLastCard(page);
   const dialog = page.locator('#completion-dialog');
   await expect(dialog).toBeVisible();
   await expect(dialog).toContainText('#1');
@@ -976,7 +971,7 @@ test('closing the last Card in the editor prompts to close its parent; Not now r
 
 test('confirming completion closes only the parent status and retains Sprint membership and Target Version', async ({ page }) => {
   const fixture = await setupCompletion(page);
-  await closeLastCardInEditor(page);
+  await closeLastCard(page);
   await expect(page.locator('#completion-dialog')).toBeVisible();
   await page.locator('#completion-status').selectOption('5');
   await page.locator('#completion-submit').click();
@@ -1010,7 +1005,7 @@ for (const hiddenBy of ['Sprint search', 'outside displayed statuses']) {
     await refresh(page);
     if (hiddenBy === 'Sprint search') await page.getByLabel('Search Sprint Cards').fill('#2');
     await expect(page.locator('[data-eid="7"]')).toHaveCount(0);
-    await closeLastCardInEditor(page);
+    await closeLastCard(page);
     await expect(page.locator('#completion-dialog')).not.toBeVisible();
     expect(fixture.rows.find(row => row.id === 7).status.id).not.toBe(5);
     expect(parentWrites(fixture)).toEqual([]);
@@ -1020,7 +1015,7 @@ for (const hiddenBy of ['Sprint search', 'outside displayed statuses']) {
 
 test('reopening a Card on Redmine while the prompt is open aborts parent closure', async ({ page }) => {
   const fixture = await setupCompletion(page);
-  await closeLastCardInEditor(page);
+  await closeLastCard(page);
   await expect(page.locator('#completion-dialog')).toBeVisible();
   fixture.rows[1].status = { id: 1, name: 'New' };
   await page.locator('#completion-submit').click();
@@ -1032,7 +1027,7 @@ test('reopening a Card on Redmine while the prompt is open aborts parent closure
 test('missing allowed closed workflow status shows a notice instead of a completion dialog', async ({ page }) => {
   const fixture = await setupCompletion(page);
   fixture.rows[0].allowed_statuses = [{ id: 1, name: 'New' }, { id: 2, name: 'Doing' }];
-  await closeLastCardInEditor(page);
+  await closeLastCard(page);
   await expect(page.locator('#notice')).toContainText(/closed status|closed transition|workflow/i);
   await expect(page.locator('#completion-dialog')).not.toBeVisible();
   expect(parentWrites(fixture)).toEqual([]);
@@ -1042,7 +1037,7 @@ test('missing allowed closed workflow status shows a notice instead of a complet
 
 test('a failed parent close shows feedback, retains the closed Card, and permits a deliberate retry', async ({ page }) => {
   const fixture = await setupCompletion(page);
-  await closeLastCardInEditor(page);
+  await closeLastCard(page);
   await expect(page.locator('#completion-dialog')).toBeVisible();
   let failures = 0;
   await page.route('**/redmine/issues/1.json**', route => {
