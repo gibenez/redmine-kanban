@@ -81,6 +81,13 @@ describe('planning semantics', () => {
     expect(matchesPatch({ ...issue, estimated_hours: 0 }, { estimated_hours: 0 })).toBe(true);
     expect(matchesPatch(issue, { estimated_hours: 0 })).toBe(false);
   });
+  it('confirms Priority by ID and rejects silently ignored or missing Priority', () => {
+    expect(matchesPatch(issue, { priority_id: 2 })).toBe(true);
+    expect(matchesPatch(issue, { priority_id: '2' })).toBe(true);
+    expect(matchesPatch(issue, { priority_id: 4 })).toBe(false);
+    expect(matchesPatch({ ...issue, priority: undefined }, { priority_id: 2 })).toBe(false);
+    expect(matchesPatch({ ...issue, priority: { id: 4, name: 'Urgent' } }, { priority_id: 4, estimated_hours: null })).toBe(true);
+  });
   it('rejects missing and malformed membership without using Target version', () => {
     for (const fields of [undefined, [], [{ id: 7, value: ['invalid'] }], [{ id: 7, value: 'invalid' }]]) {
       expect(() => sprintValue({ ...issue, custom_fields: fields, fixed_version: sprint }, 7)).toThrow();

@@ -130,8 +130,9 @@ function lock() {
   $('refresh').disabled = !api;
   $('refresh-now').disabled = busy || loading || !api;
   $('refresh-now').setAttribute('aria-busy', String(loading));
-  document.querySelectorAll('#planning-controls select, #planning-controls input, #workspace select, #workspace input, #workspace button, #edit-form input, #edit-form select, #edit-form button[type="submit"]').forEach(el => { el.disabled = busy || loading; });
-  document.querySelectorAll('.plan, .scope-toggle').forEach(el => { el.disabled = busy || loading || (el.closest('[data-id="backlog"]') && (queryLoading || feed?.loadingMore)); });
+  document.querySelectorAll('#planning-controls select, #planning-controls input, #workspace select, #workspace input, #workspace button').forEach(el => { el.disabled = busy || loading; });
+  $('edit-form').querySelectorAll('input, select, button[type="submit"]').forEach(el => { el.disabled = busy || loading || sprint?.status !== 'open' || Boolean(el.closest('[hidden]')); });
+  document.querySelectorAll('[data-edit], .scope-toggle').forEach(el => { el.disabled = busy || loading || (el.closest('[data-id="backlog"]') && (queryLoading || feed?.loadingMore)); });
   $('tracker').disabled = busy || loading || !eligibleTrackers().length;
   document.querySelectorAll('[data-add-descendants]').forEach(el => { el.disabled = busy || loading || sprint?.status !== 'open' || !lanePlanning.get(Number(el.dataset.addDescendants))?.count; });
   document.querySelectorAll('[data-reschedule-swimlane]').forEach(el => {
@@ -304,11 +305,14 @@ function dueDateMarkup(issue) {
   const date = e(issue.due_date);
   return `<time class="issue-due-date" datetime="${date}" title="Due date: ${date}">Due ${date}</time>`;
 }
+function editButton(id, className = '') {
+  const action = `${sprint?.status === 'open' ? 'Plan' : 'View'} #${id}`;
+  return `<button type="button" class="${className}" data-edit="${id}" aria-label="${action}" title="${action}"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m10.5 2.5 3 3M3 10l7.5-7.5a2.1 2.1 0 0 1 3 3L6 13l-4 1 1-4Z"/></svg></button>`;
+}
 function card(issue, backlog = false) {
   const id = Number(issue.id);
   const open = sprint?.status === 'open';
   const subject = e(issue.subject);
-  const action = `${open ? 'Plan' : 'View'} #${id}`;
   const project = issue.project?.name || `Project #${issue.project?.id}`;
   const version = issue.fixed_version?.name || (issue.fixed_version?.id == null ? 'none' : `Version #${issue.fixed_version.id}`);
   const metadata = backlog
@@ -321,7 +325,7 @@ function card(issue, backlog = false) {
     projectColor: projectColor(projects, issue.project?.id),
     // The summary is clamped to three lines in CSS; title and aria-label keep the full text
     // reachable for pointer and assistive technology alike.
-    title: `<div class="card-head"><a href="${e(linkToIssue(issue.id))}" target="_blank" rel="noopener noreferrer">#${id}</a><h3 title="${subject}" aria-label="${subject}">${subject}</h3></div><div class="card-footer"><span class="card-assignee" title="Assignee: ${e(assignee)}"><span class="avatar${issue.assigned_to ? '' : ' unassigned'}" aria-hidden="true">${e(initials)}</span><span>${e(assignee)}</span></span>${metadata}</div>${isSwimlane(issue, config.swimlaneTrackers) ? dueDateMarkup(issue) : ''}<button type="button" class="plan" data-edit="${id}" aria-label="${action}" title="${action}"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m10.5 2.5 3 3M3 10l7.5-7.5a2.1 2.1 0 0 1 3 3L6 13l-4 1 1-4Z"/></svg></button>`,
+    title: `<div class="card-head"><a href="${e(linkToIssue(issue.id))}" target="_blank" rel="noopener noreferrer">#${id}</a><h3 title="${subject}" aria-label="${subject}">${subject}</h3></div><div class="card-footer"><span class="card-assignee" title="Assignee: ${e(assignee)}"><span class="avatar${issue.assigned_to ? '' : ' unassigned'}" aria-hidden="true">${e(initials)}</span><span>${e(assignee)}</span></span>${metadata}</div>${isSwimlane(issue, config.swimlaneTrackers) ? dueDateMarkup(issue) : ''}${editButton(id, 'plan')}`,
   };
 }
 function backlogCard(issue) {
@@ -346,7 +350,7 @@ function laneHeading(lane) {
   const icon = `<svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3 3v10h3M3 6h3M9 6h7M9 13h2M15 11v6M12 14h6"/>${state?.error ? '<circle cx="16" cy="3" r="2"/>' : ''}</svg>`;
   const rescheduleHint = closed ? 'Closed swimlanes cannot be rescheduled.' : 'Reschedule this swimlane issue and all descendants, including closed issues, to another Sprint.';
   const rescheduleAction = `<button type="button" data-reschedule-swimlane="${id}" aria-label="Reschedule swimlane #${id}" title="${rescheduleHint}"><svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="3" y="4" width="14" height="13" rx="1"/><path d="M6 2v4m8-4v4M3 8h14m-9 5h6m-2-2 2 2-2 2"/></svg></button>`;
-  const action = lane.parent ? `<span class="swimlane-actions" title="${e(hint)}">${dueDateMarkup(lane.parent)}${tracker}<button type="button" class="add-subtasks${state?.count ? ' requires-attention' : ''}${state?.error ? ' planning-unknown' : ''}" data-add-descendants="${id}" aria-label="Add missing subtasks for #${id}" title="${e(hint)}"${state?.error ? ' aria-invalid="true"' : ''}>${icon}</button>${rescheduleAction}</span>` : '';
+  const action = lane.parent ? `<span class="swimlane-actions" title="${e(hint)}">${dueDateMarkup(lane.parent)}${tracker}<button type="button" class="add-subtasks${state?.count ? ' requires-attention' : ''}${state?.error ? ' planning-unknown' : ''}" data-add-descendants="${id}" aria-label="Add missing subtasks for #${id}" title="${e(hint)}"${state?.error ? ' aria-invalid="true"' : ''}>${icon}</button>${rescheduleAction}${editButton(id)}</span>` : '';
   return `${bar}<div class="swimlane-title-row"><strong${closed ? ' class="closed"' : ''}>${title}</strong>${metadata}${action}</div>${unmappedNotice(lane.visible.filter(issue => !config.columnStatusIds.includes(issue.status.id)))}${lane.parent ? relatedIssues.markup(id) : ''}`;
 }
 
@@ -847,11 +851,22 @@ async function openEditor(id) {
   const finishLoading = beginLoading();
   const stamp = epoch;
   try {
+    editing = null;
     const issue = await api.issue(id);
     if (stamp !== epoch) return;
+    const swimlane = isSwimlane(issue, config.swimlaneTrackers);
+    const priorities = swimlane ? await api.list('/enumerations/issue_priorities.json', 'issue_priorities') : [];
+    if (stamp !== epoch) return;
+    $('editor-swimlane-fields').hidden = !swimlane;
+    if (swimlane) {
+      const choices = new Map(priorities.map(priority => [priority.id, priority.name]));
+      if (issue.priority) choices.set(issue.priority.id, issue.priority.name);
+      options($('edit-priority'), [...choices], issue.priority?.id);
+      $('edit-tags').innerHTML = tagsMarkup(issue) || '<span class="muted">No tags</span>';
+    }
     editing = issue;
     $('editor-notice').hidden = true;
-    $('editor-title').textContent = `Plan #${issue.id}`; $('editor-subject').textContent = issue.subject;
+    $('editor-title').textContent = `#${issue.id} — ${issue.subject}`;
     const description = issue.description || '';
     $('editor-description').innerHTML = DOMPurify.sanitize(description, {
       USE_PROFILES: { html: true },
@@ -868,7 +883,6 @@ async function openEditor(id) {
     finishLoading();
     if (stamp === epoch) {
       loading = false; lock();
-      $('edit-form').querySelectorAll('input, select, button[type="submit"]').forEach(el => { el.disabled = sprint?.status !== 'open'; });
       if (editing?.id === id) $('editor').showModal();
     }
   }
@@ -1032,6 +1046,7 @@ $('edit-form').addEventListener('submit', event => {
   try {
     if (sprint?.status !== 'open') throw new Error('Select an open sprint before editing issues.');
     const patch = { assigned_to_id: $('edit-assignee').value ? Number($('edit-assignee').value) : null, estimated_hours: parseEstimate($('edit-estimate').value) };
+    if (isSwimlane(editing, config.swimlaneTrackers)) patch.priority_id = Number($('edit-priority').value);
     void mutate(editing.id, patch);
   } catch (error) { notify(error.message, true); }
 });

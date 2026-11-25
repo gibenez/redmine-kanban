@@ -1,17 +1,19 @@
 import { test, expect } from '@playwright/test';
 
-async function setup(page) {
+async function setup(page, { ignoredPriority = false } = {}) {
   const statuses = [{ id: 1, name: 'New' }, { id: 2, name: 'Doing' }, { id: 5, name: 'Done', is_closed: true }];
   const versions = [{ id: 100, name: 'Product 100', status: 'open', project: { id: 1 }, sharing: 'descendants' }, { id: 99, name: 'Product 99', status: 'open', project: { id: 1 }, sharing: 'descendants' }];
   const make = (id, parent, tracker = 'Task', values = []) => ({ id, subject: `Issue ${id}`, tracker: { id: tracker === 'Feature' ? 1 : 2, name: tracker }, project: { id: 1 }, status: statuses[0], priority: { id: 2, name: 'Normal' }, allowed_statuses: statuses, fixed_version: { id: 300 }, custom_fields: [{ id: 7, multiple: true, value: values }], ...(parent ? { parent: { id: parent } } : {}) });
   const rows = [make(1, null, 'Feature'), make(2, 1, 'Task', ['100']), make(3, 1), make(4, null, 'Feature', ['100']), make(5, null, 'Feature', ['99']), make(6, null, 'Task', ['99', '100'])];
-  const writes = [], relations = new Map(), relationRequests = [];
+  const writes = [], relations = new Map(), relationRequests = [], priorityRequests = [];
+  const priorities = [{ id: 1, name: 'Low' }, { id: 2, name: 'Normal' }, { id: 4, name: 'Urgent' }];
   await page.route('**/config.json', route => route.fulfill({ json: { openedStatusId: 2, sprintFieldId: 7, redminePublicUrl: 'https://redmine.example.test', backlogStatusId: 1, columnStatusIds: [1, 2, 5], swimlaneTrackers: ['Feature'] } }));
   await page.route('**/redmine/**', async route => {
     const request = route.request(), url = new URL(request.url()), path = url.pathname.replace('/redmine', ''), params = url.searchParams;
     const send = json => route.fulfill({ json });
     if (path === '/users/current.json') return send({ user: { id: 1, firstname: 'Product', lastname: 'Planner' } });
     if (path === '/issue_statuses.json') return send({ issue_statuses: statuses });
+    if (path === '/enumerations/issue_priorities.json') { priorityRequests.push(request); return send({ issue_priorities: priorities }); }
     if (path === '/projects.json') return send({ projects: [{ id: 1, name: 'Product', trackers: [{ id: 1, name: 'Feature' }, { id: 2, name: 'Task' }] }] });
     if (path.endsWith('/memberships.json')) return send({ memberships: [] });
     if (path.endsWith('/versions.json')) return send({ versions });
@@ -36,6 +38,9 @@ async function setup(page) {
       const patch = request.postDataJSON().issue; writes.push({ id, patch });
       if (patch.custom_fields) issue.custom_fields = patch.custom_fields;
       if (patch.status_id) issue.status = statuses.find(row => row.id === patch.status_id);
+      if ('priority_id' in patch && !ignoredPriority) issue.priority = priorities.find(row => row.id === Number(patch.priority_id));
+      if ('estimated_hours' in patch) issue.estimated_hours = patch.estimated_hours;
+      if ('assigned_to_id' in patch) issue.assigned_to = patch.assigned_to_id ? { id: patch.assigned_to_id } : undefined;
       return route.fulfill({ status: 204, body: '' });
     }
     throw new Error(`Unexpected ${path}`);
@@ -43,7 +48,7 @@ async function setup(page) {
   await page.goto('/'); await page.getByLabel('Personal API key').fill('test-key');
   await page.getByRole('button', { name: 'Connect to Redmine' }).click();
   await expect(page.locator('#updated')).toContainText('Updated');
-  return { rows, writes, relations, relationRequests };
+  return { rows, writes, relations, relationRequests, versions, priorityRequests, priorities };
 }
 for (const overflowing of [false, true]) {
   test(`rightmost Swimlane uses the available width ${overflowing ? 'with' : 'without'} vertical overflow`, async ({ page }) => {
@@ -354,15 +359,18 @@ for (const mode of ['light', 'dark']) {
         const badge = node.querySelector('.lane-tracker').getBoundingClientRect();
         const button = node.querySelector('.add-subtasks').getBoundingClientRect();
         const reschedule = node.querySelector('[data-reschedule-swimlane]').getBoundingClientRect();
+        const pencil = node.querySelector('[data-edit]').getBoundingClientRect();
         const tags = node.querySelector('.lane-tags').getBoundingClientRect();
         return { right: bounds.right, rowRight: row.right, badgeRight: badge.right, badgeLeft: badge.left,
-          buttonLeft: button.left, buttonRight: button.right, rescheduleLeft: reschedule.left, rescheduleRight: reschedule.right, tagsRight: tags.right,
+          buttonLeft: button.left, buttonRight: button.right, rescheduleLeft: reschedule.left, rescheduleRight: reschedule.right,
+          pencilLeft: pencil.left, pencilRight: pencil.right, tagsRight: tags.right,
           badgeCenter: badge.top + badge.height / 2, buttonCenter: button.top + button.height / 2 };
       });
       expect(geometry.buttonLeft - geometry.badgeRight).toBe(8);
       expect(geometry.rescheduleLeft - geometry.buttonRight).toBe(8);
-      expect(geometry.rescheduleRight).toBe(geometry.rowRight);
-      expect(geometry.rescheduleRight).toBeLessThan(geometry.right);
+      expect(geometry.pencilLeft - geometry.rescheduleRight).toBe(8);
+      expect(geometry.pencilRight).toBe(geometry.rowRight);
+      expect(geometry.right - geometry.pencilRight).toBe(10);
       expect(geometry.tagsRight).toBeLessThanOrEqual(geometry.badgeLeft);
       expect(Math.abs(geometry.badgeCenter - geometry.buttonCenter)).toBeLessThanOrEqual(1);
     }
@@ -736,10 +744,13 @@ test('header action highlights all missing descendants and replaces other Sprint
   const positions = await add.evaluate(button => {
     const header = button.closest('.swimlane-heading');
     const reschedule = header.querySelector('[data-reschedule-swimlane]').getBoundingClientRect();
-    return { button: button.getBoundingClientRect().right, rescheduleLeft: reschedule.left, rescheduleRight: reschedule.right, header: header.getBoundingClientRect().right };
+    const pencil = header.querySelector('[data-edit]').getBoundingClientRect();
+    return { button: button.getBoundingClientRect().right, rescheduleLeft: reschedule.left, rescheduleRight: reschedule.right,
+      pencilLeft: pencil.left, pencilRight: pencil.right, header: header.getBoundingClientRect().right };
   });
   expect(positions.rescheduleLeft - positions.button).toBe(8);
-  expect(positions.header - positions.rescheduleRight).toBeLessThan(20);
+  expect(positions.pencilLeft - positions.rescheduleRight).toBe(8);
+  expect(positions.header - positions.pencilRight).toBe(10);
 });
 
 test('header action overwrites an occupied single-value Sprint field', async ({ page }) => {
@@ -1058,4 +1069,125 @@ test('a failed parent close shows feedback, retains the closed Card, and permits
   await page.locator('#completion-submit').click();
   await expect(page.locator('#completion-dialog')).not.toBeVisible();
   expect(parentWrites(fixture)).toEqual([{ id: 1, patch: { status_id: 5 } }]);
+});
+
+
+test('Swimlane heading pencil is the far-right keyboard-accessible planner and loads the full Priority catalogue on open', async ({ page }) => {
+  const fixture = await setup(page);
+  expect(fixture.priorityRequests).toEqual([]);
+  const lane = heading(page, 4);
+  const pencil = lane.getByRole('button', { name: 'Plan #4', exact: true });
+  await expect(pencil).toHaveAttribute('data-edit', '4');
+  const actions = await lane.locator('button').evaluateAll(buttons => buttons.map(button => ({
+    id: button.dataset.edit, right: button.getBoundingClientRect().right,
+  })));
+  expect(actions.find(action => action.id === '4').right).toBe(Math.max(...actions.map(action => action.right)));
+  const geometry = await pencil.evaluate(button => {
+    const bounds = button.getBoundingClientRect();
+    const heading = button.closest('.swimlane-heading').getBoundingClientRect();
+    const hit = document.elementFromPoint(bounds.right - 1, bounds.top + bounds.height / 2);
+    return { rightGap: heading.right - bounds.right, clickable: hit === button || button.contains(hit) };
+  });
+  expect(geometry.rightGap).toBe(10);
+  expect(geometry.clickable).toBe(true);
+  await pencil.focus(); await page.keyboard.press('Enter');
+  await expect(page.locator('#editor')).toBeVisible();
+  await expect(page.locator('#editor-swimlane-fields')).toBeVisible();
+  await expect(page.getByRole('dialog', { name: '#4 — Issue 4', exact: true })).toBeVisible();
+  await expect(page.locator('#editor-title')).toHaveText('#4 — Issue 4');
+  await expect(page.locator('#editor-subject')).toHaveCount(0);
+  await expect(page.getByLabel('Priority', { exact: true })).toHaveAttribute('id', 'edit-priority');
+  await expect(page.locator('#edit-priority')).toHaveValue('2');
+  expect(await page.locator('#edit-priority option').evaluateAll(options => options.map(option => ({ id: Number(option.value), name: option.textContent })))).toEqual(fixture.priorities);
+  expect(fixture.priorityRequests).toHaveLength(1);
+  expect(fixture.priorityRequests[0].method()).toBe('GET');
+  await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+  await expect(page.locator('#editor')).toBeHidden();
+  expect(fixture.writes).toEqual([]);
+});
+
+for (const id of [1, 4]) {
+  test(`Swimlane issue #${id} exposes read-only Tag chips and saves only changed Priority`, async ({ page }) => {
+    const fixture = await setup(page);
+    const issue = fixture.rows.find(row => row.id === id);
+    issue.tags = ['Customer', '<img src=x onerror="window.injected=true">'];
+    await refresh(page);
+    await page.getByRole('button', { name: `Plan #${id}`, exact: true }).click();
+    await expect(page.locator('#editor-swimlane-fields')).toBeVisible();
+    await expect(page.locator('#editor-swimlane-fields')).toContainText('Tags');
+    const tags = page.locator('#edit-tags');
+    await expect(tags.locator('.issue-tag')).toHaveText(issue.tags);
+    await expect(tags.locator('input, select, textarea, button, [contenteditable="true"]')).toHaveCount(0);
+    await expect(tags.locator('img')).toHaveCount(0);
+    await page.locator('#edit-priority').selectOption('4');
+    await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+    await expect(page.locator('#editor')).toBeHidden();
+    expect(fixture.writes).toEqual([{ id, patch: { priority_id: 4 } }]);
+    expect(issue.priority).toEqual({ id: 4, name: 'Urgent' });
+    expect(issue.tags).toEqual(['Customer', '<img src=x onerror="window.injected=true">']);
+    expect(await page.evaluate(() => window.injected)).toBeUndefined();
+    await page.getByRole('button', { name: `Plan #${id}`, exact: true }).click();
+    await expect(page.locator('#edit-priority')).toHaveValue('4');
+  });
+}
+
+test('a current Priority missing from the catalogue is retained and not overwritten on save', async ({ page }) => {
+  const fixture = await setup(page);
+  fixture.rows[3].priority = { id: 90, name: 'Legacy priority' };
+  await refresh(page);
+  await page.getByRole('button', { name: 'Plan #4', exact: true }).click();
+  await expect(page.locator('#edit-priority')).toHaveValue('90');
+  await expect(page.locator('#edit-priority option[value="90"]')).toHaveText('Legacy priority');
+  for (const priority of fixture.priorities) await expect(page.locator(`#edit-priority option[value="${priority.id}"]`)).toHaveText(priority.name);
+  await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+  await expect(page.locator('#editor')).toBeHidden();
+  expect(fixture.writes).toEqual([]);
+});
+
+test('ordinary Card planner hides Swimlane fields, makes no Priority request and never saves Priority or Tags', async ({ page }) => {
+  const fixture = await setup(page);
+  await page.getByRole('button', { name: 'Plan #4', exact: true }).click();
+  await expect(page.locator('#editor-swimlane-fields')).toBeVisible();
+  await page.getByRole('button', { name: 'Close editor', exact: true }).click();
+  const requestsBefore = fixture.priorityRequests.length;
+  await page.getByRole('button', { name: 'Plan #2', exact: true }).click();
+  await expect(page.locator('#editor-swimlane-fields')).toBeHidden();
+  await expect(page.locator('#edit-priority')).toBeHidden();
+  await expect(page.locator('#edit-tags')).toBeHidden();
+  await expect(page.locator('#editor input:visible, #editor select:visible')).toHaveCount(2);
+  expect(fixture.priorityRequests).toHaveLength(requestsBefore);
+  await page.getByLabel('Estimated hours', { exact: true }).fill('5');
+  await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+  await expect(page.locator('#editor')).toBeHidden();
+  expect(fixture.writes).toEqual([{ id: 2, patch: { estimated_hours: 5 } }]);
+});
+
+test('closed Sprint heading pencil remains enabled but opens read-only Swimlane fields', async ({ page }) => {
+  const fixture = await setup(page);
+  fixture.versions[0].status = 'closed';
+  await page.getByLabel('Include closed sprints').check();
+  await refresh(page);
+  await page.locator('#sprint').selectOption('100');
+  await expect(page.locator('#sprint-state')).toContainText('read only');
+  const pencil = heading(page, 4).getByRole('button', { name: 'View #4', exact: true });
+  await expect(pencil).toBeEnabled();
+  await expect(pencil).toHaveAttribute('data-edit', '4');
+  await pencil.click();
+  await expect(page.locator('#editor-swimlane-fields')).toBeVisible();
+  await expect(page.locator('#edit-priority')).toBeDisabled();
+  await expect(page.getByLabel('Assignment', { exact: true })).toBeDisabled();
+  await expect(page.getByLabel('Estimated hours', { exact: true })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Save changes', exact: true })).toBeDisabled();
+  expect(fixture.writes).toEqual([]);
+});
+
+test('a Priority silently ignored by Redmine is not falsely confirmed as saved', async ({ page }) => {
+  const fixture = await setup(page, { ignoredPriority: true });
+  await page.getByRole('button', { name: 'Plan #4', exact: true }).click();
+  await page.locator('#edit-priority').selectOption('4');
+  await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+  await expect(page.locator('#editor-notice')).toContainText('did not retain all requested changes');
+  await expect(page.locator('#editor')).toBeVisible();
+  expect(fixture.writes).toEqual([{ id: 4, patch: { priority_id: 4 } }]);
+  expect(fixture.rows[3].priority.id).toBe(2);
 });

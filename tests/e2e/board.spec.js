@@ -1937,7 +1937,7 @@ for (const id of [1, 2]) {
     const { writes } = await setup(page); await login(page);
     await page.getByRole('button', { name: `Plan #${id}`, exact: true }).click();
     const editor = page.locator('#editor');
-    await expect(editor.locator('input, select')).toHaveCount(2);
+    await expect(editor.locator('input:visible, select:visible')).toHaveCount(id === 1 ? 3 : 2);
     await expect(editor.getByLabel('Status', { exact: true })).toHaveCount(0);
     await expect(editor.getByLabel('Planning destination')).toHaveCount(0);
     await expect(editor.locator('#editor-tags, #editor-warning')).toHaveCount(0);

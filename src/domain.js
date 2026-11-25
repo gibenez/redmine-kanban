@@ -81,7 +81,7 @@ export function assertTransition(issue, patch) {
   if (!issue.allowed_statuses.some(status => status.id === patch.status_id)) throw new Error('Your Redmine workflow does not allow this status transition.');
 }
 export function matchesPatch(issue, patch) {
-  const values = { status_id: issue.status.id, assigned_to_id: issue.assigned_to?.id ?? null, estimated_hours: issue.estimated_hours ?? null };
+  const values = { status_id: issue.status.id, priority_id: issue.priority?.id ?? null, assigned_to_id: issue.assigned_to?.id ?? null, estimated_hours: issue.estimated_hours ?? null };
   return Object.entries(patch).every(([key, value]) => key === 'custom_fields'
     ? value.every(field => {
       const actual = sprintValues(issue, field.id);

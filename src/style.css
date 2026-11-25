@@ -445,7 +445,9 @@ body.board-active { height: 100dvh; overflow: hidden; display: flex; flex-direct
 #planning-controls .totals strong { color: var(--text); }
 #planning-controls { background: var(--sidebar); }
 #workspace #query { padding-left: 28px; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='none' stroke='%236c707e' stroke-width='1.5'%3E%3Ccircle cx='6.5' cy='6.5' r='4.5'/%3E%3Cpath d='m10 10 4 4'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: 8px center; }
-#editor-subject { line-height: 22px; overflow-wrap: anywhere; }
+#edit-tags-title { margin: 16px 0 4px; font-size: 13px; line-height: 18px; font-weight: 500; color: var(--secondary); }
+#editor-title { min-width: 0; overflow-wrap: anywhere; }
+#close-editor { flex-shrink: 0; }
 #editor { max-height: calc(100dvh - 32px); overflow-y: auto; }
 #editor-description-section { margin-bottom: 16px; }
 #editor-description-title { margin: 0 0 8px; font-size: 14px; }
