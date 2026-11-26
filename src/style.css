@@ -448,7 +448,7 @@ body.board-active { height: 100dvh; overflow: hidden; display: flex; flex-direct
 #edit-tags-title { margin: 16px 0 4px; font-size: 13px; line-height: 18px; font-weight: 500; color: var(--secondary); }
 #editor-title { min-width: 0; overflow-wrap: anywhere; }
 #close-editor { flex-shrink: 0; }
-#editor { max-height: calc(100dvh - 32px); overflow-y: auto; }
+#editor { width: min(800px, calc(100% - 32px)); max-height: calc(100dvh - 32px); overflow-y: auto; }
 #editor-description-section { margin: 16px 0; }
 .description-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 8px; }
 .description-tabs { display: flex; flex: none; }

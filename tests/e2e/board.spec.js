@@ -1943,6 +1943,13 @@ for (const width of [1440, 390]) {
     await expect(body.locator('script, iframe, form, input, button')).toHaveCount(0);
     await expect(body.getByText('Unsafe link', { exact: true })).not.toHaveAttribute('href');
     expect(await page.evaluate(() => window.injected)).toBeUndefined();
+    const editorBounds = await page.locator('#editor').boundingBox();
+    const expectedWidth = Math.min(800, width - 32);
+    // Native dialog max-width can trim an extra 2px on narrow viewports.
+    expect(editorBounds.width).toBeGreaterThanOrEqual(expectedWidth - 2);
+    expect(editorBounds.width).toBeLessThanOrEqual(expectedWidth);
+    expect(editorBounds.x).toBeGreaterThanOrEqual(16);
+    expect(editorBounds.x + editorBounds.width).toBeLessThanOrEqual(width - 16);
     expect(await page.locator('#editor').evaluate(node => node.scrollWidth <= node.clientWidth)).toBe(true);
     await page.getByRole('button', { name: 'Save changes' }).scrollIntoViewIfNeeded();
     await expect(page.getByRole('button', { name: 'Save changes' })).toBeInViewport();
