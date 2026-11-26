@@ -135,6 +135,7 @@ function lock() {
   $('edit-form').querySelectorAll('input, textarea, select, button[type="submit"]').forEach(el => { el.disabled = busy || loading || sprint?.status !== 'open' || Boolean(el.closest('section[hidden]')); });
   $('edit-title').disabled = $('editor-subject').disabled;
   $('edit-status').disabled ||= $('edit-status').options.length <= 1;
+  updateEditorSave();
   document.querySelectorAll('[data-edit], .scope-toggle').forEach(el => { el.disabled = busy || loading || (el.closest('[data-id="backlog"]') && (queryLoading || feed?.loadingMore)); });
   $('tracker').disabled = busy || loading || !eligibleTrackers().length;
   document.querySelectorAll('[data-add-descendants]').forEach(el => { el.disabled = busy || loading || sprint?.status !== 'open' || !lanePlanning.get(Number(el.dataset.addDescendants))?.count; });
@@ -1056,8 +1057,15 @@ $('completion-dialog').addEventListener('close', () => {
 function editorValues() {
   return JSON.stringify(['editor-subject', 'edit-description', 'edit-assignee', 'edit-estimate', 'edit-priority', 'edit-status'].map(id => $(id).value));
 }
+function editorHasChanges() {
+  return editorValues() !== initialEditorValues;
+}
+function updateEditorSave() {
+  $('edit-form').querySelector('button[type="submit"]').disabled = !editing || busy || loading || sprint?.status !== 'open' || !editorHasChanges();
+}
+for (const eventName of ['input', 'change']) $('edit-form').addEventListener(eventName, updateEditorSave);
 function mayCloseEditor() {
-  return !busy && (editorValues() === initialEditorValues || window.confirm('Discard unsaved changes?'));
+  return !busy && (!editorHasChanges() || window.confirm('Discard unsaved changes?'));
 }
 let titleBeforeEdit = '';
 function clearTitleError() {
@@ -1069,7 +1077,7 @@ function clearTitleError() {
 function finishTitleEdit(cancel = false) {
   const input = $('editor-subject');
   if (input.hidden) return true;
-  if (cancel) input.value = titleBeforeEdit;
+  if (cancel) { input.value = titleBeforeEdit; updateEditorSave(); }
   if (!input.value.trim()) {
     input.setCustomValidity('Title cannot be blank.');
     input.setAttribute('aria-invalid', 'true');
@@ -1117,7 +1125,7 @@ $('editor').addEventListener('close', () => {
   if (api && !busy && !loading) startBacklog();
 });
 $('edit-form').addEventListener('submit', event => {
-  event.preventDefault(); if (!editing || busy) return;
+  event.preventDefault(); if (!editing || busy || loading || !editorHasChanges()) return;
   if (!finishTitleEdit()) { $('editor-subject').focus(); return; }
   try {
     if (sprint?.status !== 'open') throw new Error('Select an open sprint before editing issues.');

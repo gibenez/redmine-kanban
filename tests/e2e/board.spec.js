@@ -2189,12 +2189,54 @@ test('a sprint closed after loading is checked again before writing', async ({ p
   expect(fixture.writes).toEqual([]);
 });
 
-test('saving an unchanged issue does not send read-only fields back to Redmine', async ({ page }) => {
+test('unchanged issues cannot be saved, including a programmatic submission', async ({ page }) => {
   const fixture = await setup(page); await login(page);
   await page.getByRole('button', { name: 'Plan #2', exact: true }).click();
-  await page.getByRole('button', { name: 'Save changes' }).click();
-  await expect(page.locator('#editor')).not.toBeVisible();
+  await expect(page.getByRole('button', { name: 'Save changes' })).toBeDisabled();
+  await page.locator('#edit-form').evaluate(form => form.requestSubmit());
+  await expect(page.locator('#editor')).toBeVisible();
   expect(fixture.writes).toEqual([]);
+});
+
+for (const field of ['title', 'description', 'assignment', 'estimate']) {
+  test(`Save changes tracks edits and reversions to ${field}`, async ({ page }) => {
+    const fixture = await setup(page); await login(page);
+    await page.getByRole('button', { name: 'Plan #1', exact: true }).click();
+    const save = page.getByRole('button', { name: 'Save changes', exact: true });
+    await expect(save).toBeDisabled();
+    if (field === 'title') await page.locator('#edit-title').click();
+    if (field === 'description') await page.locator('#description-write').click();
+    const control = page.locator({ title: '#editor-subject', description: '#edit-description', assignment: '#edit-assignee', estimate: '#edit-estimate' }[field]);
+    const original = await control.inputValue();
+    if (field === 'assignment') await control.selectOption('9');
+    else await control.fill(field === 'estimate' ? '6' : 'Changed draft');
+    await expect(save).toBeEnabled();
+    if (field === 'assignment') await control.selectOption(original);
+    else await control.fill(original);
+    await expect(save).toBeDisabled();
+    expect(fixture.writes).toEqual([]);
+  });
+}
+
+test('cancelling title edits updates Save without discarding other field edits', async ({ page }) => {
+  await setup(page); await login(page);
+  await page.getByRole('button', { name: 'Plan #1', exact: true }).click();
+  const save = page.getByRole('button', { name: 'Save changes', exact: true });
+  const title = page.locator('#editor-subject');
+  await page.locator('#edit-title').click();
+  await title.fill('Cancelled title');
+  await expect(save).toBeEnabled();
+  await title.press('Escape');
+  await expect(save).toBeDisabled();
+  const estimate = page.locator('#edit-estimate');
+  const original = await estimate.inputValue();
+  await estimate.fill('6');
+  await page.locator('#edit-title').click();
+  await title.fill('Another cancelled title');
+  await title.press('Escape');
+  await expect(save).toBeEnabled();
+  await estimate.fill(original);
+  await expect(save).toBeDisabled();
 });
 
 test('save errors are also announced inside the planning dialog', async ({ page }) => {
@@ -2612,6 +2654,7 @@ test('planner saves a new title and sanitized Markdown HTML, then reloads the sa
   await page.getByRole('button', { name: 'Plan #1', exact: true }).click();
   await expect(page.locator('#editor-title')).toHaveText(`#1 — ${subject}`);
   await expect(page.locator('#editor-subject')).toHaveValue(subject);
+  await expect(page.getByRole('button', { name: 'Save changes', exact: true })).toBeDisabled();
   await expect(page.locator('#description-preview')).toHaveAttribute('aria-pressed', 'true');
   await expect(page.locator('#edit-description')).toBeHidden();
   await expect(preview.getByRole('heading', { name: 'Acceptance' })).toBeVisible();
@@ -2630,7 +2673,8 @@ test('planner never rewrites unchanged original HTML after preview or a planning
   await expect(page.locator('#edit-description')).toBeVisible();
   await page.locator('#description-preview').click();
   await page.locator('#description-write').click();
-  await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Save changes', exact: true })).toBeDisabled();
+  await page.getByRole('button', { name: 'Close editor', exact: true }).click();
   await expect(page.locator('#editor')).toBeHidden();
   expect(fixture.writes).toEqual([]);
   expect(fixture.issues[0].description).toBe(original);

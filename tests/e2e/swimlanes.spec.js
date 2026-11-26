@@ -1106,7 +1106,8 @@ test('Swimlane heading pencil is the far-right keyboard-accessible planner and l
   expect(await page.locator('#edit-priority option').evaluateAll(options => options.map(option => ({ id: Number(option.value), name: option.textContent })))).toEqual(fixture.priorities);
   expect(fixture.priorityRequests).toHaveLength(1);
   expect(fixture.priorityRequests[0].method()).toBe('GET');
-  await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Save changes', exact: true })).toBeDisabled();
+  await page.getByRole('button', { name: 'Close editor', exact: true }).click();
   await expect(page.locator('#editor')).toBeHidden();
   expect(fixture.writes).toEqual([]);
 });
@@ -1144,10 +1145,30 @@ test('a current Priority missing from the catalogue is retained and not overwrit
   await expect(page.locator('#edit-priority')).toHaveValue('90');
   await expect(page.locator('#edit-priority option[value="90"]')).toHaveText('Legacy priority');
   for (const priority of fixture.priorities) await expect(page.locator(`#edit-priority option[value="${priority.id}"]`)).toHaveText(priority.name);
+  await page.getByLabel('Estimated hours', { exact: true }).fill('5');
   await page.getByRole('button', { name: 'Save changes', exact: true }).click();
   await expect(page.locator('#editor')).toBeHidden();
-  expect(fixture.writes).toEqual([]);
+  expect(fixture.writes).toEqual([{ id: 4, patch: { estimated_hours: 5 } }]);
 });
+
+for (const field of ['priority', 'status']) {
+  test(`Save changes tracks Swimlane ${field} edits and reversions`, async ({ page }) => {
+    const fixture = await setup(page);
+    await page.getByRole('button', { name: 'Plan #4', exact: true }).click();
+    const save = page.getByRole('button', { name: 'Save changes', exact: true });
+    const control = page.locator(`#edit-${field}`);
+    await expect(control).toBeVisible();
+    await expect(control).toBeEnabled();
+    const original = await control.inputValue();
+    await expect(save).toBeDisabled();
+    const alternative = await control.locator('option').evaluateAll(options => options.find(option => !option.selected).value);
+    await control.selectOption(alternative);
+    await expect(save).toBeEnabled();
+    await control.selectOption(original);
+    await expect(save).toBeDisabled();
+    expect(fixture.writes).toEqual([]);
+  });
+}
 
 test('ordinary Card planner hides Swimlane fields, makes no Priority request and never saves Priority or Tags', async ({ page }) => {
   const fixture = await setup(page);
@@ -1302,7 +1323,8 @@ test('Swimlane Status retains a current status omitted from workflow and offers 
   await expect(status.locator('option[value="1"]')).toHaveText('New');
   await expect(status.locator('option[value="9"]')).toHaveText('Review');
   await expect(status).toBeEnabled();
-  await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Save changes', exact: true })).toBeDisabled();
+  await page.getByRole('button', { name: 'Close editor', exact: true }).click();
   await expect(page.locator('#editor')).toBeHidden();
   expect(fixture.writes).toEqual([]);
   await page.getByRole('button', { name: 'Plan #4', exact: true }).click();
