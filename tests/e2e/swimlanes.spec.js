@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 
-async function setup(page, { ignoredPriority = false } = {}) {
+async function setup(page, { ignoredPriority = false, ignoredStatus = false } = {}) {
   const statuses = [{ id: 1, name: 'New' }, { id: 2, name: 'Doing' }, { id: 5, name: 'Done', is_closed: true }];
   const versions = [{ id: 100, name: 'Product 100', status: 'open', project: { id: 1 }, sharing: 'descendants' }, { id: 99, name: 'Product 99', status: 'open', project: { id: 1 }, sharing: 'descendants' }];
   const make = (id, parent, tracker = 'Task', values = []) => ({ id, subject: `Issue ${id}`, tracker: { id: tracker === 'Feature' ? 1 : 2, name: tracker }, project: { id: 1 }, status: statuses[0], priority: { id: 2, name: 'Normal' }, allowed_statuses: statuses, fixed_version: { id: 300 }, custom_fields: [{ id: 7, multiple: true, value: values }], ...(parent ? { parent: { id: parent } } : {}) });
@@ -37,7 +37,7 @@ async function setup(page, { ignoredPriority = false } = {}) {
        if (request.method() === 'GET') return send({ issue: { ...issue, children: rows.filter(row => row.parent?.id === id).map(row => ({ id: row.id })) } });
       const patch = request.postDataJSON().issue; writes.push({ id, patch });
       if (patch.custom_fields) issue.custom_fields = patch.custom_fields;
-      if (patch.status_id) issue.status = statuses.find(row => row.id === patch.status_id);
+      if (patch.status_id && !ignoredStatus) issue.status = statuses.find(row => row.id === patch.status_id);
       if ('priority_id' in patch && !ignoredPriority) issue.priority = priorities.find(row => row.id === Number(patch.priority_id));
       if ('subject' in patch) issue.subject = patch.subject;
       if ('description' in patch) issue.description = patch.description;
@@ -50,7 +50,7 @@ async function setup(page, { ignoredPriority = false } = {}) {
   await page.goto('/'); await page.getByLabel('Personal API key').fill('test-key');
   await page.getByRole('button', { name: 'Connect to Redmine' }).click();
   await expect(page.locator('#updated')).toContainText('Updated');
-  return { rows, writes, relations, relationRequests, versions, priorityRequests, priorities };
+  return { rows, writes, relations, relationRequests, versions, priorityRequests, priorities, statuses };
 }
 for (const overflowing of [false, true]) {
   test(`rightmost Swimlane uses the available width ${overflowing ? 'with' : 'without'} vertical overflow`, async ({ page }) => {
@@ -1159,6 +1159,7 @@ test('ordinary Card planner hides Swimlane fields, makes no Priority request and
   await expect(page.locator('#editor-swimlane-fields')).toBeHidden();
   await expect(page.locator('#edit-priority')).toBeHidden();
   await expect(page.locator('#edit-tags')).toBeHidden();
+  await expect(page.locator('#edit-status')).toBeHidden();
   await expect(page.locator('#editor input:visible, #editor select:visible')).toHaveCount(3);
   expect(fixture.priorityRequests).toHaveLength(requestsBefore);
   await page.getByLabel('Estimated hours', { exact: true }).fill('5');
@@ -1180,6 +1181,7 @@ test('closed Sprint heading pencil remains enabled but opens read-only Swimlane 
   await pencil.click();
   await expect(page.locator('#editor-swimlane-fields')).toBeVisible();
   await expect(page.locator('#edit-priority')).toBeDisabled();
+  await expect(page.locator('#edit-status')).toBeDisabled();
   await expect(page.getByLabel('Assignment', { exact: true })).toBeDisabled();
   await expect(page.getByLabel('Estimated hours', { exact: true })).toBeDisabled();
   await expect(page.getByRole('button', { name: 'Save changes', exact: true })).toBeDisabled();
@@ -1216,4 +1218,181 @@ test('discard confirmation also protects a changed Swimlane Priority', async ({ 
   expect(fixture.writes).toEqual([]);
   await page.getByRole('button', { name: 'Plan #4', exact: true }).click();
   await expect(page.locator('#edit-priority')).toHaveValue('2');
+});
+
+for (const id of [1, 4]) {
+  test(`Swimlane #${id} saves Status, Priority, text, assignment and estimate together only on Save`, async ({ page }) => {
+    const fixture = await setup(page);
+    const issue = fixture.rows.find(row => row.id === id);
+    issue.assigned_to = { id: 7, name: 'Previous assignee' };
+    const before = structuredClone(fixture.rows);
+    await refresh(page);
+    await page.getByRole('button', { name: `Plan #${id}`, exact: true }).click();
+    const status = page.getByLabel('Status', { exact: true });
+    await expect(status).toHaveAttribute('id', 'edit-status');
+    await expect(page.locator('#editor-swimlane-fields #edit-status')).toBeVisible();
+    await expect(status).toHaveValue('1');
+    await expect(status.locator('option')).toHaveText(['New', 'Doing', 'Done']);
+    await status.selectOption('5');
+    await page.locator('#edit-priority').selectOption('4');
+    await page.locator('#editor-subject').fill('Updated Swimlane');
+    await page.getByRole('button', { name: 'Edit description', exact: true }).click();
+    await page.locator('#edit-description').fill('Updated description');
+    await page.getByLabel('Assignment', { exact: true }).selectOption('');
+    await page.getByLabel('Estimated hours', { exact: true }).fill('5.5');
+    expect(fixture.writes).toEqual([]);
+    expect(fixture.rows).toEqual(before);
+    await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+    await expect(page.locator('#editor')).toBeHidden();
+    expect(fixture.writes).toEqual([{ id, patch: {
+      status_id: 5, priority_id: 4, subject: 'Updated Swimlane', description: '<p>Updated description</p>\n',
+      assigned_to_id: null, estimated_hours: 5.5,
+    } }]);
+    expect(issue.status.id).toBe(5);
+    expect(issue.custom_fields).toEqual(before.find(row => row.id === id).custom_fields);
+    expect(issue.fixed_version).toEqual(before.find(row => row.id === id).fixed_version);
+    expect(fixture.rows.filter(row => row.id !== id)).toEqual(before.filter(row => row.id !== id));
+    if (id === 4) {
+      await expect(heading(page, id).locator('.swimlane-title-row strong')).toHaveCSS('text-decoration-line', 'line-through');
+      await expect(heading(page, id).getByRole('button', { name: `Reschedule swimlane #${id}`, exact: true })).toBeDisabled();
+      await expect(heading(page, id)).toBeVisible();
+    } else {
+      await expect(backlog(page, id)).toHaveCount(0);
+      await page.getByRole('button', { name: 'Backlog filters', exact: true }).click();
+      const closed = page.getByRole('checkbox', { name: 'Show closed issues', exact: true });
+      await closed.check();
+      await expect(backlog(page, id)).toBeVisible();
+      await closed.uncheck();
+      await expect(backlog(page, id)).toHaveCount(0);
+    }
+  });
+}
+
+test('reopening a closed Swimlane restores its heading and Reschedule without changing its children', async ({ page }) => {
+  const fixture = await setup(page);
+  fixture.rows[3].status = fixture.statuses.find(status => status.id === 5);
+  fixture.rows[1].parent = { id: 4 };
+  const before = structuredClone(fixture.rows);
+  await refresh(page);
+  await expect(heading(page, 4).getByRole('button', { name: 'Reschedule swimlane #4', exact: true })).toBeDisabled();
+  await page.getByRole('button', { name: 'Plan #4', exact: true }).click();
+  await expect(page.locator('#edit-status')).toHaveValue('5');
+  await page.locator('#edit-status').selectOption('2');
+  await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+  await expect(page.locator('#editor')).toBeHidden();
+  await expect(heading(page, 4).locator('.swimlane-title-row strong')).not.toHaveClass('closed');
+  await expect(heading(page, 4).getByRole('button', { name: 'Reschedule swimlane #4', exact: true })).toBeEnabled();
+  await expect(laneCard(page, 4, 2)).toBeVisible();
+  expect(fixture.writes).toEqual([{ id: 4, patch: { status_id: 2 } }]);
+  expect(fixture.rows[3]).toEqual({ ...before[3], status: fixture.statuses.find(status => status.id === 2) });
+  expect(fixture.rows.filter(row => row.id !== 4)).toEqual(before.filter(row => row.id !== 4));
+});
+
+test('Swimlane Status retains a current status omitted from workflow and offers permitted non-column statuses only', async ({ page }) => {
+  const fixture = await setup(page);
+  fixture.statuses.push({ id: 9, name: 'Review' });
+  fixture.rows[3].allowed_statuses = [{ id: 9, name: 'Review' }];
+  await page.getByRole('button', { name: 'Plan #4', exact: true }).click();
+  const status = page.locator('#edit-status');
+  await expect(status).toHaveValue('1');
+  await expect(status.locator('option')).toHaveCount(2);
+  await expect(status.locator('option[value="1"]')).toHaveText('New');
+  await expect(status.locator('option[value="9"]')).toHaveText('Review');
+  await expect(status).toBeEnabled();
+  await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+  await expect(page.locator('#editor')).toBeHidden();
+  expect(fixture.writes).toEqual([]);
+  await page.getByRole('button', { name: 'Plan #4', exact: true }).click();
+  await status.selectOption('9');
+  await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+  await expect(page.locator('#editor')).toBeHidden();
+  expect(fixture.writes).toEqual([{ id: 4, patch: { status_id: 9 } }]);
+  await expect(heading(page, 4)).toBeVisible();
+  await expect(page.locator('[data-id="status-9"]')).toHaveCount(0);
+});
+
+for (const workflow of ['missing', 'empty', 'same-only']) {
+  test(`${workflow} Swimlane workflow disables Status but permits unrelated edits, including after failed-save unlock`, async ({ page }) => {
+    const fixture = await setup(page);
+    if (workflow === 'missing') delete fixture.rows[3].allowed_statuses;
+    else fixture.rows[3].allowed_statuses = workflow === 'empty' ? [] : [{ id: 1, name: 'New' }];
+    await page.getByRole('button', { name: 'Plan #4', exact: true }).click();
+    await expect(page.locator('#edit-status')).toBeDisabled();
+    await expect(page.locator('#edit-status')).toHaveValue('1');
+    await expect(page.locator('#edit-status-hint')).toHaveText(workflow === 'missing'
+      ? 'Redmine did not provide workflow information. Status cannot be changed; other fields can still be edited.'
+      : 'No status transitions are permitted by your Redmine workflow.');
+    await page.locator('#edit-priority').selectOption('4');
+    let failed = false;
+    await page.route('**/redmine/issues/4.json**', route => {
+      if (route.request().method() === 'PUT' && !failed) {
+        failed = true;
+        return route.fulfill({ status: 422, json: { errors: ['Try again'] } });
+      }
+      return route.fallback();
+    });
+    await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+    await expect(page.locator('#editor-notice')).toContainText(/failed|422|try again/i);
+    await expect(page.locator('#edit-status')).toBeDisabled();
+    await expect(page.locator('#edit-priority')).toBeEnabled();
+    await expect(page.locator('#edit-priority')).toHaveValue('4');
+    expect(fixture.writes).toEqual([]);
+    await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+    await expect(page.locator('#editor')).toBeHidden();
+    expect(fixture.writes).toEqual([{ id: 4, patch: { priority_id: 4 } }]);
+  });
+}
+
+test('revoking a selected Swimlane workflow transition after opening blocks the entire save and preserves the draft', async ({ page }) => {
+  const fixture = await setup(page);
+  await page.getByRole('button', { name: 'Plan #4', exact: true }).click();
+  await page.locator('#edit-status').selectOption('5');
+  await page.locator('#edit-priority').selectOption('4');
+  await page.locator('#editor-subject').fill('Unsaved title');
+  fixture.rows[3].allowed_statuses = [{ id: 1, name: 'New' }];
+  await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+  await expect(page.locator('#editor-notice')).toContainText(/workflow|allowed|transition/i);
+  await expect(page.locator('#editor')).toBeVisible();
+  await expect(page.locator('#edit-status')).toHaveValue('5');
+  await expect(page.locator('#edit-priority')).toHaveValue('4');
+  await expect(page.locator('#editor-subject')).toHaveValue('Unsaved title');
+  expect(fixture.writes).toEqual([]);
+  expect(fixture.rows[3].subject).toBe('Issue 4');
+  expect(fixture.rows[3].status.id).toBe(1);
+});
+
+for (const dismiss of ['Close editor', 'Escape']) {
+  test(`Swimlane Status draft is protected by ${dismiss} and discarded only with confirmation`, async ({ page }) => {
+    const fixture = await setup(page);
+    await page.getByRole('button', { name: 'Plan #4', exact: true }).click();
+    await page.locator('#edit-status').selectOption('5');
+    const close = () => dismiss === 'Escape' ? page.keyboard.press('Escape')
+      : page.getByRole('button', { name: dismiss, exact: true }).click();
+    page.once('dialog', async dialog => {
+      expect(dialog.type()).toBe('confirm');
+      expect(dialog.message()).toMatch(/discard|unsaved/i);
+      await dialog.dismiss();
+    });
+    await close();
+    await expect(page.locator('#editor')).toBeVisible();
+    await expect(page.locator('#edit-status')).toHaveValue('5');
+    page.once('dialog', dialog => dialog.accept());
+    await close();
+    await expect(page.locator('#editor')).toBeHidden();
+    expect(fixture.writes).toEqual([]);
+    await page.getByRole('button', { name: 'Plan #4', exact: true }).click();
+    await expect(page.locator('#edit-status')).toHaveValue('1');
+  });
+}
+
+test('a Swimlane Status silently ignored by Redmine is not falsely confirmed as saved', async ({ page }) => {
+  const fixture = await setup(page, { ignoredStatus: true });
+  await page.getByRole('button', { name: 'Plan #4', exact: true }).click();
+  await page.locator('#edit-status').selectOption('5');
+  await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+  await expect(page.locator('#editor-notice')).toContainText('did not retain all requested changes');
+  await expect(page.locator('#editor')).toBeVisible();
+  await expect(page.locator('#edit-status')).toHaveValue('5');
+  expect(fixture.writes).toEqual([{ id: 4, patch: { status_id: 5 } }]);
+  expect(fixture.rows[3].status.id).toBe(1);
 });

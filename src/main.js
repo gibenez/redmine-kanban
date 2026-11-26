@@ -133,6 +133,7 @@ function lock() {
   $('refresh-now').setAttribute('aria-busy', String(loading));
   document.querySelectorAll('#planning-controls select, #planning-controls input, #workspace select, #workspace input, #workspace button').forEach(el => { el.disabled = busy || loading; });
   $('edit-form').querySelectorAll('input, textarea, select, button[type="submit"]').forEach(el => { el.disabled = busy || loading || sprint?.status !== 'open' || Boolean(el.closest('section[hidden]')); });
+  $('edit-status').disabled ||= $('edit-status').options.length <= 1;
   document.querySelectorAll('[data-edit], .scope-toggle').forEach(el => { el.disabled = busy || loading || (el.closest('[data-id="backlog"]') && (queryLoading || feed?.loadingMore)); });
   $('tracker').disabled = busy || loading || !eligibleTrackers().length;
   document.querySelectorAll('[data-add-descendants]').forEach(el => { el.disabled = busy || loading || sprint?.status !== 'open' || !lanePlanning.get(Number(el.dataset.addDescendants))?.count; });
@@ -861,6 +862,13 @@ async function openEditor(id) {
     if (stamp !== epoch) return;
     $('editor-swimlane-fields').hidden = !swimlane;
     if (swimlane) {
+      const statusChoices = new Map((Array.isArray(issue.allowed_statuses) ? issue.allowed_statuses : []).map(status => [status.id, status.name || statuses.find(item => item.id === status.id)?.name || `Status #${status.id}`]));
+      statusChoices.set(issue.status.id, issue.status.name);
+      options($('edit-status'), [...statusChoices], issue.status.id);
+      $('edit-status-hint').textContent = !Array.isArray(issue.allowed_statuses)
+        ? 'Redmine did not provide workflow information. Status cannot be changed; other fields can still be edited.'
+        : statusChoices.size <= 1 ? 'No status transitions are permitted by your Redmine workflow.' : '';
+      $('edit-status-hint').hidden = !$('edit-status-hint').textContent;
       const choices = new Map(priorities.map(priority => [priority.id, priority.name]));
       if (issue.priority) choices.set(issue.priority.id, issue.priority.name);
       options($('edit-priority'), [...choices], issue.priority?.id);
@@ -1041,7 +1049,7 @@ $('completion-dialog').addEventListener('close', () => {
   if (api && !busy && !loading) startBacklog();
 });
 function editorValues() {
-  return JSON.stringify(['editor-subject', 'edit-description', 'edit-assignee', 'edit-estimate', 'edit-priority'].map(id => $(id).value));
+  return JSON.stringify(['editor-subject', 'edit-description', 'edit-assignee', 'edit-estimate', 'edit-priority', 'edit-status'].map(id => $(id).value));
 }
 function mayCloseEditor() {
   return !busy && (editorValues() === initialEditorValues || window.confirm('Discard unsaved changes?'));
@@ -1068,7 +1076,10 @@ $('edit-form').addEventListener('submit', event => {
   try {
     if (sprint?.status !== 'open') throw new Error('Select an open sprint before editing issues.');
     const patch = { ...textPatch(editing, $('editor-subject').value, $('edit-description').value, initialMarkdown), assigned_to_id: $('edit-assignee').value ? Number($('edit-assignee').value) : null, estimated_hours: parseEstimate($('edit-estimate').value) };
-    if (isSwimlane(editing, config.swimlaneTrackers)) patch.priority_id = Number($('edit-priority').value);
+    if (isSwimlane(editing, config.swimlaneTrackers)) {
+      patch.priority_id = Number($('edit-priority').value);
+      if (!$('edit-status').disabled && Number($('edit-status').value) !== editing.status.id) patch.status_id = Number($('edit-status').value);
+    }
     void mutate(editing.id, patch);
   } catch (error) { notify(error.message, true); }
 });
