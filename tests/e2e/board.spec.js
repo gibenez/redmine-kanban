@@ -495,7 +495,11 @@ for (const activation of ['click', 'keyboard']) {
     await page.locator('#editor-subject').fill('Unsaved header-link draft');
     await page.locator('#editor-subject').press('Enter');
     const link = page.locator('#editor-title').getByRole('link', { name: '#1', exact: true });
-    await expect(link).toHaveCSS('color', await page.locator('#issue-link').evaluate(el => getComputedStyle(el).color));
+    const linkColor = await page.evaluate(() => {
+      const probe = document.createElement('a'); document.body.append(probe);
+      const color = getComputedStyle(probe).color; probe.remove(); return color;
+    });
+    await expect(link).toHaveCSS('color', linkColor);
     const [issuePage] = await Promise.all([
       page.waitForEvent('popup'),
       activation === 'click' ? link.click() : link.focus().then(() => page.keyboard.press('Enter')),
@@ -2084,7 +2088,8 @@ for (const id of [1, 2]) {
     await expect(editor.getByLabel('Planning destination')).toHaveCount(0);
     await expect(editor.locator('#editor-tags, #editor-warning')).toHaveCount(0);
     await expect(editor).not.toContainText('Redmine enforces workflow');
-    await expect(editor.getByRole('link', { name: 'Open in Redmine' })).toBeVisible();
+    await expect(editor.getByRole('link', { name: `#${id}`, exact: true })).toBeVisible();
+    await expect(editor.getByRole('link', { name: 'Open in Redmine' })).toHaveCount(0);
     await expect(editor.getByLabel('Estimated hours', { exact: true })).toHaveCount(0);
     await expect(editor.locator('#edit-estimate, [name="estimated_hours"]')).toHaveCount(0);
     await editor.getByLabel('Assignee', { exact: true }).selectOption('9');
@@ -2523,8 +2528,8 @@ test('inline title blur preserves the draft and Escape restores that draft rathe
   const input = page.locator('#editor-subject');
   await button.click();
   await input.fill('First completed draft');
-  await page.locator('#editor').getByLabel('Assignee', { exact: true }).click();
-  await page.locator('#editor').getByLabel('Assignee', { exact: true }).selectOption('9');
+  await page.locator('#editor').getByRole('combobox', { name: 'Assignee', exact: true }).click();
+  await page.locator('#editor').getByRole('combobox', { name: 'Assignee', exact: true }).selectOption('9');
   await expect(input).toBeHidden();
   await expect(input).toHaveValue('First completed draft');
   await expect(button).toHaveText('First completed draft');

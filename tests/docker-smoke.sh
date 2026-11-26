@@ -71,8 +71,14 @@ for path in issues/1.json issues.json/ issues.json/extra issuesXjson projects.js
 done
 curl -fsS -X PUT -H 'Content-Type: application/json' -d '{"issue":{"estimated_hours":1}}' "$base/redmine/issues/1.json" | jq -e '.method == "PUT"' >/dev/null
 [[ "$(curl -s -o /dev/null -w '%{http_code}' "$base/redmine/projects/1.json?include=issue_categories")" == 404 ]]
-[[ "$(curl -s -o /dev/null -w '%{http_code}' "$base/redmine/issues/1/relations.json")" == 404 ]]
-[[ "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$base/redmine/issues/1/relations.json")" == 404 ]]
+curl -fsS -H 'X-Redmine-API-Key: smoke-key' "$base/redmine/issues/1/relations.json" | jq -e '.method == "GET" and .keyForwarded and .path == "/redmine/issues/1/relations.json"' >/dev/null
+for method in POST PUT PATCH DELETE HEAD; do
+  [[ "$(curl -s -I -o /dev/null -w '%{http_code}' -X "$method" "$base/redmine/issues/1/relations.json")" == 404 ]]
+done
+for path in issues/abc/relations.json issues/-1/relations.json issues/1/relations.json/ issues/1/relations.json/extra issues/1/relationsXjson relations/1.json; do
+  [[ "$(curl -s -o /dev/null -w '%{http_code}' "$base/redmine/$path")" == 404 ]]
+done
+[[ "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$base/redmine/relations.json")" == 404 ]]
 [[ "$(curl -s -o /dev/null -w '%{http_code}' -X DELETE "$base/redmine/relations/1.json")" == 404 ]]
 curl -fsS -H 'X-Redmine-API-Key: smoke-key' "$base/redmine/enumerations/issue_priorities.json" | jq -e '.method == "GET" and .keyForwarded and .path == "/redmine/enumerations/issue_priorities.json"' >/dev/null
 for method in POST PUT DELETE; do

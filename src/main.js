@@ -17,7 +17,8 @@ import { createSelectionPreferences } from './selection-preferences.js';
 import { createBoardScroll } from './board-scroll.js';
 import { createRelatedIssues } from './related-issues.js';
 import { projectColor } from './project-colors.js';
-import { renderProjectSummary } from './project-summary.js';
+import { renderProjectSummary, compareProjectPresentation } from './project-summary.js';
+import { createEditorSelectMenus } from './editor-select-menus.js';
 import { cardTrackers, subtaskProjects, assertSubtaskContext, subtaskPatch, matchesSubtask } from './subtask-creation.js';
 
 const $ = id => document.getElementById(id);
@@ -39,6 +40,7 @@ let sprint = null, projectId = '', blockedProjectId = '', busy = false, dragging
 let initialMarkdown = '', initialEditorValues = '';
 let completion = null, rescheduling = null;
 let creation = null, creationPeopleLoading = false, creationProjectRevision = 0;
+const editorSelectMenus = createEditorSelectMenus($('editor'), { getColor: (select, value) => select.id === 'creation-project' ? projectColor(projects, value) : null });
 let autorefresh = false;
 let selectionPreferences;
 function setAutorefresh(enabled) {
@@ -73,6 +75,39 @@ let lanePlanning = new Map();
 let lanePlanningController;
 let laneResizeObserver;
 const relatedIssues = createRelatedIssues({ getApi: () => api, linkToIssue: id => linkToIssue(id), isClosed: issue => statuses.some(status => status.id === issue.status?.id && status.is_closed), onChange: () => { if (board && api) renderBoard(); } });
+const editorRelated = createRelatedIssues({ getApi: () => api, linkToIssue: id => linkToIssue(id), isClosed: issue => statuses.some(status => status.id === issue.status?.id && status.is_closed), onChange: renderEditorRelated });
+function resetEditorRelated() {
+  editorRelated.reset();
+  $('editor-related').replaceChildren(); $('editor-related').hidden = true;
+}
+function renderEditorRelated() {
+  if (!editing || creation) return;
+  const host = $('editor-related');
+  const markup = editorRelated.markup(editing.id);
+  editorRelated.loadOpen([editing.id]);
+  if (!markup) { host.replaceChildren(); host.hidden = true; return; }
+  const template = document.createElement('template');
+  template.innerHTML = markup;
+  const next = template.content.firstElementChild;
+  let details = host.firstElementChild;
+  if (!details) {
+    details = document.createElement('details'); details.className = next.className;
+    details.dataset.related = String(editing.id);
+    const summary = document.createElement('summary'), content = document.createElement('div');
+    content.className = 'editor-related-content'; details.append(summary, content); host.append(details);
+  }
+  // Preserve the summary node and focus while discovery/target reads finish.
+  details.firstElementChild.textContent = next.firstElementChild.textContent;
+  details.open = next.open;
+  next.firstElementChild.remove();
+  const content = details.lastElementChild;
+  if (content.innerHTML !== next.innerHTML) {
+    const retryFocused = document.activeElement?.matches('#editor-related [data-retry-related]');
+    content.innerHTML = next.innerHTML;
+    if (retryFocused) content.querySelector('[data-retry-related]')?.focus({ preventScroll: true });
+  }
+  host.hidden = false;
+}
 const newFeed = () => new PlanningFeed(api);
 const closedStatusIds = () => statuses.filter(status => status.is_closed).map(status => status.id);
 function selectedMember(issue) { return Boolean(sprint) && sprintValues(issue, config.sprintFieldId).includes(sprint.id); }
@@ -138,6 +173,7 @@ function lock() {
   $('edit-title').disabled = $('editor-subject').disabled;
   $('edit-status').disabled ||= $('edit-status').options.length <= 1;
   if (creationPeopleLoading) $('edit-assignee').disabled = true;
+  if (creation && !$('creation-project').value) $('creation-tracker').disabled = true;
   document.querySelectorAll('[data-create-subtask]').forEach(el => {
     const parent = feed?.snapshot.sprintAll.find(issue => issue.id === Number(el.dataset.createSubtask));
     const reason = sprint?.status !== 'open' ? 'Closed Sprints are read only.' : closedStatusIds().includes(parent?.status.id) ? 'Closed parents cannot receive new subtasks.' : '';
@@ -158,6 +194,7 @@ function lock() {
   document.querySelectorAll('[data-backlog-collapse]').forEach(el => { el.disabled = busy || loading || dragging; });
   $('workspace').setAttribute('aria-busy', String(busy || loading));
   $('board').setAttribute('aria-busy', String(loading));
+  editorSelectMenus.sync();
 }
 function destroyBoard() {
   renderProjectSummary($('project-summary'), [], projects);
@@ -257,7 +294,7 @@ async function syncFeed(snapshot) {
   return true;
 }
 function forget() {
-  relatedIssues.reset();
+  relatedIssues.reset(); resetEditorRelated();
   boardScroll.reset();
   lanePlanningController?.abort();
   selectionPreferences = null;
@@ -863,6 +900,7 @@ async function mutate(id, patch) {
 
 async function openSubtaskEditor(id) {
   if (busy || loading || !api || sprint?.status !== 'open') return;
+  resetEditorRelated();
   cancelQuery(); loading = true; lock();
   const finishLoading = beginLoading(), stamp = epoch;
   try {
@@ -880,13 +918,15 @@ async function openSubtaskEditor(id) {
     $('creation-parent-subject').textContent = parent.subject;
     $('creation-sprint').textContent = sprint.name;
     $('creation-status').value = statuses.find(status => status.id === scope.newStatusId).name;
-    const choices = subtaskProjects(projects, scope);
+    const choices = subtaskProjects(projects, scope).sort((a, b) => compareProjectPresentation(
+      { id: String(a.id), name: a.name, color: projectColor(projects, a.id) },
+      { id: String(b.id), name: b.name, color: projectColor(projects, b.id) },
+    ));
     options($('creation-project'), [['', choices.length ? 'Choose a Project' : 'No Projects with ordinary Card trackers available'], ...choices.map(project => [project.id, project.name])]);
     options($('creation-tracker'), [['', 'Choose a Project first']]);
     options($('edit-assignee'), [['', 'Unassigned']]);
     $('editor-issue-id').textContent = 'New subtask';
     $('editor-issue-id').removeAttribute('href');
-    $('issue-link').hidden = true;
     $('editor-notice').hidden = true;
     $('edit-title').textContent = 'Title';
     $('edit-title').hidden = true;
@@ -988,6 +1028,7 @@ async function createSubtask() {
 
 async function openEditor(id) {
   if (busy || loading) return;
+  resetEditorRelated();
   loading = true; lock();
   const finishLoading = beginLoading();
   const stamp = epoch;
@@ -995,7 +1036,6 @@ async function openEditor(id) {
     editing = null; creation = null; creationPeopleLoading = false; creationProjectRevision++;
     $('editor-creation-context').hidden = true;
     $('editor-creation-fields').hidden = true;
-    $('issue-link').hidden = false;
     const issue = await api.issue(id);
     if (stamp !== epoch) return;
     const swimlane = isSwimlane(issue, config.swimlaneTrackers);
@@ -1031,8 +1071,8 @@ async function openEditor(id) {
     showDescriptionMode(true);
     const people = new Map(members()); if (issue.assigned_to) people.set(issue.assigned_to.id, issue.assigned_to.name);
     options($('edit-assignee'), [['', 'Unassigned'], ...people], issue.assigned_to?.id || '');
-    $('issue-link').href = linkToIssue(issue.id);
     initialEditorValues = editorValues();
+    renderEditorRelated();
   } catch (error) { if (stamp === epoch) notify(error.message, true); }
   finally {
     finishLoading();
@@ -1259,11 +1299,21 @@ function showDescriptionMode(preview) {
   $('description-write').setAttribute('aria-pressed', String(!preview));
   $('description-preview').setAttribute('aria-pressed', String(preview));
 }
+$('editor-related').addEventListener('toggle', event => {
+  if (!editing || creation || !event.target.matches?.('[data-related]')) return;
+  const id = Number(event.target.dataset.related);
+  if (id === editing.id) editorRelated.toggle(id, event.target.open);
+}, { capture: true });
+$('editor-related').addEventListener('click', event => {
+  const retry = event.target.closest('[data-retry-related]');
+  if (retry && !retry.disabled && !busy && !loading && editing && Number(retry.dataset.retryRelated) === editing.id) editorRelated.retry(editing.id);
+});
 $('description-write').addEventListener('click', () => showDescriptionMode(false));
 $('description-preview').addEventListener('click', () => showDescriptionMode(true));
 $('close-editor').addEventListener('click', () => { if (mayCloseEditor()) $('editor').close(); });
 $('editor').addEventListener('cancel', event => { if (!mayCloseEditor()) event.preventDefault(); });
 $('editor').addEventListener('close', () => {
+  resetEditorRelated();
   editing = null; creation = null; creationPeopleLoading = false; creationProjectRevision++;
   if (api && !busy && !loading) startBacklog();
 });

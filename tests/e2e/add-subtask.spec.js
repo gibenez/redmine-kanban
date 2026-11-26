@@ -203,7 +203,7 @@ test('blank draft fixes Parent, Sprint and New; Project is explicit and limits T
   await expect(page.locator('#editor-swimlane-fields')).toBeHidden();
   const project = dialog.getByLabel('Project', { exact: true }), tracker = dialog.getByLabel('Tracker', { exact: true });
   await expect(project).toHaveValue('');
-  await expect(project.locator('option')).toHaveText(['Choose a Project', 'Product', 'Module', 'Nested module']);
+  await expect(project.locator('option')).toHaveText(['Choose a Project', 'Module', 'Nested module', 'Product']);
   await expect(save(page)).toBeDisabled();
   await project.selectOption('3');
   await expect(tracker).toHaveValue('2');
@@ -355,7 +355,9 @@ test('shared editor switches between creation and ordinary updates without leaki
   await expect(page.locator('#creation-project')).toBeDisabled();
   await expect(page.locator('#creation-tracker')).toBeDisabled();
   await expect(page.locator('#editor-issue-id')).toHaveText('#20');
-  await expect(page.locator('#issue-link')).toHaveAttribute('href', 'https://redmine.example.test/issues/20');
+  await expect(page.locator('#editor-issue-id')).toHaveAttribute('href', 'https://redmine.example.test/issues/20');
+  await expect(page.locator('#editor-related')).toBeHidden();
+  await expect(page.locator('#issue-link')).toHaveCount(0);
   await page.getByRole('button', { name: 'Edit description', exact: true }).click();
   await page.locator('#edit-description').fill('Existing Card updated');
   await dialog.getByRole('button', { name: 'Save', exact: true }).click();
@@ -378,7 +380,8 @@ test('shared editor switches between creation and ordinary updates without leaki
   await expect(page.locator('#edit-assignee')).toHaveValue('');
   await expect(page.locator('#creation-project')).toHaveValue('');
   await expect(page.locator('#creation-tracker')).toHaveValue('');
-  await expect(page.locator('#issue-link')).toBeHidden();
+  await expect(page.locator('#editor-related')).toBeHidden();
+  await expect(page.locator('#editor-related details')).toHaveCount(0);
   await expect(page.locator('#editor-issue-id')).not.toHaveAttribute('href');
   await expect(save(page)).toBeDisabled();
 });
