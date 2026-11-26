@@ -58,6 +58,7 @@ async function setup(page, { deny = false, ignored = false, denyVersions = false
         if ('subject' in patch) issue.subject = patch.subject;
         if ('description' in patch) issue.description = patch.description;
         if ('estimated_hours' in patch) issue.estimated_hours = patch.estimated_hours;
+        if ('due_date' in patch) issue.due_date = patch.due_date;
         if ('assigned_to_id' in patch) issue.assigned_to = patch.assigned_to_id ? { id: patch.assigned_to_id, name: patch.assigned_to_id === 7 ? 'Team Member' : 'Other Member' } : undefined;
       }
       return route.fulfill({ status: 204, body: '' });
@@ -484,6 +485,31 @@ for (const activation of ['click', 'keyboard']) {
   });
 }
 
+for (const activation of ['click', 'keyboard']) {
+  test(`editor issue ID opens Redmine without closing or saving the draft via ${activation}`, async ({ page }) => {
+    const fixture = await setup(page);
+    await page.context().route('http://localhost:3000/issues/1', route => route.fulfill({ contentType: 'text/html', body: '<h1>Redmine issue #1</h1>' }));
+    await login(page);
+    await page.getByRole('button', { name: 'Plan #1', exact: true }).click();
+    await page.locator('#edit-title').click();
+    await page.locator('#editor-subject').fill('Unsaved header-link draft');
+    await page.locator('#editor-subject').press('Enter');
+    const link = page.locator('#editor-title').getByRole('link', { name: '#1', exact: true });
+    await expect(link).toHaveCSS('color', await page.locator('#issue-link').evaluate(el => getComputedStyle(el).color));
+    const [issuePage] = await Promise.all([
+      page.waitForEvent('popup'),
+      activation === 'click' ? link.click() : link.focus().then(() => page.keyboard.press('Enter')),
+    ]);
+    await issuePage.waitForLoadState();
+    expect(issuePage.url()).toBe('http://localhost:3000/issues/1');
+    expect(await issuePage.evaluate(() => window.opener)).toBeNull();
+    await expect(page.locator('#editor')).toBeVisible();
+    await expect(page.locator('#editor-subject')).toHaveValue('Unsaved header-link draft');
+    expect(fixture.writes).toEqual([]);
+    await issuePage.close();
+  });
+}
+
 for (const control of ['query', 'tracker', 'assignee']) {
   test(`${control} updates only matching cards without removing the board`, async ({ page }) => {
     await setup(page); await login(page);
@@ -504,7 +530,7 @@ for (const control of ['query', 'tracker', 'assignee']) {
     await page.route('**/redmine/issues.json?**', async route => { await gate; await route.fallback(); });
     if (control === 'query') await page.getByLabel('Search backlog').fill('Already');
     if (control === 'tracker') await page.getByLabel('Tracker', { exact: true }).selectOption('1');
-    if (control === 'assignee') await page.getByLabel('Assignee', { exact: true }).selectOption('7');
+    if (control === 'assignee') await page.getByRole('region', { name: 'Backlog filters', exact: true }).getByLabel('Assignee', { exact: true }).selectOption('7');
     try {
       await expect(page.locator('[data-id="backlog"] .kanban-drag')).toHaveAttribute('aria-busy', 'true');
       await expect(page.locator('#workspace')).toHaveAttribute('aria-busy', 'false');
@@ -550,7 +576,7 @@ test('filters survive refresh and Sprint switches, but reset on project change a
   await setup(page); await login(page);
   await page.getByLabel('Tracker', { exact: true }).selectOption('1');
   await expect(page.locator('[data-id="backlog"] .kanban-drag')).toHaveAttribute('aria-busy', 'false');
-  await page.getByLabel('Assignee', { exact: true }).selectOption('none');
+  await page.getByRole('region', { name: 'Backlog filters', exact: true }).getByLabel('Assignee', { exact: true }).selectOption('none');
   await expect(page.locator('[data-id="backlog"] .kanban-drag')).toHaveAttribute('aria-busy', 'false');
   await page.getByLabel('Search backlog').fill('Build');
   await expect(page.locator('[data-id="backlog"] .kanban-item')).toHaveCount(1);
@@ -615,7 +641,7 @@ test('Clear filters resets all four Backlog controls without changing Show close
   await page.getByRole('checkbox', { name: 'Show closed issues', exact: true }).check();
   await expect(page.locator('[data-id="backlog"] .kanban-drag')).toHaveAttribute('aria-busy', 'false');
   await page.getByLabel('Tracker', { exact: true }).selectOption('1');
-  await page.getByLabel('Assignee', { exact: true }).selectOption('none');
+  await page.getByRole('region', { name: 'Backlog filters', exact: true }).getByLabel('Assignee', { exact: true }).selectOption('none');
   await page.getByLabel('Search backlog').fill('Build');
   await page.getByLabel('Backlog tag', { exact: true }).fill('release');
   await expect(page.locator('[data-id="backlog"] .kanban-item')).toHaveCount(1);
@@ -1665,8 +1691,8 @@ test('collapsed Backlog skips polling, tab-return, scope changes and post-save l
   await page.getByRole('button', { name: 'Collapse Backlog', exact: true }).click();
   const before = backlogRequests();
   await page.getByRole('button', { name: 'Plan #2', exact: true }).click();
-  await page.getByLabel('Estimated hours').fill('4');
-  await page.getByRole('button', { name: 'Save changes' }).click();
+  await page.locator('#editor').getByLabel('Assignee', { exact: true }).selectOption('9');
+  await page.getByRole('button', { name: 'Save' }).click();
   await expect(page.locator('#editor')).toBeHidden();
   await page.getByRole('button', { name: 'Autorefresh', exact: true }).click();
   await page.clock.fastForward(60000);
@@ -1747,7 +1773,7 @@ test('tracker and assignee filters query unseen issues on the server and preserv
   for (let id = 100; id < 110; id++) fixture.issues.push({ ...fixture.issues[0], id, subject: id === 109 ? 'Unseen needle' : `Backlog ${id}`, ...(id === 109 ? { assigned_to: { id: 9, name: 'Other Member' } } : {}) });
   await login(page);
   await page.getByLabel('Tracker', { exact: true }).selectOption('1');
-  await page.getByLabel('Assignee', { exact: true }).selectOption('9');
+  await page.getByRole('region', { name: 'Backlog filters', exact: true }).getByLabel('Assignee', { exact: true }).selectOption('9');
   await expect(page.locator('[data-id="backlog"]')).toContainText('Unseen needle');
   await page.getByLabel('Search backlog').fill('needle');
   await expect.poll(() => fixture.requests.some(request => {
@@ -1951,8 +1977,8 @@ for (const width of [1440, 390]) {
     expect(editorBounds.x).toBeGreaterThanOrEqual(16);
     expect(editorBounds.x + editorBounds.width).toBeLessThanOrEqual(width - 16);
     expect(await page.locator('#editor').evaluate(node => node.scrollWidth <= node.clientWidth)).toBe(true);
-    await page.getByRole('button', { name: 'Save changes' }).scrollIntoViewIfNeeded();
-    await expect(page.getByRole('button', { name: 'Save changes' })).toBeInViewport();
+    await page.getByRole('button', { name: 'Save' }).scrollIntoViewIfNeeded();
+    await expect(page.getByRole('button', { name: 'Save' })).toBeInViewport();
     await page.getByRole('button', { name: 'Close editor' }).click();
     await page.getByRole('button', { name: 'Plan #2', exact: true }).click();
     await expect(page.locator('#editor-description-section')).toBeVisible();
@@ -1985,7 +2011,7 @@ for (const viewport of [{ width: 1440, height: 1000 }, { width: 801, height: 720
       expect(right.y).toBeGreaterThanOrEqual(left.y + left.height);
       await expect(attributes).toHaveCSS('border-left-width', '0px');
     }
-    const save = page.getByRole('button', { name: 'Save changes' });
+    const save = page.getByRole('button', { name: 'Save' });
     if (viewport.width > 800 && viewport.height >= 720) {
       const subjectBounds = await page.locator('#edit-title').boundingBox();
       const headerBounds = await page.locator('#editor-title').boundingBox();
@@ -2034,7 +2060,7 @@ test('editor keeps unusually tall attributes and actions reachable', async ({ pa
     }
   });
   expect(await page.locator('#editor').evaluate(node => node.scrollHeight > node.clientHeight)).toBe(true);
-  const save = page.getByRole('button', { name: 'Save changes' });
+  const save = page.getByRole('button', { name: 'Save' });
   await save.scrollIntoViewIfNeeded();
   await expect(save).toBeInViewport();
   await page.locator('#edit-tags span').last().scrollIntoViewIfNeeded();
@@ -2044,23 +2070,29 @@ test('editor keeps unusually tall attributes and actions reachable', async ({ pa
 });
 
 for (const id of [1, 2]) {
-  test(`keyboard-accessible planner preserves untouched text while changing assignee and estimate for issue #${id}`, async ({ page }) => {
-    const { writes } = await setup(page); await login(page);
+  test(`keyboard-accessible planner preserves untouched text and estimates while changing Assignee for issue #${id}`, async ({ page }) => {
+    const { writes, issues } = await setup(page); await login(page);
+    const originalEstimate = issues.find(issue => issue.id === id).estimated_hours;
     await page.getByRole('button', { name: `Plan #${id}`, exact: true }).click();
     const editor = page.locator('#editor');
-    await expect(editor.locator('input:visible, select:visible')).toHaveCount(id === 1 ? 4 : 2);
+    await expect(editor.locator('input:visible, select:visible')).toHaveCount(id === 1 ? 4 : 1);
     if (id === 1) await expect(editor.getByLabel('Status', { exact: true })).toBeVisible();
-    else await expect(editor.locator('#edit-status')).toBeHidden();
+    else {
+      await expect(editor.locator('#edit-status')).toBeHidden();
+      await expect(editor.locator('#edit-due-date')).toBeHidden();
+    }
     await expect(editor.getByLabel('Planning destination')).toHaveCount(0);
     await expect(editor.locator('#editor-tags, #editor-warning')).toHaveCount(0);
     await expect(editor).not.toContainText('Redmine enforces workflow');
     await expect(editor.getByRole('link', { name: 'Open in Redmine' })).toBeVisible();
-    await page.getByLabel('Assignment', { exact: true }).selectOption('7');
-    await page.getByLabel('Estimated hours', { exact: true }).fill('5.5');
-    await page.getByRole('button', { name: 'Save changes' }).click();
+    await expect(editor.getByLabel('Estimated hours', { exact: true })).toHaveCount(0);
+    await expect(editor.locator('#edit-estimate, [name="estimated_hours"]')).toHaveCount(0);
+    await editor.getByLabel('Assignee', { exact: true }).selectOption('9');
+    await page.getByRole('button', { name: 'Save' }).click();
     await expect(editor).not.toBeVisible();
     await expect(page.locator(`[data-id="${id === 1 ? 'backlog' : 'status-2'}"] [data-eid="${id}"]`)).toBeVisible();
-    expect(writes).toEqual([{ ...(id === 1 ? { assigned_to_id: 7 } : {}), estimated_hours: 5.5 }]);
+    expect(writes).toEqual([{ assigned_to_id: 9 }]);
+    expect(issues.find(issue => issue.id === id).estimated_hours).toBe(originalEstimate);
   });
 }
 
@@ -2127,7 +2159,7 @@ test('closed sprints are opt-in and read only', async ({ page }) => {
   await page.getByRole('button', { name: 'View #1', exact: true }).click();
   await expect(page.locator('#edit-title')).toBeDisabled();
   await expect(page.locator('#editor-subject')).toBeHidden();
-  await expect(page.getByRole('button', { name: 'Save changes' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Save' })).toBeDisabled();
   expect(writes).toEqual([]);
 });
 
@@ -2192,26 +2224,29 @@ test('a sprint closed after loading is checked again before writing', async ({ p
 test('unchanged issues cannot be saved, including a programmatic submission', async ({ page }) => {
   const fixture = await setup(page); await login(page);
   await page.getByRole('button', { name: 'Plan #2', exact: true }).click();
-  await expect(page.getByRole('button', { name: 'Save changes' })).toBeDisabled();
+  const save = page.getByRole('button', { name: 'Save', exact: true });
+  await expect(save).toHaveText('Save');
+  await expect(save.locator('svg[aria-hidden="true"]')).toBeVisible();
+  await expect(save).toBeDisabled();
   await page.locator('#edit-form').evaluate(form => form.requestSubmit());
   await expect(page.locator('#editor')).toBeVisible();
   expect(fixture.writes).toEqual([]);
 });
 
-for (const field of ['title', 'description', 'assignment', 'estimate']) {
-  test(`Save changes tracks edits and reversions to ${field}`, async ({ page }) => {
+for (const field of ['title', 'description', 'assignee']) {
+  test(`Save tracks edits and reversions to ${field}`, async ({ page }) => {
     const fixture = await setup(page); await login(page);
     await page.getByRole('button', { name: 'Plan #1', exact: true }).click();
-    const save = page.getByRole('button', { name: 'Save changes', exact: true });
+    const save = page.getByRole('button', { name: 'Save', exact: true });
     await expect(save).toBeDisabled();
     if (field === 'title') await page.locator('#edit-title').click();
     if (field === 'description') await page.locator('#description-write').click();
-    const control = page.locator({ title: '#editor-subject', description: '#edit-description', assignment: '#edit-assignee', estimate: '#edit-estimate' }[field]);
+    const control = page.locator({ title: '#editor-subject', description: '#edit-description', assignee: '#edit-assignee' }[field]);
     const original = await control.inputValue();
-    if (field === 'assignment') await control.selectOption('9');
-    else await control.fill(field === 'estimate' ? '6' : 'Changed draft');
+    if (field === 'assignee') await control.selectOption('9');
+    else await control.fill('Changed draft');
     await expect(save).toBeEnabled();
-    if (field === 'assignment') await control.selectOption(original);
+    if (field === 'assignee') await control.selectOption(original);
     else await control.fill(original);
     await expect(save).toBeDisabled();
     expect(fixture.writes).toEqual([]);
@@ -2221,29 +2256,29 @@ for (const field of ['title', 'description', 'assignment', 'estimate']) {
 test('cancelling title edits updates Save without discarding other field edits', async ({ page }) => {
   await setup(page); await login(page);
   await page.getByRole('button', { name: 'Plan #1', exact: true }).click();
-  const save = page.getByRole('button', { name: 'Save changes', exact: true });
+  const save = page.getByRole('button', { name: 'Save', exact: true });
   const title = page.locator('#editor-subject');
   await page.locator('#edit-title').click();
   await title.fill('Cancelled title');
   await expect(save).toBeEnabled();
   await title.press('Escape');
   await expect(save).toBeDisabled();
-  const estimate = page.locator('#edit-estimate');
-  const original = await estimate.inputValue();
-  await estimate.fill('6');
+  const assignee = page.locator('#editor').getByLabel('Assignee', { exact: true });
+  const original = await assignee.inputValue();
+  await assignee.selectOption('9');
   await page.locator('#edit-title').click();
   await title.fill('Another cancelled title');
   await title.press('Escape');
   await expect(save).toBeEnabled();
-  await estimate.fill(original);
+  await assignee.selectOption(original);
   await expect(save).toBeDisabled();
 });
 
 test('save errors are also announced inside the planning dialog', async ({ page }) => {
   await setup(page, { deny: true }); await login(page);
   await page.getByRole('button', { name: 'Plan #1', exact: true }).click();
-  await page.getByLabel('Estimated hours', { exact: true }).fill('5');
-  await page.getByRole('button', { name: 'Save changes' }).click();
+  await page.locator('#editor').getByLabel('Assignee', { exact: true }).selectOption('9');
+  await page.getByRole('button', { name: 'Save' }).click();
   await expect(page.locator('#editor-notice')).toContainText('Redmine denied');
   await expect(page.getByRole('dialog')).toBeVisible();
 });
@@ -2452,7 +2487,8 @@ for (const activation of ['click', 'keyboard']) {
     await page.getByRole('button', { name: 'Plan #1', exact: true }).click();
     const button = page.locator('#edit-title');
     const input = page.getByRole('textbox', { name: 'Title', exact: true });
-    await expect(page.locator('#editor-issue-id')).toHaveText('#1 —');
+    await expect(page.locator('#editor-issue-id')).toHaveText('#1');
+    await expect(page.locator('#editor-issue-id')).toHaveAttribute('href', 'http://localhost:3000/issues/1');
     await expect(button).toHaveText(fixture.issues[0].subject);
     await expect(button).toHaveAttribute('title', 'Edit title');
     await expect(input).toBeHidden();
@@ -2473,7 +2509,7 @@ for (const activation of ['click', 'keyboard']) {
     await expect(page.locator('#editor')).toBeVisible();
     expect(fixture.issues[0].subject).toBe('Build backlog feature');
     expect(fixture.writes).toEqual([]);
-    await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+    await page.getByRole('button', { name: 'Save', exact: true }).click();
     await expect(page.locator('#editor')).toBeHidden();
     expect(fixture.writes).toEqual([{ subject: 'New draft title' }]);
   });
@@ -2487,7 +2523,8 @@ test('inline title blur preserves the draft and Escape restores that draft rathe
   const input = page.locator('#editor-subject');
   await button.click();
   await input.fill('First completed draft');
-  await page.getByLabel('Estimated hours', { exact: true }).fill('4');
+  await page.locator('#editor').getByLabel('Assignee', { exact: true }).click();
+  await page.locator('#editor').getByLabel('Assignee', { exact: true }).selectOption('9');
   await expect(input).toBeHidden();
   await expect(input).toHaveValue('First completed draft');
   await expect(button).toHaveText('First completed draft');
@@ -2501,12 +2538,12 @@ test('inline title blur preserves the draft and Escape restores that draft rathe
   await expect(input).toHaveValue('First completed draft');
   await expect(button).toHaveText('First completed draft');
   await expect(button).toBeFocused();
-  await expect(page.getByLabel('Estimated hours', { exact: true })).toHaveValue('4');
+  await expect(page.locator('#editor').getByLabel('Assignee', { exact: true })).toHaveValue('9');
   expect(fixture.issues[0].subject).toBe('Build backlog feature');
   expect(fixture.writes).toEqual([]);
-  await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
   await expect(page.locator('#editor')).toBeHidden();
-  expect(fixture.writes).toEqual([{ subject: 'First completed draft', estimated_hours: 4 }]);
+  expect(fixture.writes).toEqual([{ subject: 'First completed draft', assigned_to_id: 9 }]);
 });
 
 for (const value of ['', '   ']) {
@@ -2524,10 +2561,10 @@ for (const value of ['', '   ']) {
     await expect(input).toHaveAttribute('aria-invalid', 'true');
     await expect(error).toBeVisible();
     await expect(error).toHaveText('Title cannot be blank.');
-    await page.getByLabel('Estimated hours', { exact: true }).fill('4');
+    await page.locator('#editor').getByLabel('Assignee', { exact: true }).selectOption('9');
     await expect(input).toBeVisible();
     await expect(input).toHaveAttribute('aria-invalid', 'true');
-    await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+    await page.getByRole('button', { name: 'Save', exact: true }).click();
     await expect(page.locator('#editor')).toBeVisible();
     await expect(error).toBeVisible();
     expect(fixture.writes).toEqual([]);
@@ -2583,7 +2620,7 @@ test('inline title button is disabled while saving and unlocked after a rejected
     await gate;
     await route.fulfill({ status: 422, json: { errors: ['Try again'] } });
   });
-  await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
   try {
     await expect(page.locator('#edit-title')).toBeDisabled();
     await expect(page.locator('#editor-subject')).toBeDisabled();
@@ -2625,7 +2662,7 @@ test('planner saves a new title and sanitized Markdown HTML, then reloads the sa
   const fixture = await setup(page);
   await login(page);
   await page.getByRole('button', { name: 'Plan #1', exact: true }).click();
-  await expect(page.locator('#editor-title')).toHaveText('#1 — Build backlog feature');
+  await expect(page.locator('#editor-title')).toHaveText('#1 Build backlog feature');
   await expect(page.locator('#description-preview')).toHaveAttribute('aria-pressed', 'true');
   await page.locator('#description-write').click();
   await expect(page.locator('#description-write')).toHaveAttribute('aria-pressed', 'true');
@@ -2644,7 +2681,7 @@ test('planner saves a new title and sanitized Markdown HTML, then reloads the sa
   const html = await preview.innerHTML();
   await page.locator('#description-write').click();
   await expect(page.locator('#edit-description')).toHaveValue(markdown);
-  await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
   await expect(page.locator('#editor')).toBeHidden();
   expect(fixture.writes).toEqual([{ subject, description: html }]);
   expect(fixture.issues[0].description).toBe(html);
@@ -2652,9 +2689,9 @@ test('planner saves a new title and sanitized Markdown HTML, then reloads the sa
   await expect(page.locator('[data-eid="1"] strong')).toHaveCount(0);
   expect(await page.evaluate(() => window.injected)).toBeUndefined();
   await page.getByRole('button', { name: 'Plan #1', exact: true }).click();
-  await expect(page.locator('#editor-title')).toHaveText(`#1 — ${subject}`);
+  await expect(page.locator('#editor-title')).toHaveText(`#1 ${subject}`);
   await expect(page.locator('#editor-subject')).toHaveValue(subject);
-  await expect(page.getByRole('button', { name: 'Save changes', exact: true })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Save', exact: true })).toBeDisabled();
   await expect(page.locator('#description-preview')).toHaveAttribute('aria-pressed', 'true');
   await expect(page.locator('#edit-description')).toBeHidden();
   await expect(preview.getByRole('heading', { name: 'Acceptance' })).toBeVisible();
@@ -2673,21 +2710,21 @@ test('planner never rewrites unchanged original HTML after preview or a planning
   await expect(page.locator('#edit-description')).toBeVisible();
   await page.locator('#description-preview').click();
   await page.locator('#description-write').click();
-  await expect(page.getByRole('button', { name: 'Save changes', exact: true })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Save', exact: true })).toBeDisabled();
   await page.getByRole('button', { name: 'Close editor', exact: true }).click();
   await expect(page.locator('#editor')).toBeHidden();
   expect(fixture.writes).toEqual([]);
   expect(fixture.issues[0].description).toBe(original);
   await page.getByRole('button', { name: 'Plan #1', exact: true }).click();
-  await page.getByLabel('Estimated hours', { exact: true }).fill('8');
-  await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+  await page.locator('#editor').getByLabel('Assignee', { exact: true }).selectOption('9');
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
   await expect(page.locator('#editor')).toBeHidden();
-  expect(fixture.writes).toEqual([{ estimated_hours: 8 }]);
+  expect(fixture.writes).toEqual([{ assigned_to_id: 9 }]);
   expect(fixture.issues[0].description).toBe(original);
   await page.getByRole('button', { name: 'Plan #1', exact: true }).click();
   await page.locator('#edit-title').click();
   await page.locator('#editor-subject').fill('Title-only edit');
-  await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
   await expect(page.locator('#editor')).toBeHidden();
   expect(fixture.writes[1]).toEqual({ subject: 'Title-only edit' });
   expect(fixture.issues[0].description).toBe(original);
@@ -2701,30 +2738,28 @@ test('rejected text saves retain the entire draft and permit a successful retry'
   await page.locator('#editor-subject').fill('Draft title');
   await page.locator('#description-write').click();
   await page.locator('#edit-description').fill('Draft **description**');
-  await page.getByLabel('Assignment', { exact: true }).selectOption('9');
-  await page.getByLabel('Estimated hours', { exact: true }).fill('6');
+  await page.locator('#editor').getByLabel('Assignee', { exact: true }).selectOption('9');
   await page.locator('#description-preview').click();
   let attempts = 0;
   await page.route('**/redmine/issues/1.json**', route => {
     if (route.request().method() === 'PUT' && attempts++ === 0) return route.fulfill({ status: 422, json: { errors: ['Text save rejected'] } });
     return route.fallback();
   });
-  await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
   await expect(page.locator('#editor-notice')).toContainText(/rejected|422/i);
   await expect(page.locator('#editor')).toBeVisible();
   await expect(page.locator('#editor-subject')).toHaveValue('Draft title');
   await page.locator('#description-write').click();
   await expect(page.locator('#edit-description')).toBeEnabled();
   await expect(page.locator('#edit-description')).toHaveValue('Draft **description**');
-  await expect(page.getByLabel('Assignment', { exact: true })).toHaveValue('9');
-  await expect(page.getByLabel('Estimated hours', { exact: true })).toHaveValue('6');
+  await expect(page.locator('#editor').getByLabel('Assignee', { exact: true })).toHaveValue('9');
   expect(fixture.issues[0].subject).toBe('Build backlog feature');
   expect(fixture.writes).toEqual([]);
-  await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
   await expect(page.locator('#editor')).toBeHidden();
   expect(attempts).toBe(2);
   expect(fixture.writes).toHaveLength(1);
-  expect(fixture.writes[0]).toMatchObject({ subject: 'Draft title', assigned_to_id: 9, estimated_hours: 6 });
+  expect(fixture.writes[0]).toMatchObject({ subject: 'Draft title', assigned_to_id: 9 });
   expect(fixture.writes[0].description).toContain('<strong>description</strong>');
 });
 
@@ -2735,13 +2770,13 @@ test('planner rejects whitespace titles and can explicitly clear descriptions', 
   await page.getByRole('button', { name: 'Plan #1', exact: true }).click();
   await page.locator('#edit-title').click();
   await page.locator('#editor-subject').fill('   ');
-  await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
   await expect(page.locator('#editor-subject-error')).toContainText('Title cannot be blank');
   expect(fixture.writes).toEqual([]);
   await page.locator('#editor-subject').fill(fixture.issues[0].subject);
   await page.locator('#description-write').click();
   await page.locator('#edit-description').fill('');
-  await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
   await expect(page.locator('#editor')).toBeHidden();
   expect(fixture.writes).toEqual([{ description: '' }]);
   await page.getByRole('button', { name: 'Plan #1', exact: true }).click();
@@ -2759,7 +2794,7 @@ for (const ignored of ['subject', 'description']) {
     await field.fill('My unretained draft');
     await page.route('**/redmine/issues/1.json**', route => route.request().method() === 'PUT'
       ? route.fulfill({ status: 204 }) : route.fallback());
-    await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+    await page.getByRole('button', { name: 'Save', exact: true }).click();
     await expect(page.locator('#editor-notice')).toContainText('Redmine did not retain');
     await expect(page.locator('#editor')).toBeVisible();
     await expect(field).toHaveValue('My unretained draft');
@@ -2781,7 +2816,7 @@ test('Redmine CRLF normalization confirms a saved description instead of causing
   await page.getByRole('button', { name: 'Plan #1', exact: true }).click();
   await page.getByRole('button', { name: 'Edit description', exact: true }).click();
   await page.locator('#edit-description').fill('Updated **description**\n\nSecond paragraph.');
-  await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
   await expect.poll(() => fixture.writes.length).toBe(1);
   await expect(page.locator('#loading-overlay')).toBeHidden();
   expect(fixture.issues[0].description).toContain('<strong>description</strong>');
@@ -2808,12 +2843,12 @@ test('retry confirms text already saved after a lost response without writing tw
     // Simulate an upstream failure after Redmine has committed the write.
     await route.fulfill({ status: 502, json: { errors: ['Response lost after commit'] } });
   });
-  await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
   await expect(page.locator('#editor-notice')).toContainText('Save not confirmed');
   await expect(page.locator('#loading-overlay')).toBeHidden();
   await expect(page.locator('#edit-description')).toHaveValue('Already **saved**');
   expect(fixture.writes).toHaveLength(1);
-  await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
   await expect(page.locator('#editor')).toBeHidden();
   expect(fixture.writes).toHaveLength(1);
   await expect(page.locator('#notice')).toContainText('Issue #1 saved in Redmine');
@@ -2829,21 +2864,21 @@ for (const changed of ['subject', 'description']) {
     await page.locator('#editor-subject').fill('My draft title');
     await page.locator('#description-write').click();
     await page.locator('#edit-description').fill('My draft **description**');
-    await page.getByLabel('Estimated hours', { exact: true }).fill('4');
+    await page.locator('#editor').getByLabel('Assignee', { exact: true }).selectOption('9');
     const remote = changed === 'subject' ? 'Remote title' : '<p>Remote description</p>';
     fixture.issues[0][changed] = remote;
-    await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+    await page.getByRole('button', { name: 'Save', exact: true }).click();
     await expect(page.locator('#editor-notice')).toContainText(/changed|concurrent|conflict/i);
     await expect(page.locator('#editor')).toBeVisible();
     await expect(page.locator('#editor-subject')).toHaveValue('My draft title');
     await expect(page.locator('#edit-description')).toHaveValue('My draft **description**');
-    await expect(page.getByLabel('Estimated hours', { exact: true })).toHaveValue('4');
+    await expect(page.locator('#editor').getByLabel('Assignee', { exact: true })).toHaveValue('9');
     expect(fixture.writes).toEqual([]);
     expect(fixture.issues[0][changed]).toBe(remote);
   });
 }
 
-for (const field of ['title', 'description', 'assignment', 'estimate']) {
+for (const field of ['title', 'description', 'assignee']) {
   test(`closing a planner with a changed ${field} confirms discard and respects refusal`, async ({ page }) => {
     const fixture = await setup(page);
     await login(page);
@@ -2852,12 +2887,11 @@ for (const field of ['title', 'description', 'assignment', 'estimate']) {
     if (field === 'title') await page.locator('#edit-title').click();
     const control = field === 'title' ? page.locator('#editor-subject')
       : field === 'description' ? page.locator('#edit-description')
-      : field === 'assignment' ? page.getByLabel('Assignment', { exact: true })
-      : page.getByLabel('Estimated hours', { exact: true });
+      : page.locator('#editor').getByLabel('Assignee', { exact: true });
     await expect(control).toBeEnabled();
     const original = await control.inputValue();
-    const value = field === 'assignment' ? '9' : field === 'estimate' ? '7' : 'Unsaved draft';
-    if (field === 'assignment') await control.selectOption(value);
+    const value = field === 'assignee' ? '9' : 'Unsaved draft';
+    if (field === 'assignee') await control.selectOption(value);
     else await control.fill(value);
     const refuse = async dialog => {
       expect(dialog.type()).toBe('confirm');

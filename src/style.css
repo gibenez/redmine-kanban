@@ -371,6 +371,8 @@ dialog label { margin: 16px 0 4px; }
 dialog input, dialog select { width: 100%; min-height: 44px; }
 .dialog-heading > button { min-width: 40px; min-height: 40px; padding: 0; font-size: 20px; }
 .dialog-actions { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-top: 24px; font-size: 12px; }
+#edit-form button[type="submit"] { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+#edit-form button[type="submit"] svg { flex: none; pointer-events: none; }
 
 /* Only the authenticated board is viewport-bound; login and dialogs retain their flow. */
 body.board-active { height: 100dvh; overflow: hidden; display: flex; flex-direction: column; background: var(--content); }

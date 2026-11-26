@@ -3,7 +3,7 @@ import './style.css';
 import { descriptionMarkdown, descriptionHtml, sanitizeDescription, textPatch, assertTextUnchanged } from './issue-text.js';
 import { reconcileBoard, alignSwimlanes, positionSwimlaneHeaders } from './board-view.js';
 import { RedmineClient, RedmineError } from './api.js';
-import { validateConfig, isBacklog, effort, movePatch, parseEstimate, assertTransition, matchesPatch, sprintValues, membershipPatch, hasSprintField, projectScope, escapeHtml as e } from './domain.js';
+import { validateConfig, isBacklog, effort, movePatch, assertTransition, matchesPatch, sprintValues, membershipPatch, hasSprintField, projectScope, escapeHtml as e } from './domain.js';
 import { PlanningFeed } from './planning-feed.js';
 import { isSwimlane, loadAncestors } from './swimlanes.js';
 import { completedLane, closingStatuses, preferredClosingStatus } from './swimlane-completion.js';
@@ -874,11 +874,13 @@ async function openEditor(id) {
       const choices = new Map(priorities.map(priority => [priority.id, priority.name]));
       if (issue.priority) choices.set(issue.priority.id, issue.priority.name);
       options($('edit-priority'), [...choices], issue.priority?.id);
+      $('edit-due-date').value = issue.due_date ?? '';
       $('edit-tags').innerHTML = tagsMarkup(issue) || '<span class="muted">No tags</span>';
     }
     editing = issue;
     $('editor-notice').hidden = true;
-    $('editor-issue-id').textContent = `#${issue.id} — `;
+    $('editor-issue-id').textContent = `#${issue.id}`;
+    $('editor-issue-id').href = linkToIssue(issue.id);
     $('edit-title').textContent = issue.subject;
     $('edit-title').hidden = false;
     $('editor-subject').value = issue.subject;
@@ -890,7 +892,6 @@ async function openEditor(id) {
     showDescriptionMode(true);
     const people = new Map(members()); if (issue.assigned_to) people.set(issue.assigned_to.id, issue.assigned_to.name);
     options($('edit-assignee'), [['', 'Unassigned'], ...people], issue.assigned_to?.id || '');
-    $('edit-estimate').value = issue.estimated_hours ?? '';
     $('issue-link').href = linkToIssue(issue.id);
     initialEditorValues = editorValues();
   } catch (error) { if (stamp === epoch) notify(error.message, true); }
@@ -1055,7 +1056,7 @@ $('completion-dialog').addEventListener('close', () => {
   if (api && !busy && !loading) startBacklog();
 });
 function editorValues() {
-  return JSON.stringify(['editor-subject', 'edit-description', 'edit-assignee', 'edit-estimate', 'edit-priority', 'edit-status'].map(id => $(id).value));
+  return JSON.stringify(['editor-subject', 'edit-description', 'edit-assignee', 'edit-priority', 'edit-status', 'edit-due-date'].map(id => $(id).value));
 }
 function editorHasChanges() {
   return editorValues() !== initialEditorValues;
@@ -1129,9 +1130,10 @@ $('edit-form').addEventListener('submit', event => {
   if (!finishTitleEdit()) { $('editor-subject').focus(); return; }
   try {
     if (sprint?.status !== 'open') throw new Error('Select an open sprint before editing issues.');
-    const patch = { ...textPatch(editing, $('editor-subject').value, $('edit-description').value, initialMarkdown), assigned_to_id: $('edit-assignee').value ? Number($('edit-assignee').value) : null, estimated_hours: parseEstimate($('edit-estimate').value) };
+    const patch = { ...textPatch(editing, $('editor-subject').value, $('edit-description').value, initialMarkdown), assigned_to_id: $('edit-assignee').value ? Number($('edit-assignee').value) : null };
     if (isSwimlane(editing, config.swimlaneTrackers)) {
       patch.priority_id = Number($('edit-priority').value);
+      patch.due_date = $('edit-due-date').value || null;
       if (!$('edit-status').disabled && Number($('edit-status').value) !== editing.status.id) patch.status_id = Number($('edit-status').value);
     }
     void mutate(editing.id, patch);

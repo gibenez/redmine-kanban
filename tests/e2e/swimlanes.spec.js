@@ -42,6 +42,7 @@ async function setup(page, { ignoredPriority = false, ignoredStatus = false } = 
       if ('subject' in patch) issue.subject = patch.subject;
       if ('description' in patch) issue.description = patch.description;
       if ('estimated_hours' in patch) issue.estimated_hours = patch.estimated_hours;
+      if ('due_date' in patch) issue.due_date = patch.due_date;
       if ('assigned_to_id' in patch) issue.assigned_to = patch.assigned_to_id ? { id: patch.assigned_to_id } : undefined;
       return route.fulfill({ status: 204, body: '' });
     }
@@ -1095,8 +1096,8 @@ test('Swimlane heading pencil is the far-right keyboard-accessible planner and l
   await pencil.focus(); await page.keyboard.press('Enter');
   await expect(page.locator('#editor')).toBeVisible();
   await expect(page.locator('#editor-swimlane-fields')).toBeVisible();
-  await expect(page.getByRole('dialog', { name: '#4 — Issue 4', exact: true })).toBeVisible();
-  await expect(page.locator('#editor-title')).toHaveText('#4 — Issue 4');
+  await expect(page.getByRole('dialog', { name: '#4 Issue 4', exact: true })).toBeVisible();
+  await expect(page.locator('#editor-title')).toHaveText('#4 Issue 4');
   await expect(page.locator('#editor-subject')).toHaveValue('Issue 4');
   await expect(page.locator('#edit-description')).toBeHidden();
   await expect(page.locator('#editor-description')).toBeVisible();
@@ -1106,7 +1107,7 @@ test('Swimlane heading pencil is the far-right keyboard-accessible planner and l
   expect(await page.locator('#edit-priority option').evaluateAll(options => options.map(option => ({ id: Number(option.value), name: option.textContent })))).toEqual(fixture.priorities);
   expect(fixture.priorityRequests).toHaveLength(1);
   expect(fixture.priorityRequests[0].method()).toBe('GET');
-  await expect(page.getByRole('button', { name: 'Save changes', exact: true })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Save', exact: true })).toBeDisabled();
   await page.getByRole('button', { name: 'Close editor', exact: true }).click();
   await expect(page.locator('#editor')).toBeHidden();
   expect(fixture.writes).toEqual([]);
@@ -1126,7 +1127,7 @@ for (const id of [1, 4]) {
     await expect(tags.locator('input, select, textarea, button, [contenteditable="true"]')).toHaveCount(0);
     await expect(tags.locator('img')).toHaveCount(0);
     await page.locator('#edit-priority').selectOption('4');
-    await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+    await page.getByRole('button', { name: 'Save', exact: true }).click();
     await expect(page.locator('#editor')).toBeHidden();
     expect(fixture.writes).toEqual([{ id, patch: { priority_id: 4 } }]);
     expect(issue.priority).toEqual({ id: 4, name: 'Urgent' });
@@ -1145,17 +1146,18 @@ test('a current Priority missing from the catalogue is retained and not overwrit
   await expect(page.locator('#edit-priority')).toHaveValue('90');
   await expect(page.locator('#edit-priority option[value="90"]')).toHaveText('Legacy priority');
   for (const priority of fixture.priorities) await expect(page.locator(`#edit-priority option[value="${priority.id}"]`)).toHaveText(priority.name);
-  await page.getByLabel('Estimated hours', { exact: true }).fill('5');
-  await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+  await page.locator('#edit-title').click();
+  await page.locator('#editor-subject').fill('Updated issue title');
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
   await expect(page.locator('#editor')).toBeHidden();
-  expect(fixture.writes).toEqual([{ id: 4, patch: { estimated_hours: 5 } }]);
+  expect(fixture.writes).toEqual([{ id: 4, patch: { subject: 'Updated issue title' } }]);
 });
 
 for (const field of ['priority', 'status']) {
-  test(`Save changes tracks Swimlane ${field} edits and reversions`, async ({ page }) => {
+  test(`Save tracks Swimlane ${field} edits and reversions`, async ({ page }) => {
     const fixture = await setup(page);
     await page.getByRole('button', { name: 'Plan #4', exact: true }).click();
-    const save = page.getByRole('button', { name: 'Save changes', exact: true });
+    const save = page.getByRole('button', { name: 'Save', exact: true });
     const control = page.locator(`#edit-${field}`);
     await expect(control).toBeVisible();
     await expect(control).toBeEnabled();
@@ -1170,8 +1172,10 @@ for (const field of ['priority', 'status']) {
   });
 }
 
-test('ordinary Card planner hides Swimlane fields, makes no Priority request and never saves Priority or Tags', async ({ page }) => {
+test('ordinary Card planner hides Swimlane fields, makes no Priority request and never saves Priority, Tags or Due date', async ({ page }) => {
   const fixture = await setup(page);
+  fixture.rows[1].due_date = '2027-08-09';
+  fixture.rows[3].due_date = '2027-04-19';
   await page.getByRole('button', { name: 'Plan #4', exact: true }).click();
   await expect(page.locator('#editor-swimlane-fields')).toBeVisible();
   await page.getByRole('button', { name: 'Close editor', exact: true }).click();
@@ -1180,18 +1184,22 @@ test('ordinary Card planner hides Swimlane fields, makes no Priority request and
   await expect(page.locator('#editor-swimlane-fields')).toBeHidden();
   await expect(page.locator('#edit-priority')).toBeHidden();
   await expect(page.locator('#edit-tags')).toBeHidden();
+  await expect(page.locator('#edit-due-date')).toBeHidden();
   await expect(page.locator('#edit-status')).toBeHidden();
-  await expect(page.locator('#editor input:visible, #editor select:visible')).toHaveCount(2);
+  await expect(page.locator('#editor input:visible, #editor select:visible')).toHaveCount(1);
   expect(fixture.priorityRequests).toHaveLength(requestsBefore);
-  await page.getByLabel('Estimated hours', { exact: true }).fill('5');
-  await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+  await page.locator('#edit-title').click();
+  await page.locator('#editor-subject').fill('Updated issue title');
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
   await expect(page.locator('#editor')).toBeHidden();
-  expect(fixture.writes).toEqual([{ id: 2, patch: { estimated_hours: 5 } }]);
+  expect(fixture.writes).toEqual([{ id: 2, patch: { subject: 'Updated issue title' } }]);
+  expect(fixture.rows[1].due_date).toBe('2027-08-09');
 });
 
 test('closed Sprint heading pencil remains enabled but opens read-only Swimlane fields', async ({ page }) => {
   const fixture = await setup(page);
   fixture.versions[0].status = 'closed';
+  fixture.rows[3].due_date = '2027-04-19';
   await page.getByLabel('Include closed sprints').check();
   await refresh(page);
   await page.locator('#sprint').selectOption('100');
@@ -1204,10 +1212,13 @@ test('closed Sprint heading pencil remains enabled but opens read-only Swimlane 
   await expect(page.locator('#editor-subject')).toBeHidden();
   await expect(page.locator('#editor-swimlane-fields')).toBeVisible();
   await expect(page.locator('#edit-priority')).toBeDisabled();
+  await expect(page.locator('#edit-due-date')).toBeDisabled();
+  await expect(page.locator('#edit-due-date')).toHaveValue('2027-04-19');
   await expect(page.locator('#edit-status')).toBeDisabled();
-  await expect(page.getByLabel('Assignment', { exact: true })).toBeDisabled();
-  await expect(page.getByLabel('Estimated hours', { exact: true })).toBeDisabled();
-  await expect(page.getByRole('button', { name: 'Save changes', exact: true })).toBeDisabled();
+  await expect(page.locator('#editor').getByLabel('Assignee', { exact: true })).toBeDisabled();
+  await expect(page.getByLabel('Estimated hours', { exact: true })).toHaveCount(0);
+  await expect(page.locator('#edit-estimate')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Save', exact: true })).toBeDisabled();
   expect(fixture.writes).toEqual([]);
 });
 
@@ -1215,7 +1226,7 @@ test('a Priority silently ignored by Redmine is not falsely confirmed as saved',
   const fixture = await setup(page, { ignoredPriority: true });
   await page.getByRole('button', { name: 'Plan #4', exact: true }).click();
   await page.locator('#edit-priority').selectOption('4');
-  await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
   await expect(page.locator('#editor-notice')).toContainText('did not retain all requested changes');
   await expect(page.locator('#editor')).toBeVisible();
   expect(fixture.writes).toEqual([{ id: 4, patch: { priority_id: 4 } }]);
@@ -1244,10 +1255,11 @@ test('discard confirmation also protects a changed Swimlane Priority', async ({ 
 });
 
 for (const id of [1, 4]) {
-  test(`Swimlane #${id} saves Status, Priority, text, assignment and estimate together only on Save`, async ({ page }) => {
+  test(`Swimlane #${id} saves Status, Priority, Due date, text and Assignee only on Save without changing estimates`, async ({ page }) => {
     const fixture = await setup(page);
     const issue = fixture.rows.find(row => row.id === id);
     issue.assigned_to = { id: 7, name: 'Previous assignee' };
+    issue.estimated_hours = 5.5;
     const before = structuredClone(fixture.rows);
     await refresh(page);
     await page.getByRole('button', { name: `Plan #${id}`, exact: true }).click();
@@ -1257,22 +1269,25 @@ for (const id of [1, 4]) {
     await expect(status).toHaveValue('1');
     await expect(status.locator('option')).toHaveText(['New', 'Doing', 'Done']);
     await status.selectOption('5');
+    await page.locator('#edit-due-date').fill('2027-04-19');
     await page.locator('#edit-priority').selectOption('4');
     await page.locator('#edit-title').click();
     await page.locator('#editor-subject').fill('Updated Swimlane');
     await page.getByRole('button', { name: 'Edit description', exact: true }).click();
     await page.locator('#edit-description').fill('Updated description');
-    await page.getByLabel('Assignment', { exact: true }).selectOption('');
-    await page.getByLabel('Estimated hours', { exact: true }).fill('5.5');
+    await page.locator('#editor').getByLabel('Assignee', { exact: true }).selectOption('');
+    await expect(page.getByLabel('Estimated hours', { exact: true })).toHaveCount(0);
+    await expect(page.locator('#edit-estimate, [name="estimated_hours"]')).toHaveCount(0);
     expect(fixture.writes).toEqual([]);
     expect(fixture.rows).toEqual(before);
-    await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+    await page.getByRole('button', { name: 'Save', exact: true }).click();
     await expect(page.locator('#editor')).toBeHidden();
     expect(fixture.writes).toEqual([{ id, patch: {
       status_id: 5, priority_id: 4, subject: 'Updated Swimlane', description: '<p>Updated description</p>\n',
-      assigned_to_id: null, estimated_hours: 5.5,
+      assigned_to_id: null, due_date: '2027-04-19',
     } }]);
     expect(issue.status.id).toBe(5);
+    expect(issue.estimated_hours).toBe(5.5);
     expect(issue.custom_fields).toEqual(before.find(row => row.id === id).custom_fields);
     expect(issue.fixed_version).toEqual(before.find(row => row.id === id).fixed_version);
     expect(fixture.rows.filter(row => row.id !== id)).toEqual(before.filter(row => row.id !== id));
@@ -1302,7 +1317,7 @@ test('reopening a closed Swimlane restores its heading and Reschedule without ch
   await page.getByRole('button', { name: 'Plan #4', exact: true }).click();
   await expect(page.locator('#edit-status')).toHaveValue('5');
   await page.locator('#edit-status').selectOption('2');
-  await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
   await expect(page.locator('#editor')).toBeHidden();
   await expect(heading(page, 4).locator('.swimlane-title-row strong')).not.toHaveClass('closed');
   await expect(heading(page, 4).getByRole('button', { name: 'Reschedule swimlane #4', exact: true })).toBeEnabled();
@@ -1323,13 +1338,13 @@ test('Swimlane Status retains a current status omitted from workflow and offers 
   await expect(status.locator('option[value="1"]')).toHaveText('New');
   await expect(status.locator('option[value="9"]')).toHaveText('Review');
   await expect(status).toBeEnabled();
-  await expect(page.getByRole('button', { name: 'Save changes', exact: true })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Save', exact: true })).toBeDisabled();
   await page.getByRole('button', { name: 'Close editor', exact: true }).click();
   await expect(page.locator('#editor')).toBeHidden();
   expect(fixture.writes).toEqual([]);
   await page.getByRole('button', { name: 'Plan #4', exact: true }).click();
   await status.selectOption('9');
-  await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
   await expect(page.locator('#editor')).toBeHidden();
   expect(fixture.writes).toEqual([{ id: 4, patch: { status_id: 9 } }]);
   await expect(heading(page, 4)).toBeVisible();
@@ -1356,13 +1371,13 @@ for (const workflow of ['missing', 'empty', 'same-only']) {
       }
       return route.fallback();
     });
-    await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+    await page.getByRole('button', { name: 'Save', exact: true }).click();
     await expect(page.locator('#editor-notice')).toContainText(/failed|422|try again/i);
     await expect(page.locator('#edit-status')).toBeDisabled();
     await expect(page.locator('#edit-priority')).toBeEnabled();
     await expect(page.locator('#edit-priority')).toHaveValue('4');
     expect(fixture.writes).toEqual([]);
-    await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+    await page.getByRole('button', { name: 'Save', exact: true }).click();
     await expect(page.locator('#editor')).toBeHidden();
     expect(fixture.writes).toEqual([{ id: 4, patch: { priority_id: 4 } }]);
   });
@@ -1376,7 +1391,7 @@ test('revoking a selected Swimlane workflow transition after opening blocks the 
   await page.locator('#edit-title').click();
   await page.locator('#editor-subject').fill('Unsaved title');
   fixture.rows[3].allowed_statuses = [{ id: 1, name: 'New' }];
-  await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
   await expect(page.locator('#editor-notice')).toContainText(/workflow|allowed|transition/i);
   await expect(page.locator('#editor')).toBeVisible();
   await expect(page.locator('#edit-status')).toHaveValue('5');
@@ -1415,10 +1430,124 @@ test('a Swimlane Status silently ignored by Redmine is not falsely confirmed as 
   const fixture = await setup(page, { ignoredStatus: true });
   await page.getByRole('button', { name: 'Plan #4', exact: true }).click();
   await page.locator('#edit-status').selectOption('5');
-  await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
   await expect(page.locator('#editor-notice')).toContainText('did not retain all requested changes');
   await expect(page.locator('#editor')).toBeVisible();
   await expect(page.locator('#edit-status')).toHaveValue('5');
   expect(fixture.writes).toEqual([{ id: 4, patch: { status_id: 5 } }]);
   expect(fixture.rows[3].status.id).toBe(1);
 });
+
+for (const id of [1, 4]) {
+  test(`Swimlane #${id} sets, changes and clears Due date and reloads the saved value on reopen`, async ({ page }) => {
+    const fixture = await setup(page);
+    const issue = fixture.rows.find(row => row.id === id);
+    const before = structuredClone(fixture.rows);
+    for (const [previous, next] of [['', '2027-04-19'], ['2027-04-19', '2027-05-20'], ['2027-05-20', '']]) {
+      await page.getByRole('button', { name: `Plan #${id}`, exact: true }).click();
+      const dueDate = page.getByLabel('Due date', { exact: true });
+      await expect(dueDate).toHaveAttribute('id', 'edit-due-date');
+      await expect(dueDate).toHaveAttribute('type', 'date');
+      await expect(page.locator('#editor-swimlane-fields #edit-due-date')).toBeVisible();
+      await expect(page.locator('#editor input:visible, #editor select:visible')).toHaveCount(4);
+      await expect(dueDate).toHaveValue(previous);
+      await expect(page.getByRole('button', { name: 'Save', exact: true })).toBeDisabled();
+      await dueDate.fill(next);
+      await expect(page.getByRole('button', { name: 'Save', exact: true })).toBeEnabled();
+      await page.getByRole('button', { name: 'Save', exact: true }).click();
+      await expect(page.locator('#editor')).toBeHidden();
+      expect(issue.due_date).toBe(next || null);
+    }
+    expect(fixture.writes).toEqual(['2027-04-19', '2027-05-20', null].map(due_date => ({ id, patch: { due_date } })));
+    expect(issue).toEqual({ ...before.find(row => row.id === id), due_date: null });
+    expect(fixture.rows.filter(row => row.id !== id)).toEqual(before.filter(row => row.id !== id));
+    await page.getByRole('button', { name: `Plan #${id}`, exact: true }).click();
+    await expect(page.locator('#edit-due-date')).toHaveValue('');
+    await expect(page.getByRole('button', { name: 'Save', exact: true })).toBeDisabled();
+  });
+
+  test(`Swimlane #${id} Due date dirty state reverts without saving and confirms before discarding`, async ({ page }) => {
+    const fixture = await setup(page);
+    fixture.rows.find(row => row.id === id).due_date = '2027-04-19';
+    await page.getByRole('button', { name: `Plan #${id}`, exact: true }).click();
+    const dueDate = page.locator('#edit-due-date');
+    const save = page.getByRole('button', { name: 'Save', exact: true });
+    await expect(dueDate).toHaveValue('2027-04-19');
+    for (const draft of ['2027-05-20', '']) {
+      await dueDate.fill(draft);
+      await expect(save).toBeEnabled();
+      await dueDate.fill('2027-04-19');
+      await expect(save).toBeDisabled();
+    }
+    await dueDate.fill('');
+    // Leave the native date control before exercising the dialog Escape action.
+    await save.focus();
+    page.once('dialog', async dialog => {
+      expect(dialog.type()).toBe('confirm');
+      expect(dialog.message()).toMatch(/discard|unsaved/i);
+      await dialog.dismiss();
+    });
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#editor')).toBeVisible();
+    await expect(dueDate).toHaveValue('');
+    await expect(save).toBeEnabled();
+    page.once('dialog', dialog => dialog.accept());
+    await page.getByRole('button', { name: 'Close editor', exact: true }).click();
+    await expect(page.locator('#editor')).toBeHidden();
+    expect(fixture.writes).toEqual([]);
+    await page.getByRole('button', { name: `Plan #${id}`, exact: true }).click();
+    await expect(dueDate).toHaveValue('2027-04-19');
+    await expect(save).toBeDisabled();
+  });
+
+  for (const failure of ['rejected', 'ignored']) {
+    test(`Swimlane #${id} ${failure} Due date save retains its draft and allows retry`, async ({ page }) => {
+      const fixture = await setup(page);
+      const issue = fixture.rows.find(row => row.id === id);
+      issue.due_date = '2027-04-19';
+      let attempts = 0;
+      const patches = [];
+      await page.route(`**/redmine/issues/${id}.json**`, route => {
+        if (route.request().method() !== 'PUT') return route.fallback();
+        patches.push(route.request().postDataJSON().issue);
+        if (attempts++ === 0) return failure === 'rejected'
+          ? route.fulfill({ status: 422, json: { errors: ['Try again'] } })
+          : route.fulfill({ status: 204, body: '' });
+        return route.fallback();
+      });
+      await page.getByRole('button', { name: `Plan #${id}`, exact: true }).click();
+      // Ignoring a clear must not be mistaken for an already-empty date.
+      const draft = failure === 'ignored' ? '' : '2027-05-20';
+      await page.locator('#edit-due-date').fill(draft);
+      const save = page.getByRole('button', { name: 'Save', exact: true });
+      await save.click();
+      await expect(page.locator('#editor-notice')).toContainText(failure === 'ignored'
+        ? 'did not retain all requested changes' : /failed|422|try again/i);
+      await expect(page.locator('#editor')).toBeVisible();
+      await expect(page.locator('#edit-due-date')).toBeEnabled();
+      await expect(page.locator('#edit-due-date')).toHaveValue(draft);
+      await expect(save).toBeEnabled();
+      expect(issue.due_date).toBe('2027-04-19');
+      await save.click();
+      await expect(page.locator('#editor')).toBeHidden();
+      expect(patches).toEqual([{ due_date: draft || null }, { due_date: draft || null }]);
+      expect(issue.due_date).toBe(draft || null);
+      await page.getByRole('button', { name: `Plan #${id}`, exact: true }).click();
+      await expect(page.locator('#edit-due-date')).toHaveValue(draft);
+      await expect(save).toBeDisabled();
+    });
+  }
+}
+
+for (const empty of [undefined, null, '']) {
+  test(`an empty Due date (${String(empty)}) is not submitted by an unrelated Swimlane save`, async ({ page }) => {
+    const fixture = await setup(page);
+    if (empty !== undefined) fixture.rows[3].due_date = empty;
+    await page.getByRole('button', { name: 'Plan #4', exact: true }).click();
+    await expect(page.locator('#edit-due-date')).toHaveValue('');
+    await page.locator('#edit-priority').selectOption('4');
+    await page.getByRole('button', { name: 'Save', exact: true }).click();
+    await expect(page.locator('#editor')).toBeHidden();
+    expect(fixture.writes).toEqual([{ id: 4, patch: { priority_id: 4 } }]);
+  });
+}

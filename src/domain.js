@@ -94,6 +94,7 @@ export function matchesPatch(issue, patch) {
       const expected = [...new Set((Array.isArray(field.value) ? field.value : field.value === '' ? [] : [field.value]).map(Number))].sort((a, b) => a - b);
       return JSON.stringify(actual) === JSON.stringify(expected);
     })
+    : key === 'due_date' ? (issue.due_date || null) === (value || null)
     : key === 'subject' || key === 'description' ? sameIssueText(key, issue[key], value)
     : value == null ? values[key] == null : values[key] != null && Number(values[key]) === Number(value));
 }

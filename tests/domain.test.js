@@ -88,6 +88,18 @@ describe('planning semantics', () => {
     expect(matchesPatch({ ...issue, priority: undefined }, { priority_id: 2 })).toBe(false);
     expect(matchesPatch({ ...issue, priority: { id: 4, name: 'Urgent' } }, { priority_id: 4, estimated_hours: null })).toBe(true);
   });
+  it('confirms Due date exactly and detects ignored changes or clears', () => {
+    const dated = { ...issue, due_date: '2026-12-20' };
+    expect(matchesPatch(dated, { due_date: '2026-12-20' })).toBe(true);
+    expect(matchesPatch(dated, { due_date: '2026-12-21' })).toBe(false);
+    expect(matchesPatch(dated, { due_date: null })).toBe(false);
+    expect(matchesPatch(issue, { due_date: '2026-12-20' })).toBe(false);
+    for (const due_date of [undefined, null, '']) {
+      expect(matchesPatch({ ...issue, due_date }, { due_date: null })).toBe(true);
+      expect(matchesPatch({ ...issue, due_date }, { due_date: '' })).toBe(true);
+    }
+    expect(matchesPatch(dated, { due_date: '2026-12-20', priority_id: 4 })).toBe(false);
+  });
   it('rejects missing and malformed membership without using Target version', () => {
     for (const fields of [undefined, [], [{ id: 7, value: ['invalid'] }], [{ id: 7, value: 'invalid' }]]) {
       expect(() => sprintValue({ ...issue, custom_fields: fields, fixed_version: sprint }, 7)).toThrow();
