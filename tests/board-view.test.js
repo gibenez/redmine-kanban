@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { reconcileBoard, positionSwimlaneHeaders } from '../src/board-view.js';
+import { reconcileBoard, positionSwimlaneHeaders, alignSwimlanes } from '../src/board-view.js';
 
 // Minimal jKanban adapter: exercise our DOM reconciliation independently of its
 // bundled Dragula implementation (real dragging is covered in browser tests).
@@ -48,6 +48,72 @@ describe('Card project colours', () => {
 });
 
 describe('Swimlane reconciliation', () => {
+  it('inserts, patches and removes cell actions without changing Cards or drop targets', () => {
+    const board = boardFixture();
+    const render = action => reconcileBoard(board, [
+      definition([item(7, '1')], [{ ...lane('1'), action }, lane('2')]),
+      { ...definition([], [lane('1'), lane('2')]), id: 'status-2' },
+    ]);
+    render();
+    const section = board.container.querySelector('.swimlane-section');
+    const cards = section.querySelector('.swimlane-cards');
+    const card = cards.firstElementChild;
+    expect(section.lastElementChild).toBe(cards);
+    render('<button type="button">Create</button>');
+    const footer = section.querySelector('.swimlane-footer');
+    const button = footer.firstElementChild;
+    expect(cards.nextElementSibling).toBe(footer);
+    expect(footer.parentElement).toBe(section);
+    expect(board.container.querySelectorAll('.swimlane-footer')).toHaveLength(1);
+    expect(board.boardContainer).toHaveLength(4);
+    expect(board.boardContainer.every(node => node.matches('.swimlane-cards'))).toBe(true);
+    expect(board.boardContainer).toContain(cards);
+    button.focus();
+    render('<button type="button">Create</button>');
+    expect(document.activeElement).toBe(button);
+    render('<button type="button" disabled>Unavailable</button>');
+    expect(footer.firstElementChild).toBe(button);
+    expect(button.disabled).toBe(true);
+    expect(button.textContent).toBe('Unavailable');
+    expect(cards.children).toHaveLength(1);
+    expect(cards.firstElementChild).toBe(card);
+    render('');
+    expect(section.querySelector('.swimlane-footer')).toBeNull();
+    expect(section.lastElementChild).toBe(cards);
+    expect(cards.firstElementChild).toBe(card);
+  });
+  it('includes footer height in row alignment and releases its space when removed', () => {
+    const board = boardFixture();
+    const definitions = [
+      definition([], [{ ...lane('1'), action: '<button>Create</button>' }]),
+      { ...definition([], [lane('1')]), id: 'status-2' },
+    ];
+    reconcileBoard(board, definitions);
+    const [first, second] = board.container.querySelectorAll('.swimlane-cards');
+    const footer = board.container.querySelector('.swimlane-footer');
+    const heading = document.querySelector('.swimlane-headers > .swimlane-heading');
+    heading.getBoundingClientRect = () => ({ height: 40 });
+    first.getBoundingClientRect = () => ({ height: 100 });
+    second.getBoundingClientRect = () => ({ height: 120 });
+    footer.getBoundingClientRect = () => ({ height: 36 });
+    alignSwimlanes(board.container);
+    expect(first.style.minHeight).toBe('100px');
+    expect(second.style.minHeight).toBe('136px');
+    expect(first.previousElementSibling.style.minHeight).toBe('40px');
+    expect(second.previousElementSibling.style.minHeight).toBe('40px');
+    // A taller peer grows the Card area above the action, not the footer.
+    second.getBoundingClientRect = () => ({ height: 200 });
+    alignSwimlanes(board.container);
+    expect(first.style.minHeight).toBe('164px');
+    expect(second.style.minHeight).toBe('200px');
+    delete definitions[0].lanes[0].action;
+    second.getBoundingClientRect = () => ({ height: 120 });
+    reconcileBoard(board, definitions);
+    expect(first.style.minHeight).toBe('120px');
+    expect(second.style.minHeight).toBe('120px');
+    expect(footer.isConnected).toBe(false);
+  });
+
   for (const occupiedGutter of [0, 15, 20]) {
     it(`keeps the frame full-width even if a scrollport reports a ${occupiedGutter}px gutter`, () => {
       const board = boardFixture();

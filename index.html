@@ -91,6 +91,7 @@
     <dl class="quick-guide">
       <div><dt>Choose your Sprint</dt><dd>Select a Project and Sprint. Backlog filters never change Sprint Cards, Swimlanes or commitment totals.</dd></div>
       <div><dt>Plan and update work</dt><dd>Drag a Backlog parent into the Sprint to open it and add its missing ordinary subtasks at every depth, including closed issues. Descendant statuses and other Sprint memberships stay unchanged. The highlighted Add missing subtasks header button adds missing descendants immediately, without confirmation, overwriting their Sprint with the selected Sprint even when already set. Nested Swimlane-capable issues are skipped but traversed. Move an individual issue to Backlog to remove only the selected Sprint, without resetting status. Use the pencil button on Cards or at the far right of Swimlane headings for keyboard-accessible assignee editing. Swimlane-capable issues also offer Status and Priority dropdowns, a Due date picker and read-only Tag chips; ordinary Card popups stay unchanged. Closed Sprints open the popup read-only.</dd></div>
+      <div><dt>Create a subtask</dt><dd>Use + Add Subtask at the bottom-left of a Swimlane's New cell, even when empty. Choose a Project within the Product Project hierarchy and an ordinary Card tracker; a sole eligible tracker is selected automatically. The parent, selected Sprint and New status are fixed. Title and Description start blank, Assignee unassigned, and Priority uses Redmine's default. Save creates one child and returns to the board without clearing filters. Cancel creates nothing; dirty drafts require discard confirmation. Closed parents and closed Sprints disable creation. Redmine may require fields this editor does not support; validation errors retain your draft. An uncertain creation disables Save to prevent duplicates: check Redmine before starting another draft.</dd></div>
       <div><dt>Search backlog</dt><dd>Search Backlog by subject or exact issue ID, such as #123. Combine Tracker, Assignee and exact Backlog tag filters. Only Swimlane-capable trackers are offered. Clear filters resets these four controls, not Show closed. Scroll each Column independently; Backlog loads more as you scroll.</dd></div>
       <div><dt>Filter Sprint Cards</dt><dd>The row below the planning header filters only Sprint Cards, never Backlog or Swimlane headings. Search title substrings ignoring case; digits match an exact ID or title text, while #123 matches only issue #123. Select multiple Projects, Assignees or Priorities: alternatives within each dropdown, combined across controls. Zero-match headings hide while filters are active; clearing restores empty headings. Counts include matching Cards outside displayed statuses, but commitment totals stay unfiltered. Choices come from all Sprint Cards. Search and selections are remembered per Project, server and account, even across reloads; absent saved values remain removable. Each dropdown shows its selected name or count; its Clear button resets only that filter. Clear filters resets this entire row. Planning actions still include eligible hidden descendants.</dd></div>
       <div><dt>Collapse the Backlog</dt><dd>Backlog shows Unplanned Swimlane-capable issues in all open statuses; Show closed also includes closed issues. Use the chevron in the Backlog header to collapse it and its filters into a narrow rail. Active filters are retained and indicated by “Filtered”. This browser remembers the collapsed state across projects and Sprints. Collapsed Backlog makes no Backlog-only requests; Sprint loading continues normally. Expanding loads a fresh first page, with Retry if loading fails. Expand Backlog before dragging Cards into it.</dd></div>
@@ -110,6 +111,10 @@
       </div>
       <p id="editor-subject-error" role="alert" hidden>Title cannot be blank.</p>
       <p id="editor-notice" role="status" aria-live="polite" hidden></p>
+      <section id="editor-creation-context" hidden>
+        <p>Parent: <a id="creation-parent" target="_blank" rel="noopener noreferrer"></a></p>
+        <p>Sprint: <strong id="creation-sprint"></strong> · Status: <strong id="creation-status"></strong> · Priority: Redmine default</p>
+      </section>
       <div class="editor-columns">
         <div class="editor-content">
           <section id="editor-description-section" aria-labelledby="editor-description-title">
@@ -127,6 +132,10 @@
           </section>
         </div>
         <div class="editor-attributes">
+          <section id="editor-creation-fields" hidden>
+            <label for="creation-project">Project</label><select id="creation-project" required disabled></select>
+            <label for="creation-tracker">Tracker</label><select id="creation-tracker" required disabled></select>
+          </section>
           <label for="edit-assignee">Assignee</label><select id="edit-assignee"></select>
           <section id="editor-swimlane-fields" hidden>
             <label for="edit-status">Status</label><select id="edit-status" required disabled aria-describedby="edit-status-hint"></select>

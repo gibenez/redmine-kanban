@@ -529,7 +529,7 @@ for (const control of ['query', 'tracker', 'assignee']) {
     const gate = new Promise(resolve => { release = resolve; });
     await page.route('**/redmine/issues.json?**', async route => { await gate; await route.fallback(); });
     if (control === 'query') await page.getByLabel('Search backlog').fill('Already');
-    if (control === 'tracker') await page.getByLabel('Tracker', { exact: true }).selectOption('1');
+    if (control === 'tracker') await page.locator('#filter-controls').getByLabel('Tracker', { exact: true }).selectOption('1');
     if (control === 'assignee') await page.getByRole('region', { name: 'Backlog filters', exact: true }).getByLabel('Assignee', { exact: true }).selectOption('7');
     try {
       await expect(page.locator('[data-id="backlog"] .kanban-drag')).toHaveAttribute('aria-busy', 'true');
@@ -574,7 +574,7 @@ test('Backlog search keeps Sprint interaction and collapse available', async ({ 
 
 test('filters survive refresh and Sprint switches, but reset on project change and sign-out', async ({ page }) => {
   await setup(page); await login(page);
-  await page.getByLabel('Tracker', { exact: true }).selectOption('1');
+  await page.locator('#filter-controls').getByLabel('Tracker', { exact: true }).selectOption('1');
   await expect(page.locator('[data-id="backlog"] .kanban-drag')).toHaveAttribute('aria-busy', 'false');
   await page.getByRole('region', { name: 'Backlog filters', exact: true }).getByLabel('Assignee', { exact: true }).selectOption('none');
   await expect(page.locator('[data-id="backlog"] .kanban-drag')).toHaveAttribute('aria-busy', 'false');
@@ -590,7 +590,7 @@ test('filters survive refresh and Sprint switches, but reset on project change a
   await expect(page.getByLabel('Search backlog')).toHaveValue('Build');
   await expect(page.locator('#tracker')).toHaveValue('1');
   await expect(page.locator('#assignee')).toHaveValue('none');
-  await page.getByLabel('Project', { exact: true }).selectOption('2');
+  await page.locator('#planning-controls').getByLabel('Project', { exact: true }).selectOption('2');
   await expect(page.locator('#workspace')).toHaveAttribute('aria-busy', 'false');
   await expect(page.getByLabel('Search backlog')).toHaveValue('');
   await expect(page.locator('#tracker')).toHaveValue('');
@@ -616,9 +616,9 @@ test('Tracker choices include eligible Module metadata but exclude unrelated pro
   ] } }));
   await login(page);
   await expect(page.locator('#tracker option')).toHaveText(['All eligible trackers', 'Feature', 'Improvement']);
-  await page.getByLabel('Tracker', { exact: true }).selectOption('4');
+  await page.locator('#filter-controls').getByLabel('Tracker', { exact: true }).selectOption('4');
   await expect(page.locator('[data-id="backlog"] footer')).toContainText('No backlog issues match these filters');
-  await page.getByLabel('Project', { exact: true }).selectOption('3');
+  await page.locator('#planning-controls').getByLabel('Project', { exact: true }).selectOption('3');
   await expect(page.locator('#workspace')).toHaveAttribute('aria-busy', 'false');
   await expect(page.locator('#tracker option')).toHaveText(['All eligible trackers', 'Improvement']);
 });
@@ -640,7 +640,7 @@ test('Clear filters resets all four Backlog controls without changing Show close
   await login(page);
   await page.getByRole('checkbox', { name: 'Show closed issues', exact: true }).check();
   await expect(page.locator('[data-id="backlog"] .kanban-drag')).toHaveAttribute('aria-busy', 'false');
-  await page.getByLabel('Tracker', { exact: true }).selectOption('1');
+  await page.locator('#filter-controls').getByLabel('Tracker', { exact: true }).selectOption('1');
   await page.getByRole('region', { name: 'Backlog filters', exact: true }).getByLabel('Assignee', { exact: true }).selectOption('none');
   await page.getByLabel('Search backlog').fill('Build');
   await page.getByLabel('Backlog tag', { exact: true }).fill('release');
@@ -774,7 +774,7 @@ test('unchanged filters preserve column scroll, horizontal scroll, focus and car
   const fixture = await setup(page);
   for (let id = 100; id < 120; id++) fixture.issues.push({ ...fixture.issues[1], id, subject: `Already underway ${id}` });
   await login(page);
-  await page.getByLabel('Tracker', { exact: true }).selectOption('1');
+  await page.locator('#filter-controls').getByLabel('Tracker', { exact: true }).selectOption('1');
   await expect(page.locator('#workspace')).toHaveAttribute('aria-busy', 'false');
   await page.evaluate(() => {
     const board = document.getElementById('board'), list = document.querySelector('[data-id="status-2"] .kanban-drag');
@@ -834,10 +834,10 @@ test('Backlog filters leave Sprint totals and board geometry unchanged', async (
   await page.getByLabel('Search backlog').fill('');
   await expect(page.locator('#workspace')).toHaveAttribute('aria-busy', 'false');
   await expect(summary).toBeEmpty();
-  await page.getByLabel('Tracker', { exact: true }).selectOption('1');
+  await page.locator('#filter-controls').getByLabel('Tracker', { exact: true }).selectOption('1');
   await expect(page.locator('[data-id="backlog"] .kanban-drag')).toHaveAttribute('aria-busy', 'false');
   await expect(summary).toBeEmpty();
-  await page.getByLabel('Tracker', { exact: true }).selectOption('');
+  await page.locator('#filter-controls').getByLabel('Tracker', { exact: true }).selectOption('');
   await expect(page.locator('#workspace')).toHaveAttribute('aria-busy', 'false');
   await expect(summary).toBeEmpty();
   expect(await page.locator('#board').boundingBox()).toEqual(before);
@@ -1157,7 +1157,7 @@ test('autorefresh is opt-in, waits an interval, survives scope switches and rese
   await expect.poll(count).toBe(stopped + 1);
   await expect(page.locator('#loading-overlay')).not.toBeVisible();
   await toggle.click();
-  await page.getByLabel('Project', { exact: true }).selectOption('2');
+  await page.locator('#planning-controls').getByLabel('Project', { exact: true }).selectOption('2');
   await expect(page.locator('#loading-overlay')).not.toBeVisible();
   await expect(toggle).toHaveAttribute('aria-pressed', 'true');
   await signOut(page);
@@ -1569,7 +1569,7 @@ test('phone layout keeps the board in the viewport and planning controls reachab
   await page.setViewportSize({ width: 390, height: 844 });
   await setup(page); await login(page);
   await expect(page.getByRole('button', { name: /^Appearance:/ })).toBeInViewport();
-  await expect(page.getByLabel('Project', { exact: true })).toBeInViewport();
+  await expect(page.locator('#planning-controls').getByLabel('Project', { exact: true })).toBeInViewport();
   await page.getByLabel('Sprint', { exact: true }).scrollIntoViewIfNeeded();
   await expect(page.getByLabel('Sprint', { exact: true })).toBeInViewport();
   await page.getByLabel('Include closed sprints').scrollIntoViewIfNeeded();
@@ -1772,7 +1772,7 @@ test('tracker and assignee filters query unseen issues on the server and preserv
   const fixture = await setup(page);
   for (let id = 100; id < 110; id++) fixture.issues.push({ ...fixture.issues[0], id, subject: id === 109 ? 'Unseen needle' : `Backlog ${id}`, ...(id === 109 ? { assigned_to: { id: 9, name: 'Other Member' } } : {}) });
   await login(page);
-  await page.getByLabel('Tracker', { exact: true }).selectOption('1');
+  await page.locator('#filter-controls').getByLabel('Tracker', { exact: true }).selectOption('1');
   await page.getByRole('region', { name: 'Backlog filters', exact: true }).getByLabel('Assignee', { exact: true }).selectOption('9');
   await expect(page.locator('[data-id="backlog"]')).toContainText('Unseen needle');
   await page.getByLabel('Search backlog').fill('needle');
@@ -1875,8 +1875,8 @@ test('project versions 403 explains the denied resource and keeps project select
   await expect(page.locator('#notice')).toContainText('Issue tracking');
   expect(fixture.requests.some(request => new URL(request.url()).pathname === '/redmine/projects/1/versions.json')).toBe(true);
   await expect(page.locator('#sprint-state')).toContainText('Sprint data unavailable');
-  await expect(page.getByLabel('Project', { exact: true })).toBeEnabled();
-  await page.getByLabel('Project', { exact: true }).selectOption('2');
+  await expect(page.locator('#planning-controls').getByLabel('Project', { exact: true })).toBeEnabled();
+  await page.locator('#planning-controls').getByLabel('Project', { exact: true }).selectOption('2');
   await expect(page.locator('#updated')).toContainText('Updated');
   await expect(page.locator('#notice')).not.toContainText('Cannot load sprints');
 });
@@ -2201,7 +2201,7 @@ test('all open statuses remain eligible after clearing a search', async ({ page 
 
 test('project changes clear the previous project’s issues', async ({ page }) => {
   await setup(page); await login(page);
-  await page.getByLabel('Project', { exact: true }).selectOption('2');
+  await page.locator('#planning-controls').getByLabel('Project', { exact: true }).selectOption('2');
   await expect(page.locator('.kanban-item')).toHaveCount(0);
 });
 

@@ -66,5 +66,6 @@ export class RedmineClient {
     return data.relations;
   }); }
   hierarchyIssue(id, { signal } = {}) { return this.request(`/issues/${Number(id)}.json`, { params: { include: 'children,allowed_statuses' }, signal }).then(data => data.issue); }
+  create(patch) { return this.request('/issues.json', { method: 'POST', body: { issue: patch } }).then(data => data.issue); }
   update(id, patch) { return this.request(`/issues/${Number(id)}.json`, { method: 'PUT', body: { issue: patch } }); }
 }

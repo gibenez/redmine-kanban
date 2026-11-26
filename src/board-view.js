@@ -2,6 +2,7 @@
 // Never replace the board to apply a Filter.
 const renderedCards = new WeakMap();
 const renderedHeadings = new WeakMap();
+const renderedActions = new WeakMap();
 
 function patchChildren(target, source) {
   for (let index = 0; index < source.childNodes.length; index++) {
@@ -61,7 +62,16 @@ export function reconcileBoard(board, definitions) {
         section.dataset.id = definition.id;
         // Each Column reserves the row height; one shared heading spans all statuses.
         section.firstElementChild.setAttribute('aria-hidden', 'true');
-        targets.set(lane.id, section.lastElementChild);
+        const cards = section.querySelector('.swimlane-cards');
+        // Optional lane.action is HTML for this cell only, outside its drop target.
+        let footer = section.querySelector('.swimlane-footer');
+        if (lane.action) {
+          if (!footer) {
+            footer = document.createElement('div'); footer.className = 'swimlane-footer'; section.append(footer);
+          }
+          patchMarkup(footer, lane.action, renderedActions);
+        } else footer?.remove();
+        targets.set(lane.id, cards);
       }
       list.classList.add('has-swimlanes');
     } else {
@@ -170,17 +180,24 @@ export function alignSwimlanes(container) {
   const rows = new Map();
   for (const section of container.querySelectorAll('.swimlane-section')) {
     section.firstElementChild.style.minHeight = '';
-    section.lastElementChild.style.minHeight = '';
+    section.querySelector('.swimlane-cards').style.minHeight = '';
     const row = rows.get(section.dataset.lane) || [];
     row.push(section); rows.set(section.dataset.lane, row);
   }
   for (const [id, row] of rows) {
     const heading = headers && [...headers.children].find(node => node.dataset.lane === id);
     const headingHeight = heading ? heading.getBoundingClientRect().height : 0;
-    const cardsHeight = Math.max(64, ...row.map(section => section.lastElementChild.getBoundingClientRect().height));
-    for (const section of row) {
+    const cells = row.map(section => ({
+      section,
+      cards: section.querySelector('.swimlane-cards'),
+      footerHeight: section.querySelector('.swimlane-footer')?.getBoundingClientRect().height || 0,
+    }));
+    const bodyHeight = Math.max(64, ...cells.map(({ cards, footerHeight }) => cards.getBoundingClientRect().height + footerHeight));
+    for (const { section, cards, footerHeight } of cells) {
       section.firstElementChild.style.minHeight = `${headingHeight}px`;
-      section.lastElementChild.style.minHeight = `${cardsHeight}px`;
+      // Grow only the Card area: the sibling action stays below Cards at the
+      // bottom of the aligned row, without becoming draggable or droppable.
+      cards.style.minHeight = `${bodyHeight - footerHeight}px`;
     }
   }
   for (const [list, top] of positions) list.scrollTop = top;

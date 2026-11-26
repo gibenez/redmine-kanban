@@ -50,6 +50,29 @@ describe('Redmine REST boundary', () => {
     await new RedmineClient('key').update(8, { fixed_version_id: null });
     expect(fetch.mock.calls[0][1]).toMatchObject({ method: 'PUT', body: '{"issue":{"fixed_version_id":null}}' });
   });
+  it('creates an issue with a JSON POST and returns the created issue', async () => {
+    const patch = { project_id: 3, tracker_id: 2, subject: 'New issue', parent_issue_id: 8, custom_fields: [{ id: 7, value: 'Sprint 1' }] };
+    const issue = { id: 42, ...patch };
+    const fetch = vi.fn().mockResolvedValue(json({ issue }, 201)); vi.stubGlobal('fetch', fetch);
+    expect(await new RedmineClient('key').create(patch)).toEqual(issue);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    const [url, options] = fetch.mock.calls[0];
+    expect(url.pathname).toBe('/redmine/issues.json');
+    expect(url.search).toBe('');
+    expect(options).toMatchObject({ method: 'POST', body: JSON.stringify({ issue: patch }), credentials: 'omit', cache: 'no-store', redirect: 'error', headers: { 'Content-Type': 'application/json', 'X-Redmine-API-Key': 'key' } });
+  });
+  it.each([403, 422, 503])('does not retry issue creation after HTTP %i', async status => {
+    const fetch = vi.fn().mockImplementation(() => Promise.resolve(json({ errors: ['Cannot create with secret'] }, status)));
+    vi.stubGlobal('fetch', fetch);
+    await expect(new RedmineClient('secret').create({ subject: 'New issue' })).rejects.toMatchObject({ status, message: 'Cannot create with [redacted]' });
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+  it('does not retry creation after an ambiguous connection failure', async () => {
+    const fetch = vi.fn().mockRejectedValue(new Error('secret'));
+    vi.stubGlobal('fetch', fetch);
+    await expect(new RedmineClient('secret').create({ subject: 'New issue' })).rejects.toThrow('Cannot reach Redmine');
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
   it('reports permissions and redacts keys echoed by upstream errors', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(json({}, 403)).mockResolvedValueOnce(json({ errors: ['bad personal-secret'] }, 422)));
     const client = new RedmineClient('personal-secret');

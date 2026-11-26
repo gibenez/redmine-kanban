@@ -18,6 +18,7 @@ import { createBoardScroll } from './board-scroll.js';
 import { createRelatedIssues } from './related-issues.js';
 import { projectColor } from './project-colors.js';
 import { renderProjectSummary } from './project-summary.js';
+import { cardTrackers, subtaskProjects, assertSubtaskContext, subtaskPatch, matchesSubtask } from './subtask-creation.js';
 
 const $ = id => document.getElementById(id);
 const beginLoading = createLoadingOverlay($('loading-overlay'));
@@ -37,6 +38,7 @@ let api, config, statuses = [], projects = [], versions = [], memberships = [], 
 let sprint = null, projectId = '', blockedProjectId = '', busy = false, dragging = false, loading = false, epoch = 0, timer, editing;
 let initialMarkdown = '', initialEditorValues = '';
 let completion = null, rescheduling = null;
+let creation = null, creationPeopleLoading = false, creationProjectRevision = 0;
 let autorefresh = false;
 let selectionPreferences;
 function setAutorefresh(enabled) {
@@ -135,6 +137,13 @@ function lock() {
   $('edit-form').querySelectorAll('input, textarea, select, button[type="submit"]').forEach(el => { el.disabled = busy || loading || sprint?.status !== 'open' || Boolean(el.closest('section[hidden]')); });
   $('edit-title').disabled = $('editor-subject').disabled;
   $('edit-status').disabled ||= $('edit-status').options.length <= 1;
+  if (creationPeopleLoading) $('edit-assignee').disabled = true;
+  document.querySelectorAll('[data-create-subtask]').forEach(el => {
+    const parent = feed?.snapshot.sprintAll.find(issue => issue.id === Number(el.dataset.createSubtask));
+    const reason = sprint?.status !== 'open' ? 'Closed Sprints are read only.' : closedStatusIds().includes(parent?.status.id) ? 'Closed parents cannot receive new subtasks.' : '';
+    el.disabled = busy || loading || Boolean(reason);
+    el.title = reason || `Create a subtask of #${el.dataset.createSubtask}`;
+  });
   updateEditorSave();
   document.querySelectorAll('[data-edit], .scope-toggle').forEach(el => { el.disabled = busy || loading || (el.closest('[data-id="backlog"]') && (queryLoading || feed?.loadingMore)); });
   $('tracker').disabled = busy || loading || !eligibleTrackers().length;
@@ -261,7 +270,7 @@ function forget() {
   $('api-key').value = ''; $('remember').checked = false;
   $('login-form').querySelector('button').disabled = false;
   $('forget-saved').hidden = true;
-  $('editor').close(); editing = null;
+  $('editor').close(); editing = null; creation = null; creationPeopleLoading = false; creationProjectRevision++;
   $('completion-dialog').close(); completion = null;
   $('reschedule-dialog').close(); rescheduling = null; destroyBoard();
   issues = []; versions = []; memberships = []; projects = []; sprint = null; projectId = ''; blockedProjectId = '';
@@ -377,7 +386,9 @@ function renderBoard() {
     const items = lanes ? lanes.flatMap(lane => lane.visible.filter(issue => issue.status.id === statusId).map(issue => ({ ...card(issue), lane: lane.id })))
       : sprintVisible.filter(issue => issue.status.id === statusId).map(issue => card(issue));
     boards.push({ id: `status-${statusId}`, title: `${e(statuses.find(status => status.id === statusId).name)} <span class="count">${items.length}</span>`, item: items,
-      lanes: lanes?.map(lane => ({ id: lane.id, title: index === 0 ? laneHeading(lane) : '' })),
+      lanes: lanes?.map(lane => ({ id: lane.id, title: index === 0 ? laneHeading(lane) : '',
+        action: lane.parent && statusId === config.backlogStatusId ? `<button type="button" class="create-subtask" data-create-subtask="${Number(lane.parent.id)}" aria-label="Add Subtask to #${Number(lane.parent.id)}">+ Add Subtask</button>` : '',
+      })),
     });
   }
   if (!lanes) {
@@ -850,13 +861,140 @@ async function mutate(id, patch) {
   }
 }
 
+async function openSubtaskEditor(id) {
+  if (busy || loading || !api || sprint?.status !== 'open') return;
+  cancelQuery(); loading = true; lock();
+  const finishLoading = beginLoading(), stamp = epoch;
+  try {
+    const parent = await api.issue(id);
+    if (stamp !== epoch) return;
+    const scope = { ...feedScope(), newStatusId: config.backlogStatusId, closedStatusIds: closedStatusIds() };
+    assertSubtaskContext(parent, sprint, projects, scope);
+    editing = null; creation = { parent, scope, uncertain: false };
+    creationPeopleLoading = false; creationProjectRevision++;
+    $('editor-swimlane-fields').hidden = true;
+    $('editor-creation-context').hidden = false;
+    $('editor-creation-fields').hidden = false;
+    $('creation-parent').textContent = `#${parent.id} ${parent.subject}`;
+    $('creation-parent').href = linkToIssue(parent.id);
+    $('creation-sprint').textContent = sprint.name;
+    $('creation-status').textContent = statuses.find(status => status.id === scope.newStatusId).name;
+    const choices = subtaskProjects(projects, scope);
+    options($('creation-project'), [['', choices.length ? 'Choose a Project' : 'No Projects with ordinary Card trackers available'], ...choices.map(project => [project.id, project.name])]);
+    options($('creation-tracker'), [['', 'Choose a Project first']]);
+    options($('edit-assignee'), [['', 'Unassigned']]);
+    $('editor-issue-id').textContent = 'New subtask';
+    $('editor-issue-id').removeAttribute('href');
+    $('issue-link').hidden = true;
+    $('editor-notice').hidden = true;
+    $('edit-title').textContent = 'Title';
+    $('edit-title').hidden = true;
+    $('editor-subject').value = '';
+    titleBeforeEdit = '';
+    $('editor-subject').hidden = false;
+    clearTitleError();
+    initialMarkdown = '';
+    $('edit-description').value = '';
+    showDescriptionMode(false);
+    initialEditorValues = editorValues();
+  } catch (error) { if (stamp === epoch) notify(error.message, true); }
+  finally {
+    finishLoading();
+    if (stamp === epoch) {
+      loading = false; lock();
+      if (creation?.parent.id === id) { $('editor').showModal(); $('editor-subject').focus(); }
+      else startBacklog();
+    }
+  }
+}
+
+$('creation-project').addEventListener('change', async () => {
+  if (!creation) return;
+  const revision = ++creationProjectRevision, draft = creation;
+  const project = subtaskProjects(projects, draft.scope).find(project => project.id === Number($('creation-project').value));
+  const trackers = cardTrackers(project, config.swimlaneTrackers);
+  options($('creation-tracker'), [['', project ? 'Choose a Tracker' : 'Choose a Project first'], ...trackers.map(tracker => [tracker.id, tracker.name])], trackers.length === 1 ? trackers[0].id : '');
+  options($('edit-assignee'), [['', 'Unassigned']]);
+  creationPeopleLoading = Boolean(project); lock();
+  if (!project) return;
+  try {
+    const rows = await api.list(`/projects/${project.id}/memberships.json`, 'memberships');
+    if (creation !== draft || revision !== creationProjectRevision) return;
+    const people = rows.flatMap(row => {
+      const member = row.user || row.group;
+      return member ? [[member.id, member.name + (row.group ? ' (group)' : '')]] : [];
+    });
+    options($('edit-assignee'), [['', 'Unassigned'], ...people]);
+  } catch (error) {
+    if (creation === draft && revision === creationProjectRevision) notify(`Could not load Project assignees: ${error.message} You can still create an unassigned subtask.`, true);
+  } finally {
+    if (creation === draft && revision === creationProjectRevision) { creationPeopleLoading = false; lock(); }
+  }
+});
+
+async function createSubtask() {
+  if (!creation || creation.uncertain || creationPeopleLoading || busy || loading || !api) return;
+  if (!finishTitleEdit()) { $('editor-subject').focus(); return; }
+  const draft = creation, currentApi = api, stamp = epoch;
+  const values = { projectId: $('creation-project').value, trackerId: $('creation-tracker').value,
+    subject: $('editor-subject').value, description: descriptionHtml($('edit-description').value), assigneeId: $('edit-assignee').value };
+  cancelQuery(); busy = true; lock();
+  const finishLoading = beginLoading();
+  let attempted = false, createdId = null;
+  try {
+    if (draft.scope.sprintId !== sprint?.id || draft.scope.projectId !== projectId) throw new Error('The selected Sprint or Product Project changed.');
+    const [parent, version, freshProjects] = await settledResults([
+      currentApi.issue(draft.parent.id), currentApi.request(`/versions/${draft.scope.sprintId}.json`),
+      currentApi.list('/projects.json', 'projects', { include: 'trackers' }),
+    ]);
+    if (stamp !== epoch) return;
+    assertSubtaskContext(parent, version.version, freshProjects, draft.scope);
+    const patch = subtaskPatch(parent, freshProjects, draft.scope, values);
+    attempted = true;
+    const created = await currentApi.create(patch);
+    if (stamp !== epoch) return;
+    if (!Number.isSafeInteger(created?.id) || created.id <= 0) throw new Error('Redmine did not return a new issue ID.');
+    createdId = created.id;
+    // Once an ID exists, never offer another POST for this draft, even if verification fails.
+    $('editor').close(); creation = null; editing = null;
+    const saved = await currentApi.issue(createdId);
+    if (stamp !== epoch) return;
+    if (!matchesSubtask(saved, patch)) throw new Error('Redmine did not retain all requested fields. Check the created issue before making further changes.');
+    const snapshot = await feed.load(feedScope(), filters, { includeBacklog: false });
+    if (!snapshot || stamp !== epoch) return;
+    if (!await syncFeed(snapshot)) throw new Error('Board refresh was superseded.');
+    renderFilters(); renderBoard();
+    const visible = filteredSprint(snapshot.sprintAll, config.swimlaneTrackers, laneAncestors, sprintFilters).visible.some(issue => issue.id === createdId);
+    notify(`Subtask #${createdId} created in Redmine.${visible ? '' : ' The new Card is hidden by the current filters or board visibility rules.'}`);
+  } catch (error) {
+    if (stamp === epoch) {
+      if (!createdId && attempted && ![400, 401, 403, 404, 422].includes(error.status)) draft.uncertain = true;
+      notify(createdId ? `Subtask #${createdId} was created, but verification or board refresh failed: ${error.message} Use Refresh; do not repeat creation.`
+        : `Could not create subtask: ${error.message}${draft.uncertain ? ' Creation is unconfirmed. Check Redmine and refresh before starting another draft; Save is disabled to avoid duplicates.' : ''}`, true);
+    }
+  } finally {
+    if (stamp === epoch) {
+      if (createdId) {
+        const link = document.createElement('a'); link.href = linkToIssue(createdId); link.target = '_blank'; link.rel = 'noopener noreferrer'; link.textContent = `Open #${createdId} in Redmine ↗`;
+        $('notice').append(' ', link);
+      }
+      busy = false; lock(); renderBoard();
+      if (!$('editor').open) startBacklog();
+    }
+    finishLoading();
+  }
+}
+
 async function openEditor(id) {
   if (busy || loading) return;
   loading = true; lock();
   const finishLoading = beginLoading();
   const stamp = epoch;
   try {
-    editing = null;
+    editing = null; creation = null; creationPeopleLoading = false; creationProjectRevision++;
+    $('editor-creation-context').hidden = true;
+    $('editor-creation-fields').hidden = true;
+    $('issue-link').hidden = false;
     const issue = await api.issue(id);
     if (stamp !== epoch) return;
     const swimlane = isSwimlane(issue, config.swimlaneTrackers);
@@ -1035,6 +1173,8 @@ $('board').addEventListener('click', event => {
   const retryRelated = event.target.closest('[data-retry-related]');
   if (retryRelated) { relatedIssues.retry(Number(retryRelated.dataset.retryRelated)); return; }
   if (event.target.closest('[data-backlog-collapse]')) { toggleBacklog(); return; }
+  const create = event.target.closest('[data-create-subtask]');
+  if (create && !create.disabled) { void openSubtaskEditor(Number(create.dataset.createSubtask)); return; }
   const add = event.target.closest('[data-add-descendants]');
   if (add && !add.disabled) { void addMissingSubtasks(Number(add.dataset.addDescendants)); return; }
   const reschedule = event.target.closest('[data-reschedule-swimlane]');
@@ -1056,13 +1196,14 @@ $('completion-dialog').addEventListener('close', () => {
   if (api && !busy && !loading) startBacklog();
 });
 function editorValues() {
-  return JSON.stringify(['editor-subject', 'edit-description', 'edit-assignee', 'edit-priority', 'edit-status', 'edit-due-date'].map(id => $(id).value));
+  return JSON.stringify(['editor-subject', 'edit-description', 'edit-assignee', 'edit-priority', 'edit-status', 'edit-due-date', 'creation-project', 'creation-tracker'].map(id => $(id).value));
 }
 function editorHasChanges() {
   return editorValues() !== initialEditorValues;
 }
 function updateEditorSave() {
-  $('edit-form').querySelector('button[type="submit"]').disabled = !editing || busy || loading || sprint?.status !== 'open' || !editorHasChanges();
+  const invalidCreation = creation && (creation.uncertain || creationPeopleLoading || !$('creation-project').value || !$('creation-tracker').value || !$('editor-subject').value.trim());
+  $('edit-form').querySelector('button[type="submit"]').disabled = (!editing && !creation) || busy || loading || sprint?.status !== 'open' || Boolean(invalidCreation) || !editorHasChanges();
 }
 for (const eventName of ['input', 'change']) $('edit-form').addEventListener(eventName, updateEditorSave);
 function mayCloseEditor() {
@@ -1122,11 +1263,13 @@ $('description-preview').addEventListener('click', () => showDescriptionMode(tru
 $('close-editor').addEventListener('click', () => { if (mayCloseEditor()) $('editor').close(); });
 $('editor').addEventListener('cancel', event => { if (!mayCloseEditor()) event.preventDefault(); });
 $('editor').addEventListener('close', () => {
-  editing = null;
+  editing = null; creation = null; creationPeopleLoading = false; creationProjectRevision++;
   if (api && !busy && !loading) startBacklog();
 });
 $('edit-form').addEventListener('submit', event => {
-  event.preventDefault(); if (!editing || busy || loading || !editorHasChanges()) return;
+  event.preventDefault();
+  if (creation) { void createSubtask(); return; }
+  if (!editing || busy || loading || !editorHasChanges()) return;
   if (!finishTitleEdit()) { $('editor-subject').focus(); return; }
   try {
     if (sprint?.status !== 'open') throw new Error('Select an open sprint before editing issues.');
