@@ -875,10 +875,11 @@ async function openSubtaskEditor(id) {
     $('editor-swimlane-fields').hidden = true;
     $('editor-creation-context').hidden = false;
     $('editor-creation-fields').hidden = false;
-    $('creation-parent').textContent = `#${parent.id} ${parent.subject}`;
-    $('creation-parent').href = linkToIssue(parent.id);
+    $('creation-parent-link').textContent = `#${parent.id}`;
+    $('creation-parent-link').href = linkToIssue(parent.id);
+    $('creation-parent-subject').textContent = parent.subject;
     $('creation-sprint').textContent = sprint.name;
-    $('creation-status').textContent = statuses.find(status => status.id === scope.newStatusId).name;
+    $('creation-status').value = statuses.find(status => status.id === scope.newStatusId).name;
     const choices = subtaskProjects(projects, scope);
     options($('creation-project'), [['', choices.length ? 'Choose a Project' : 'No Projects with ordinary Card trackers available'], ...choices.map(project => [project.id, project.name])]);
     options($('creation-tracker'), [['', 'Choose a Project first']]);

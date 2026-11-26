@@ -142,17 +142,63 @@ test('closed Sprint disables all creation actions', async ({ page }) => {
   expect(state.posts).toEqual([]);
 });
 
+for (const width of [1440, 390]) {
+  test(`editor footer keeps errors left and Save right at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 1000 });
+    const state = await setup(page);
+    await add(page).click();
+    const dialog = editor(page);
+    const button = save(page);
+    await dialog.getByLabel('Title', { exact: true }).press('Enter');
+    await dialog.getByLabel('Project', { exact: true }).selectOption('3');
+    const titleError = dialog.locator('#editor-feedback #editor-subject-error');
+    await expect(titleError).toBeVisible();
+    const assertFooter = async error => {
+      const footer = await dialog.locator('.dialog-actions').boundingBox();
+      const message = await error.boundingBox(), action = await button.boundingBox();
+      expect(message.x).toBeCloseTo(footer.x, 0);
+      expect(message.x + message.width).toBeLessThanOrEqual(action.x - 15);
+      expect(action.x + action.width).toBeCloseTo(footer.x + footer.width, 0);
+      expect(action.y + action.height).toBeCloseTo(footer.y + footer.height, 0);
+      expect(message.y).toBeGreaterThanOrEqual(footer.y);
+    };
+    await assertFooter(titleError);
+    await dialog.getByLabel('Title', { exact: true }).fill('Rejected child');
+    state.failure = '422';
+    await button.click();
+    const serverError = dialog.locator('#editor-feedback #editor-notice');
+    await expect(serverError).toContainText('Title rejected by workflow');
+    await expect(titleError).toBeHidden();
+    await assertFooter(serverError);
+    await expect(button).toBeEnabled();
+  });
+}
+
 test('blank draft fixes Parent, Sprint and New; Project is explicit and limits Tracker choices', async ({ page }) => {
   await setup(page);
   await add(page).click();
   const dialog = editor(page);
+  await expect(dialog.locator('#editor-title')).toHaveCSS('gap', '16px');
+  const titleGap = await dialog.locator('#editor-title').evaluate(heading => heading.querySelector('#editor-subject').getBoundingClientRect().left - heading.querySelector('#editor-issue-id').getBoundingClientRect().right);
+  expect(titleGap).toBeCloseTo(16, 0);
   await expect(dialog.getByLabel('Title', { exact: true })).toHaveValue('');
   await expect(page.locator('#edit-description')).toHaveValue('');
   await expect(dialog.getByLabel('Assignee', { exact: true })).toHaveValue('');
-  await expect(page.locator('#creation-parent')).toHaveText('#10 Issue 10');
-  await expect(page.locator('#creation-parent')).toHaveAttribute('href', 'https://redmine.example.test/issues/10');
-  await expect(page.locator('#creation-sprint')).toHaveText('Sprint 100');
-  await expect(page.locator('#creation-status')).toHaveText('New');
+  await expect(dialog.locator('.editor-attributes #creation-parent')).toHaveText('#10 Issue 10');
+  const parentLink = dialog.locator('#creation-parent').getByRole('link', { name: '#10', exact: true });
+  await expect(parentLink).toHaveAttribute('href', 'https://redmine.example.test/issues/10');
+  await expect(dialog.locator('#creation-parent a')).toHaveCount(1);
+  await expect(dialog.locator('#creation-parent-subject')).toHaveText('Issue 10');
+  await expect(dialog.locator('.editor-attributes #creation-sprint')).toHaveText('Sprint 100');
+  await expect(dialog.locator('#creation-parent input, #creation-sprint input, input#creation-parent, input#creation-sprint')).toHaveCount(0);
+  await expect(dialog.getByLabel('Subtask Status', { exact: true })).toHaveValue('New');
+  await expect(dialog.getByLabel('Subtask Priority', { exact: true })).toHaveValue('Redmine default');
+  for (const id of ['creation-status', 'creation-priority']) {
+    const field = dialog.locator(`.editor-attributes #${id}`);
+    await expect(field).toBeVisible();
+    await expect(field).toHaveAttribute('readonly', '');
+    await expect(field).not.toBeEditable();
+  }
   await expect(dialog.getByLabel('Status', { exact: true })).not.toBeVisible();
   await expect(page.locator('#editor-swimlane-fields')).toBeHidden();
   const project = dialog.getByLabel('Project', { exact: true }), tracker = dialog.getByLabel('Tracker', { exact: true });

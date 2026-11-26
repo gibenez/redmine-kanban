@@ -453,6 +453,7 @@ body.board-active { height: 100dvh; overflow: hidden; display: flex; flex-direct
 #workspace #query { padding-left: 28px; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='none' stroke='%236c707e' stroke-width='1.5'%3E%3Ccircle cx='6.5' cy='6.5' r='4.5'/%3E%3Cpath d='m10 10 4 4'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: 8px center; }
 #edit-tags-title { margin: 16px 0 4px; font-size: 13px; line-height: 18px; font-weight: 500; color: var(--secondary); }
 #editor-title { display: flex; align-items: center; flex: 1; gap: 6px; min-width: 0; }
+#editor:has(#editor-creation-context:not([hidden])) #editor-title { gap: 16px; }
 #editor-issue-id { flex: none; }
 #edit-title { min-width: 0; min-height: 44px; padding: 4px 6px; border-color: transparent; background: transparent; color: inherit; font: inherit; text-align: left; overflow-wrap: anywhere; }
 #edit-title:not(:disabled):hover { background: var(--hover-bg); border-color: var(--line); }
@@ -460,18 +461,26 @@ body.board-active { height: 100dvh; overflow: hidden; display: flex; flex-direct
 #edit-title:disabled { color: inherit; opacity: 1; cursor: default; }
 #editor-subject { min-width: 0; flex: 1; font: inherit; }
 #edit-title[hidden], #editor-subject[hidden] { display: none; }
-#editor-subject-error { flex: none; margin: 8px 0 0; color: var(--error); }
+#editor-subject-error { color: var(--error); }
+#edit-form > .dialog-actions { flex-wrap: nowrap; align-items: flex-end; }
+#editor-feedback { flex: 1; min-width: 0; display: grid; gap: 8px; overflow-wrap: anywhere; }
+#editor-feedback > p { margin: 0; }
+#edit-form > .dialog-actions > button { flex: none; width: auto; margin-left: auto; min-height: 44px; }
 #close-editor { flex-shrink: 0; }
 #editor { width: min(1100px, calc(100% - 32px)); max-height: calc(100dvh - 32px); overflow-y: auto; }
 .editor-columns { display: grid; grid-template-columns: minmax(0, 65fr) minmax(0, 35fr); gap: 24px; }
 .editor-content, .editor-attributes { min-width: 0; }
 .editor-attributes { border-left: 1px solid var(--line); padding-left: 24px; }
+.editor-attributes input[readonly] { background: var(--sidebar); cursor: default; }
+.creation-context-text { margin: 0; }
+.creation-context-text dt { margin: 16px 0 4px; font-size: 13px; line-height: 18px; font-weight: 500; color: var(--secondary); }
+.creation-context-text dd { margin: 0; overflow-wrap: anywhere; }
 #editor-description-section { margin: 16px 0 0; }
 /* The attributes' natural height remains a lower bound: unusually tall content
    falls back to dialog scrolling instead of clipping fields or actions. */
 @media (min-width: 801px) and (min-height: 720px) {
   #edit-form { display: flex; flex-direction: column; height: min(760px, calc(100dvh - 82px)); }
-  #edit-form > .dialog-heading, #editor-notice, #edit-form > .dialog-actions { flex: none; }
+  #edit-form > .dialog-heading, #edit-form > .dialog-actions { flex: none; }
   .editor-columns { flex: 1; }
   .editor-content { display: flex; flex-direction: column; min-height: 0; contain: size; }
   #editor-description-section { display: flex; flex-direction: column; flex: 1; min-height: 0; }
