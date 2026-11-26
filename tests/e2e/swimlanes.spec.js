@@ -1160,7 +1160,7 @@ test('ordinary Card planner hides Swimlane fields, makes no Priority request and
   await expect(page.locator('#edit-priority')).toBeHidden();
   await expect(page.locator('#edit-tags')).toBeHidden();
   await expect(page.locator('#edit-status')).toBeHidden();
-  await expect(page.locator('#editor input:visible, #editor select:visible')).toHaveCount(3);
+  await expect(page.locator('#editor input:visible, #editor select:visible')).toHaveCount(2);
   expect(fixture.priorityRequests).toHaveLength(requestsBefore);
   await page.getByLabel('Estimated hours', { exact: true }).fill('5');
   await page.getByRole('button', { name: 'Save changes', exact: true }).click();
@@ -1179,6 +1179,8 @@ test('closed Sprint heading pencil remains enabled but opens read-only Swimlane 
   await expect(pencil).toBeEnabled();
   await expect(pencil).toHaveAttribute('data-edit', '4');
   await pencil.click();
+  await expect(page.locator('#edit-title')).toBeDisabled();
+  await expect(page.locator('#editor-subject')).toBeHidden();
   await expect(page.locator('#editor-swimlane-fields')).toBeVisible();
   await expect(page.locator('#edit-priority')).toBeDisabled();
   await expect(page.locator('#edit-status')).toBeDisabled();
@@ -1235,6 +1237,7 @@ for (const id of [1, 4]) {
     await expect(status.locator('option')).toHaveText(['New', 'Doing', 'Done']);
     await status.selectOption('5');
     await page.locator('#edit-priority').selectOption('4');
+    await page.locator('#edit-title').click();
     await page.locator('#editor-subject').fill('Updated Swimlane');
     await page.getByRole('button', { name: 'Edit description', exact: true }).click();
     await page.locator('#edit-description').fill('Updated description');
@@ -1348,6 +1351,7 @@ test('revoking a selected Swimlane workflow transition after opening blocks the 
   await page.getByRole('button', { name: 'Plan #4', exact: true }).click();
   await page.locator('#edit-status').selectOption('5');
   await page.locator('#edit-priority').selectOption('4');
+  await page.locator('#edit-title').click();
   await page.locator('#editor-subject').fill('Unsaved title');
   fixture.rows[3].allowed_statuses = [{ id: 1, name: 'New' }];
   await page.getByRole('button', { name: 'Save changes', exact: true }).click();

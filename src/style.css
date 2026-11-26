@@ -446,10 +446,38 @@ body.board-active { height: 100dvh; overflow: hidden; display: flex; flex-direct
 #planning-controls { background: var(--sidebar); }
 #workspace #query { padding-left: 28px; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='none' stroke='%236c707e' stroke-width='1.5'%3E%3Ccircle cx='6.5' cy='6.5' r='4.5'/%3E%3Cpath d='m10 10 4 4'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: 8px center; }
 #edit-tags-title { margin: 16px 0 4px; font-size: 13px; line-height: 18px; font-weight: 500; color: var(--secondary); }
-#editor-title { min-width: 0; overflow-wrap: anywhere; }
+#editor-title { display: flex; align-items: center; flex: 1; gap: 6px; min-width: 0; }
+#editor-issue-id { flex: none; }
+#edit-title { min-width: 0; min-height: 44px; padding: 4px 6px; border-color: transparent; background: transparent; color: inherit; font: inherit; text-align: left; overflow-wrap: anywhere; }
+#edit-title:not(:disabled):hover { background: var(--hover-bg); border-color: var(--line); }
+#edit-title:focus-visible { outline: 2px solid var(--link); outline-offset: 2px; }
+#edit-title:disabled { color: inherit; opacity: 1; cursor: default; }
+#editor-subject { min-width: 0; flex: 1; font: inherit; }
+#edit-title[hidden], #editor-subject[hidden] { display: none; }
+#editor-subject-error { flex: none; margin: 8px 0 0; color: var(--error); }
 #close-editor { flex-shrink: 0; }
-#editor { width: min(800px, calc(100% - 32px)); max-height: calc(100dvh - 32px); overflow-y: auto; }
-#editor-description-section { margin: 16px 0; }
+#editor { width: min(1100px, calc(100% - 32px)); max-height: calc(100dvh - 32px); overflow-y: auto; }
+.editor-columns { display: grid; grid-template-columns: minmax(0, 65fr) minmax(0, 35fr); gap: 24px; }
+.editor-content, .editor-attributes { min-width: 0; }
+.editor-attributes { border-left: 1px solid var(--line); padding-left: 24px; }
+#editor-description-section { margin: 16px 0 0; }
+/* The attributes' natural height remains a lower bound: unusually tall content
+   falls back to dialog scrolling instead of clipping fields or actions. */
+@media (min-width: 801px) and (min-height: 720px) {
+  #edit-form { display: flex; flex-direction: column; height: min(760px, calc(100dvh - 82px)); }
+  #edit-form > .dialog-heading, #editor-notice, #edit-form > .dialog-actions { flex: none; }
+  .editor-columns { flex: 1; }
+  .editor-content { display: flex; flex-direction: column; min-height: 0; contain: size; }
+  #editor-description-section { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+  .description-heading, #description-hint { flex: none; }
+  #editor-description-section > #editor-description,
+  #editor-description-section > #edit-description { flex: 1; min-height: 0; overflow: auto; }
+  #editor-description-section > #edit-description { resize: none; }
+}
+@media (max-width: 800px) {
+  .editor-columns { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  .editor-attributes { border-left: 0; padding-left: 0; }
+}
 .description-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 8px; }
 .description-tabs { display: flex; flex: none; }
 .description-tabs button { display: inline-flex; align-items: center; justify-content: center; width: 36px; min-height: 32px; padding: 6px; border-radius: 0; }

@@ -133,6 +133,7 @@ function lock() {
   $('refresh-now').setAttribute('aria-busy', String(loading));
   document.querySelectorAll('#planning-controls select, #planning-controls input, #workspace select, #workspace input, #workspace button').forEach(el => { el.disabled = busy || loading; });
   $('edit-form').querySelectorAll('input, textarea, select, button[type="submit"]').forEach(el => { el.disabled = busy || loading || sprint?.status !== 'open' || Boolean(el.closest('section[hidden]')); });
+  $('edit-title').disabled = $('editor-subject').disabled;
   $('edit-status').disabled ||= $('edit-status').options.length <= 1;
   document.querySelectorAll('[data-edit], .scope-toggle').forEach(el => { el.disabled = busy || loading || (el.closest('[data-id="backlog"]') && (queryLoading || feed?.loadingMore)); });
   $('tracker').disabled = busy || loading || !eligibleTrackers().length;
@@ -876,8 +877,12 @@ async function openEditor(id) {
     }
     editing = issue;
     $('editor-notice').hidden = true;
-    $('editor-title').textContent = `#${issue.id} — ${issue.subject}`;
+    $('editor-issue-id').textContent = `#${issue.id} — `;
+    $('edit-title').textContent = issue.subject;
+    $('edit-title').hidden = false;
     $('editor-subject').value = issue.subject;
+    $('editor-subject').hidden = true;
+    clearTitleError();
     initialMarkdown = descriptionMarkdown(issue.description);
     $('edit-description').value = initialMarkdown;
     $('editor-description').innerHTML = sanitizeDescription(issue.description || '');
@@ -1054,6 +1059,46 @@ function editorValues() {
 function mayCloseEditor() {
   return !busy && (editorValues() === initialEditorValues || window.confirm('Discard unsaved changes?'));
 }
+let titleBeforeEdit = '';
+function clearTitleError() {
+  $('editor-subject').setCustomValidity('');
+  $('editor-subject').removeAttribute('aria-invalid');
+  $('editor-subject').removeAttribute('aria-describedby');
+  $('editor-subject-error').hidden = true;
+}
+function finishTitleEdit(cancel = false) {
+  const input = $('editor-subject');
+  if (input.hidden) return true;
+  if (cancel) input.value = titleBeforeEdit;
+  if (!input.value.trim()) {
+    input.setCustomValidity('Title cannot be blank.');
+    input.setAttribute('aria-invalid', 'true');
+    input.setAttribute('aria-describedby', 'editor-subject-error');
+    $('editor-subject-error').hidden = false;
+    return false;
+  }
+  clearTitleError();
+  $('edit-title').textContent = input.value;
+  input.hidden = true;
+  $('edit-title').hidden = false;
+  return true;
+}
+$('edit-title').addEventListener('click', () => {
+  const input = $('editor-subject');
+  if (input.disabled) return;
+  titleBeforeEdit = input.value;
+  $('edit-title').hidden = true;
+  input.hidden = false;
+  input.focus(); input.select();
+});
+$('editor-subject').addEventListener('input', clearTitleError);
+$('editor-subject').addEventListener('blur', () => { finishTitleEdit(); });
+$('editor-subject').addEventListener('invalid', () => { finishTitleEdit(); });
+$('editor-subject').addEventListener('keydown', event => {
+  if (event.isComposing || !['Enter', 'Escape'].includes(event.key)) return;
+  event.preventDefault(); event.stopPropagation();
+  if (finishTitleEdit(event.key === 'Escape')) $('edit-title').focus();
+});
 function showDescriptionMode(preview) {
   if (preview) $('editor-description').innerHTML = $('edit-description').value === initialMarkdown
     ? sanitizeDescription(editing?.description || '') : descriptionHtml($('edit-description').value);
@@ -1073,6 +1118,7 @@ $('editor').addEventListener('close', () => {
 });
 $('edit-form').addEventListener('submit', event => {
   event.preventDefault(); if (!editing || busy) return;
+  if (!finishTitleEdit()) { $('editor-subject').focus(); return; }
   try {
     if (sprint?.status !== 'open') throw new Error('Select an open sprint before editing issues.');
     const patch = { ...textPatch(editing, $('editor-subject').value, $('edit-description').value, initialMarkdown), assigned_to_id: $('edit-assignee').value ? Number($('edit-assignee').value) : null, estimated_hours: parseEstimate($('edit-estimate').value) };
